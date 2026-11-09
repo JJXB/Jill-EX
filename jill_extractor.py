@@ -449,12 +449,24 @@ class SHAFile:
             
             entry.frames.append(frame)
         
-        # Trailing frame (editor preview)
+        # Trailing frame (editor preview). Capture its payload so a re-encoded
+        # entry can be written back losslessly.
         if ptr + 3 <= len(entry.raw_data):
             w = entry.raw_data[ptr]; ptr += 1
             h = entry.raw_data[ptr]; ptr += 1
             opcode = entry.raw_data[ptr]; ptr += 1
-            entry.trailing_frame = {'width': w, 'height': h, 'opcode': opcode, 'offset': ptr}
+            tf = {'width': w, 'height': h, 'opcode': opcode, 'data': b'', 'offset': ptr}
+            if opcode == 0:
+                n = w * h
+                if ptr + n <= len(entry.raw_data):
+                    tf['data'] = entry.raw_data[ptr:ptr+n]
+                    ptr += n
+            elif opcode == 1:
+                n = (w * h * entry.src_bpp + 7) // 8
+                if ptr + n <= len(entry.raw_data):
+                    tf['data'] = entry.raw_data[ptr:ptr+n]
+                    ptr += n
+            entry.trailing_frame = tf
         
         return entry
     
@@ -760,18 +772,14 @@ class VCLFile:
         if not data:
             return None
         
-        # Convert 8-bit unsigned to 8-bit signed for WAV
-        # WAV typically uses signed 8-bit, but Jill uses unsigned
-        # Convert: unsigned 0-255 -> signed -128 to 127
-        signed_data = bytes([(b - 128) & 0xFF for b in data])
-        
-        # Create WAV in memory
+        # The .VCL banks store unsigned 8-bit PCM (silence = 128), which is
+        # exactly what an 8-bit WAV expects, so the bytes are written as-is.
         wav_buffer = io.BytesIO()
         with wave.open(wav_buffer, 'wb') as wav:
             wav.setnchannels(1)  # Mono
-            wav.setsampwidth(1)  # 8-bit
+            wav.setsampwidth(1)  # 8-bit unsigned
             wav.setframerate(rate if rate > 0 else 6000)
-            wav.writeframes(signed_data)
+            wav.writeframes(data)
         
         return wav_buffer.getvalue()
     
@@ -1181,6 +1189,18 @@ class JillExtractorApp:
         tools_menu.add_command(label="Batch Extract All Shapes...", command=self.batch_extract_shapes)
         tools_menu.add_command(label="Batch Extract All Sounds...", command=self.batch_extract_sounds)
         
+        import_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Convert", menu=import_menu)
+        import_menu.add_command(label="Import Image into Shape Frame...",
+                                command=self.import_image_to_shape)
+        import_menu.add_command(label="Build .sha from PNG Folder...",
+                                command=self.build_sha_from_folder)
+        import_menu.add_separator()
+        import_menu.add_command(label="Import WAV into Sound Slot...",
+                                command=self.import_wav_to_vcl)
+        import_menu.add_command(label="Build .vcl from WAV Folder...",
+                                command=self.build_vcl_from_folder)
+        
         # Main layout
         main_paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
         main_paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -1383,18 +1403,27 @@ class JillExtractorApp:
         self.anim_playing = False
         self.anim_timer = None
         self.anim_fps = 10
+        self.anim_entry_idx = 0
+        self.anim_frame = 0
+        # Cache of decoded+scaled PhotoImages: (entry, frame, mode, w, h)
+        self._shape_frame_cache: Dict[Tuple[int, int, int, int, int], ImageTk.PhotoImage] = {}
         
         toolbar = ttk.Frame(frame)
         toolbar.pack(fill=tk.X, padx=5, pady=5)
         ttk.Label(toolbar, text="Frame:").pack(side=tk.LEFT)
         self.frame_var = tk.IntVar(value=0)
-        self.frame_spin = ttk.Spinbox(toolbar, from_=0, to=0, textvariable=self.frame_var, 
-                                       width=5, command=self.on_frame_change)
+        self.frame_spin = ttk.Spinbox(toolbar, from_=0, to=0, textvariable=self.frame_var,
+                                       width=6, command=self.on_frame_change)
         self.frame_spin.pack(side=tk.LEFT, padx=5)
-        # Bind keys for frame navigation
+        # Keep the spinbox and the animation position in sync for every input
+        # path (arrow buttons, typed value, mouse wheel, keyboard).
+        self.frame_spin.bind('<Return>', lambda e: self.on_frame_change())
+        self.frame_spin.bind('<FocusOut>', lambda e: self.on_frame_change())
+        self.frame_spin.bind('<KeyRelease>', lambda e: self.on_frame_change())
         self.frame_spin.bind('<Up>', lambda e: self.on_frame_change())
         self.frame_spin.bind('<Down>', lambda e: self.on_frame_change())
-        self.frame_spin.bind('<Return>', lambda e: self.on_frame_change())
+        self.frame_status = ttk.Label(toolbar, text="0/0", width=8)
+        self.frame_status.pack(side=tk.LEFT, padx=2)
         
         ttk.Label(toolbar, text="Mode:").pack(side=tk.LEFT, padx=5)
         self.mode_var = tk.IntVar(value=4)
@@ -1432,16 +1461,21 @@ class JillExtractorApp:
         self.shape_detail_text = scrolledtext.ScrolledText(frame, height=8, font=('Consolas', 9))
         self.shape_detail_text.pack(fill=tk.X, padx=5, pady=5)
     
-    def draw_checkerboard(self):
-        """Draw checkerboard pattern on canvas for transparency visualization"""
-        self.shape_canvas.delete("checkerboard")
+    def draw_checkerboard(self, force: bool = False):
+        """Draw (or refresh) the transparency checkerboard once per size.
+
+        The animation loop redraws sprites many times per second, so this must
+        not rebuild thousands of canvas rectangles on every frame.
+        """
         w = self.shape_canvas.winfo_width()
         h = self.shape_canvas.winfo_height()
         if w <= 1 or h <= 1:
-            # Canvas not ready yet, schedule for later
             self.shape_canvas.after(100, self.draw_checkerboard)
             return
-        
+        if not force and getattr(self, '_checker_size', None) == (w, h):
+            return
+        self._checker_size = (w, h)
+        self.shape_canvas.delete("checkerboard")
         square_size = 8
         colors = ['#303030', '#404040']
         for y in range(0, h, square_size):
@@ -1449,11 +1483,22 @@ class JillExtractorApp:
                 color = colors[((x // square_size) + (y // square_size)) % 2]
                 self.shape_canvas.create_rectangle(x, y, x + square_size, y + square_size,
                                                   fill=color, outline='', tags="checkerboard")
-        # Lower checkerboard to bottom
         self.shape_canvas.tag_lower("checkerboard")
     
     def on_fps_change(self):
-        self.anim_fps = self.fps_var.get()
+        try:
+            self.anim_fps = max(1, min(60, int(self.fps_var.get())))
+        except (tk.TclError, ValueError):
+            self.anim_fps = 10
+        if getattr(self, 'anim_playing', False):
+            # Restart the timer so the new speed takes effect immediately.
+            if self.anim_timer:
+                try:
+                    self.root.after_cancel(self.anim_timer)
+                except Exception:
+                    pass
+                self.anim_timer = None
+            self._schedule_animation()
     
     def toggle_animation(self):
         if not self.sha_file:
@@ -1467,6 +1512,7 @@ class JillExtractorApp:
         
         entry = self.sha_file.entries[idx]
         if entry.frame_count <= 1:
+            self.status_var.set("This shape has only one frame - nothing to animate")
             return
         
         if self.anim_playing:
@@ -1475,38 +1521,69 @@ class JillExtractorApp:
             self.start_animation(idx)
     
     def start_animation(self, entry_idx: int):
+        # Cancel any previous timer first so we never run two loops.
+        if self.anim_timer:
+            try:
+                self.root.after_cancel(self.anim_timer)
+            except Exception:
+                pass
+            self.anim_timer = None
         self.anim_playing = True
         self.anim_entry_idx = entry_idx
-        self.anim_frame = 0
+        # Start from the frame currently shown in the spinbox, keeping the
+        # animation position and the frame number connected.
+        entry = self.sha_file.entries[entry_idx]
+        try:
+            start = int(self.frame_var.get())
+        except (tk.TclError, ValueError):
+            start = 0
+        self.anim_frame = max(0, min(entry.frame_count - 1, start))
         self.anim_btn.config(text="|| Stop")
-        self.animate_next_frame()
+        self._draw_anim_frame()
+        self._schedule_animation()
     
     def stop_animation(self):
         self.anim_playing = False
         self.anim_btn.config(text="> Play")
         if self.anim_timer:
-            self.root.after_cancel(self.anim_timer)
+            try:
+                self.root.after_cancel(self.anim_timer)
+            except Exception:
+                pass
             self.anim_timer = None
     
-    def animate_next_frame(self):
+    def _schedule_animation(self):
         if not self.anim_playing:
             return
-        
-        entry = self.sha_file.entries[self.anim_entry_idx]
-        frame_count = entry.frame_count
-        
-        # Update frame var and draw
-        self.frame_var.set(self.anim_frame)
-        self.draw_shape(self.anim_entry_idx, self.anim_frame)
-        
-        # Next frame
-        self.anim_frame = (self.anim_frame + 1) % frame_count
-        
-        # Schedule next frame
-        delay = int(1000 / self.anim_fps)
-        self.anim_timer = self.root.after(delay, self.animate_next_frame)
+        delay = max(1, int(1000 / max(1, self.anim_fps)))
+        self.anim_timer = self.root.after(delay, self._anim_tick)
     
-    def draw_shape(self, entry_idx: int, frame_idx: int):
+    def _anim_tick(self):
+        if not self.anim_playing:
+            return
+        entry = self.sha_file.entries[self.anim_entry_idx]
+        if not entry:
+            self.stop_animation()
+            return
+        self.anim_frame = (self.anim_frame + 1) % entry.frame_count
+        self._draw_anim_frame()
+        self._schedule_animation()
+    
+    def _draw_anim_frame(self):
+        self.frame_var.set(self.anim_frame)
+        self._update_frame_status()
+        # Skip the (more expensive) detail/hex panel while animating.
+        self.draw_shape(self.anim_entry_idx, self.anim_frame, update_detail=False)
+    
+    def _update_frame_status(self):
+        try:
+            if self.sha_file and self.anim_entry_idx < 128 and self.sha_file.entries[self.anim_entry_idx]:
+                n = self.sha_file.entries[self.anim_entry_idx].frame_count
+                self.frame_status.config(text=f"{self.anim_frame + 1}/{n}")
+        except Exception:
+            pass
+    
+    def draw_shape(self, entry_idx: int, frame_idx: int, update_detail: bool = True):
         if not self.sha_file or entry_idx >= 128 or not self.sha_file.entries[entry_idx]:
             return
         
@@ -1515,44 +1592,65 @@ class JillExtractorApp:
             return
         
         mode = self.mode_var.get()
-        img = self.sha_file.decode_frame_to_image(entry_idx, frame_idx, mode)
         
-        self.shape_canvas.delete("all")
-        
-        # Redraw checkerboard
+        # Only ensure the checkerboard exists; never rebuild it per frame.
         self.draw_checkerboard()
         
-        if img:
-            # Scale to fit canvas
-            canvas_w = self.shape_canvas.winfo_width()
-            canvas_h = self.shape_canvas.winfo_height()
-            if canvas_w > 1 and canvas_h > 1:
-                img_w, img_h = img.size
-                scale = min(canvas_w / img_w, canvas_h / img_h, 8.0)
-                new_w = int(img_w * scale)
-                new_h = int(img_h * scale)
-                img = img.resize((new_w, new_h), Image.NEAREST)
-            
+        # Determine target size from the canvas, then use a cached PhotoImage
+        # so animation playback does not re-encode the image every tick.
+        canvas_w = self.shape_canvas.winfo_width()
+        canvas_h = self.shape_canvas.winfo_height()
+        if canvas_w <= 1 or canvas_h <= 1:
+            canvas_w = canvas_h = 400
+        frame = entry.frames[frame_idx]
+        img_w = max(1, frame['width'])
+        img_h = max(1, frame['height'])
+        scale = min(canvas_w / img_w, canvas_h / img_h, 8.0)
+        new_w = max(1, int(img_w * scale))
+        new_h = max(1, int(img_h * scale))
+        
+        cache_key = (entry_idx, frame_idx, mode, new_w, new_h)
+        photo = self._shape_frame_cache.get(cache_key)
+        if photo is None:
+            img = self.sha_file.decode_frame_to_image(entry_idx, frame_idx, mode)
+            if img is None:
+                self.shape_canvas.delete("sprite")
+                if update_detail:
+                    self.shape_detail_text.delete(1.0, tk.END)
+                    self.shape_detail_text.insert(tk.END, "Could not decode frame")
+                return
+            img = img.resize((new_w, new_h), Image.NEAREST)
             photo = ImageTk.PhotoImage(img)
-            self.shape_canvas.create_image(canvas_w//2, canvas_h//2, anchor=tk.CENTER, image=photo)
-            self.shape_canvas.image = photo  # Keep reference
+            self._shape_frame_cache[cache_key] = photo
+        
+        if photo:
+            self._shape_photo = photo  # keep a strong reference
+            item = self.shape_canvas.find_withtag("sprite")
+            if item:
+                self.shape_canvas.itemconfig(item[0], image=photo)
+                self.shape_canvas.coords(item[0], canvas_w // 2, canvas_h // 2)
+            else:
+                self.shape_canvas.create_image(canvas_w // 2, canvas_h // 2,
+                                               anchor=tk.CENTER, image=photo, tags="sprite")
+            self.shape_canvas.image = photo
             
-            # Update detail text
-            frame = entry.frames[frame_idx]
-            detail = []
-            detail.append(f"Frame {frame_idx}/{entry.frame_count-1}")
-            detail.append(f"  Size: {frame['width']}x{frame['height']}")
-            detail.append(f"  Opcode: {frame['opcode']}")
-            detail.append(f"  Data length: {len(frame['data'])} bytes")
-            detail.append(f"  Video mode: {'VGA 8bpp' if mode==4 else 'EGA 4bpp' if mode==2 else 'CGA 2bpp'}")
-            
-            if frame['opcode'] == 0 and frame['data']:
-                # Show first few bytes
-                detail.append(f"  First 32 bytes: {frame['data'][:32].hex()}")
-            
-            self.shape_detail_text.delete(1.0, tk.END)
-            self.shape_detail_text.insert(tk.END, '\n'.join(detail))
+            if update_detail:
+                # Update detail text (skipped while animating for performance)
+                frame = entry.frames[frame_idx]
+                detail = []
+                detail.append(f"Frame {frame_idx}/{entry.frame_count-1}")
+                detail.append(f"  Size: {frame['width']}x{frame['height']}")
+                detail.append(f"  Opcode: {frame['opcode']}")
+                detail.append(f"  Data length: {len(frame['data'])} bytes")
+                detail.append(f"  Video mode: {'VGA 8bpp' if mode==4 else 'EGA 4bpp' if mode==2 else 'CGA 2bpp'}")
+                
+                if frame['opcode'] == 0 and frame['data']:
+                    detail.append(f"  First 32 bytes: {frame['data'][:32].hex()}")
+                
+                self.shape_detail_text.delete(1.0, tk.END)
+                self.shape_detail_text.insert(tk.END, '\n'.join(detail))
         else:
+            self.shape_canvas.delete("sprite")
             self.shape_detail_text.delete(1.0, tk.END)
             self.shape_detail_text.insert(tk.END, "Could not decode frame (format not fully supported)")
     
@@ -1658,6 +1756,8 @@ class JillExtractorApp:
         self.current_board = None
         self.tile_images.clear()
         self.shape_images.clear()
+        if hasattr(self, '_shape_frame_cache'):
+            self._shape_frame_cache.clear()
         
         # Load SHA
         sha_path = base_path / game['sha']
@@ -2215,8 +2315,13 @@ class JillExtractorApp:
         idx = selection[0]
         if self.sha_file and self.sha_file.entries[idx]:
             entry = self.sha_file.entries[idx]
+            if getattr(self, 'anim_playing', False):
+                self.stop_animation()
+            self.anim_entry_idx = idx
+            self.anim_frame = 0
             self.frame_var.set(0)
             self.frame_spin.config(to=max(0, entry.frame_count - 1))
+            self._update_frame_status()
             self.display_shape_info(idx)
             self.draw_shape(idx, 0)
     
@@ -2251,73 +2356,75 @@ class JillExtractorApp:
         self.shape_info_text.delete(1.0, tk.END)
         self.shape_info_text.insert(tk.END, '\n'.join(info))
     
-    def draw_shape(self, entry_idx: int, frame_idx: int):
-        if not self.sha_file or entry_idx >= 128 or not self.sha_file.entries[entry_idx]:
-            return
-        
-        entry = self.sha_file.entries[entry_idx]
-        if frame_idx >= len(entry.frames):
-            return
-        
-        mode = self.mode_var.get()
-        img = self.sha_file.decode_frame_to_image(entry_idx, frame_idx, mode)
-        
-        self.shape_canvas.delete("all")
-        
-        if img:
-            # Scale to fit canvas
-            canvas_w = self.shape_canvas.winfo_width()
-            canvas_h = self.shape_canvas.winfo_height()
-            if canvas_w > 1 and canvas_h > 1:
-                img_w, img_h = img.size
-                scale = min(canvas_w / img_w, canvas_h / img_h, 8.0)
-                new_w = int(img_w * scale)
-                new_h = int(img_h * scale)
-                img = img.resize((new_w, new_h), Image.NEAREST)
-            
-            photo = ImageTk.PhotoImage(img)
-            self.shape_canvas.create_image(canvas_w//2, canvas_h//2, anchor=tk.CENTER, image=photo)
-            self.shape_canvas.image = photo  # Keep reference
-            
-            # Update detail text
-            frame = entry.frames[frame_idx]
-            detail = []
-            detail.append(f"Frame {frame_idx}/{entry.frame_count-1}")
-            detail.append(f"  Size: {frame['width']}x{frame['height']}")
-            detail.append(f"  Opcode: {frame['opcode']}")
-            detail.append(f"  Data length: {len(frame['data'])} bytes")
-            detail.append(f"  Video mode: {'VGA 8bpp' if mode==4 else 'EGA 4bpp' if mode==2 else 'CGA 2bpp'}")
-            
-            if frame['opcode'] == 0 and frame['data']:
-                # Show first few bytes
-                detail.append(f"  First 32 bytes: {frame['data'][:32].hex()}")
-            
-            self.shape_detail_text.delete(1.0, tk.END)
-            self.shape_detail_text.insert(tk.END, '\n'.join(detail))
-        else:
-            self.shape_detail_text.delete(1.0, tk.END)
-            self.shape_detail_text.insert(tk.END, "Could not decode frame (format not fully supported)")
+    def _selected_shape_index(self) -> Optional[int]:
+        selection = self.shape_listbox.curselection()
+        if not selection:
+            return None
+        idx = selection[0]
+        if idx < 0 or idx >= 128:
+            return None
+        if not self.sha_file or not self.sha_file.entries[idx]:
+            return None
+        return idx
+    
+    def _clamp_frame(self, idx: int, frame: int) -> int:
+        entry = self.sha_file.entries[idx]
+        return max(0, min(entry.frame_count - 1, frame))
     
     def on_frame_change(self):
-        selection = self.shape_listbox.curselection()
-        if selection:
-            idx = selection[0]
-            frame = self.frame_var.get()
+        """Keep the frame spinbox and the animation position connected.
+
+        - While stopped: show the requested frame.
+        - While playing: jump the animation to the requested frame.
+        """
+        idx = self._selected_shape_index()
+        if idx is None:
+            return
+        raw = None
+        try:
+            raw = int(self.frame_var.get())
+        except (tk.TclError, ValueError):
+            raw = None
+        frame = self._clamp_frame(idx, raw if raw is not None else 0)
+        if raw != frame:
+            self.frame_var.set(frame)
+        if getattr(self, 'anim_playing', False):
+            if getattr(self, 'anim_entry_idx', None) != idx:
+                self.stop_animation()
+                self.draw_shape(idx, frame)
+                return
+            self.anim_frame = frame
+            self._update_frame_status()
+            # Restart the timer so the jump is shown immediately.
+            if self.anim_timer:
+                try:
+                    self.root.after_cancel(self.anim_timer)
+                except Exception:
+                    pass
+                self.anim_timer = None
+            self._draw_anim_frame()
+            self._schedule_animation()
+        else:
+            self._update_frame_status()
             self.draw_shape(idx, frame)
     
     def on_mode_change(self):
-        selection = self.shape_listbox.curselection()
-        if selection:
-            idx = selection[0]
-            frame = self.frame_var.get()
-            self.draw_shape(idx, frame)
+        idx = self._selected_shape_index()
+        if idx is None:
+            return
+        frame = self._clamp_frame(idx, int(self.frame_var.get() or 0))
+        self.draw_shape(idx, frame)
     
     def on_shape_canvas_resize(self, event):
-        selection = self.shape_listbox.curselection()
-        if selection:
-            idx = selection[0]
-            frame = self.frame_var.get()
-            self.draw_shape(idx, frame)
+        self.draw_checkerboard(force=True)
+        idx = self._selected_shape_index()
+        if idx is None:
+            return
+        try:
+            frame = self._clamp_frame(idx, int(self.frame_var.get() or 0))
+        except (tk.TclError, ValueError):
+            frame = 0
+        self.draw_shape(idx, frame)
     
     def export_shape_frame(self):
         selection = self.shape_listbox.curselection()
@@ -2355,15 +2462,153 @@ class JillExtractorApp:
             return
         
         entry = self.sha_file.entries[idx]
+        # Use the folder layout understood by "Build .sha from PNG Folder".
+        entry_dir = Path(out_dir) / f"shape_{idx:03d}"
+        entry_dir.mkdir(parents=True, exist_ok=True)
         count = 0
         for frame_idx in range(entry.frame_count):
             img = self.sha_file.decode_frame_to_image(idx, frame_idx, 4)
             if img:
-                filepath = Path(out_dir) / f"shape_{idx}_frame_{frame_idx}.png"
-                img.save(filepath)
+                img.save(entry_dir / f"frame_{frame_idx:03d}.png")
                 count += 1
         
-        self.status_var.set(f"Exported {count} frames to {out_dir}")
+        self.status_var.set(f"Exported {count} frames to {entry_dir}")
+    
+    # ---- Converters (PNG -> .sha, WAV -> .vcl) -----------------------------
+    def _current_sha_path(self) -> Optional[Path]:
+        p = Path(self.game_path) / self.current_game['sha']
+        return p if p.is_file() else None
+    
+    def _current_vcl_path(self) -> Optional[Path]:
+        p = Path(self.game_path) / self.current_game['vcl']
+        return p if p.is_file() else None
+    
+    def _default_out(self, src: Path, suffix: str) -> Path:
+        return src.with_name(f"{src.stem}_{suffix}{src.suffix}")
+    
+    def import_image_to_shape(self):
+        idx = self._selected_shape_index()
+        if idx is None:
+            messagebox.showwarning("Import Image", "Select a shape entry first.")
+            return
+        sha_path = self._current_sha_path()
+        if not sha_path:
+            messagebox.showerror("Import Image", "No shape archive for this game.")
+            return
+        frame = self._clamp_frame(idx, int(self.frame_var.get() or 0))
+        try:
+            import jill_import as ji
+        except Exception as e:
+            messagebox.showerror("Import Image", f"Cannot load converter: {e}")
+            return
+        image_path = filedialog.askopenfilename(
+            title=f"Image for entry {idx}, frame {frame}",
+            filetypes=[("Images", "*.png *.bmp *.gif *.tga *.jpg *.jpeg"),
+                       ("All", "*.*")])
+        if not image_path:
+            return
+        out = filedialog.asksaveasfilename(
+            title="Save modified .sha", defaultextension=".sha",
+            initialdir=str(sha_path.parent), initialfile=self._default_out(sha_path, "mod").name,
+            filetypes=[("Shape archive", "*.sha"), ("All", "*.*")])
+        if not out:
+            return
+        try:
+            # Reload from disk so the on-screen archive is not used as source
+            # if the user already imported something this session.
+            ji.replace_sha_frame(sha_path, idx, frame, Path(image_path), Path(out))
+            self.status_var.set(f"Imported image into entry {idx} frame {frame} -> {out}")
+            if Path(out).resolve() == sha_path.resolve():
+                self.load_game_files()
+        except Exception as e:
+            messagebox.showerror("Import Image failed", str(e))
+    
+    def build_sha_from_folder(self):
+        sha_path = self._current_sha_path()
+        folder = filedialog.askdirectory(title="Folder containing shape_NNN frame PNGs")
+        if not folder:
+            return
+        if not sha_path:
+            messagebox.showerror("Build .sha", "No reference .sha for this game.")
+            return
+        out = filedialog.asksaveasfilename(
+            title="Save .sha", defaultextension=".sha",
+            initialdir=str(sha_path.parent), initialfile=self._default_out(sha_path, "new").name,
+            filetypes=[("Shape archive", "*.sha"), ("All", "*.*")])
+        if not out:
+            return
+        try:
+            import jill_import as ji
+            ji.sha_from_folder(sha_path, Path(folder), Path(out))
+            self.status_var.set(f"Built .sha -> {out}")
+            if Path(out).resolve() == sha_path.resolve():
+                self.load_game_files()
+        except Exception as e:
+            messagebox.showerror("Build .sha failed", str(e))
+    
+    def _selected_sfx_slot(self) -> Optional[int]:
+        sel = self.sound_listbox.curselection()
+        if not sel:
+            return None
+        text = self.sound_listbox.get(sel[0])
+        if text.startswith("SFX "):
+            try:
+                return int(text.split()[1])
+            except (IndexError, ValueError):
+                return None
+        return None
+    
+    def import_wav_to_vcl(self):
+        vcl_path = self._current_vcl_path()
+        if not vcl_path:
+            messagebox.showerror("Import WAV", "No sound archive for this game.")
+            return
+        slot = self._selected_sfx_slot()
+        if slot is None:
+            messagebox.showwarning("Import WAV", "Select an SFX slot in the Sounds tab first.")
+            return
+        wav_path = filedialog.askopenfilename(
+            title=f"WAV for SFX slot {slot}",
+            filetypes=[("WAV audio", "*.wav"), ("All", "*.*")])
+        if not wav_path:
+            return
+        out = filedialog.asksaveasfilename(
+            title="Save modified .vcl", defaultextension=".vcl",
+            initialdir=str(vcl_path.parent), initialfile=self._default_out(vcl_path, "mod").name,
+            filetypes=[("Sound archive", "*.vcl"), ("All", "*.*")])
+        if not out:
+            return
+        try:
+            import jill_import as ji
+            ji.replace_vcl_sfx(vcl_path, slot, Path(wav_path), Path(out))
+            self.status_var.set(f"Imported WAV into SFX {slot} -> {out}")
+            if Path(out).resolve() == vcl_path.resolve():
+                self.load_game_files()
+        except Exception as e:
+            messagebox.showerror("Import WAV failed", str(e))
+    
+    def build_vcl_from_folder(self):
+        vcl_path = self._current_vcl_path()
+        folder = filedialog.askdirectory(title="Folder containing sfx_NN.wav / music_NN.raw")
+        if not folder:
+            return
+        if not vcl_path:
+            messagebox.showerror("Build .vcl", "No reference .vcl for this game.")
+            return
+        out = filedialog.asksaveasfilename(
+            title="Save .vcl", defaultextension=".vcl",
+            initialdir=str(vcl_path.parent), initialfile=self._default_out(vcl_path, "new").name,
+            filetypes=[("Sound archive", "*.vcl"), ("All", "*.*")])
+        if not out:
+            return
+        try:
+            import jill_import as ji
+            ji.vcl_from_folder(vcl_path, Path(folder), Path(out))
+            self.status_var.set(f"Built .vcl -> {out}")
+            if Path(out).resolve() == vcl_path.resolve():
+                self.load_game_files()
+        except Exception as e:
+            messagebox.showerror("Build .vcl failed", str(e))
     
     def refresh_sounds(self):
         self.sound_listbox.delete(0, tk.END)
