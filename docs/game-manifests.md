@@ -31,7 +31,10 @@ first, then its manifest is ordinary data.
 | `data` | no | asset directory; defaults to the profile's (`jillt`) |
 | `shapes` | no | `.sha` shape bank; defaults to the profile's |
 | `tiles` | no | `.dma` tile table; defaults to the profile's |
-| `pages` | no | `.vcl` sampled-sound bank that also carries the 40 text pages; defaults to the profile's sound bank |
+| `pages` | no | `.vcl` sampled-sound bank: 50 SFX samples plus the 40 text pages; defaults to the profile's sound bank |
+| `title_music` | no | CMF title/menu track played by the front end (`.ddt`, or Onesimus `SONG*.ARK`); empty = levels start their own music |
+| `save_prefix` | no | save-file stem, defaults to the profile's (`jn1save`); a mod should set its own so slots do not collide |
+| `save_slots` | no | number of save slots, capped at 6; defaults to the profile's |
 | `board_ext` | no | board suffix, e.g. `.jn1` or `.ONE`; defaults to the profile's |
 | `first_board` | no | board START GAME loads; extension optional |
 | `map_board` | no | hub/world-map board used by `!` and map-mode checks; defaults to `first_board`. Onesimus uses `map_board = MAP` while starting on `1` |
@@ -158,6 +161,31 @@ For a same-engine build (the normal total conversion):
 That is the whole procedure: no `docs/profiles.json` edit, no `gamedata.inc`
 regeneration, no rebuild, no menu edit.  The tool reports anything it could not
 prove so you know what to verify by hand.
+
+## Launch directory and per-game controls
+
+* At start-up the executable looks for `jill.ini` in the current directory,
+  then in the executable's directory and up to four parents, and changes the
+  working directory to the folder that holds the file.  Launching
+  `port\build\Release\jill.exe` from Explorer therefore still finds the
+  repository `games/`, `profiles/` and asset folders.
+* `[controls]` is the base key map for every game.  A `[controls.<game id>]`
+  section (for example `[controls.jille]`) overrides any of the six actions
+  for that installed game; keys missing from the section fall back to the base.
+* Editing **OPTIONS > CONTROLS** changes the active game's set.  The writer
+  saves it to `[controls.<game id>]` (and a section equal to the base is
+  removed), so two mods can use different keys without fighting each other.
+
+Total conversions may exceed the shipped board sizes:
+
+* `Board::kMaxObjects` is 384.  The original reads any `u16` count into a
+  0x100-record array (JillE boards use up to 258), so the port accepts the same
+  data without the overwrite; `Engine::kObjectLimit` uses the same value so
+  spawns still work at the start of a busy board.
+* The F3 level-select panel scrolls after 16 rows, so a 21-board mod fits on the
+  320x200 screen.
+* `save_prefix` lets a mod keep its slots separate from the base game's
+  (`jillesave` instead of `jn1save`).
 
 For a build whose kind data or palette differs from every shipped base, the
 generated profile falls back to inheritance and lists the fields it could not

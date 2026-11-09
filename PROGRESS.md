@@ -1014,3 +1014,118 @@ offsets, board list, title table).
   directories.  The generator/tooling default paths were updated to match.
 * `docs/games.json` and the generated `games/*.game` manifests keep the local
   defaults; `re/gen_games.py` falls back to `jillt`.
+
+## HUD health colour
+
+* Added `HUD > HEALTH` (Options > HUD) plus `--hud-health N|original` and the
+  `[hud] health` ini key.  `ORIGINAL` keeps the shipped pip art; 0..15 repaint
+  the health pips in that palette index in both the modern strip and the
+  classic panel (`Engine::draw_health_pip`).
+* The HUD menu preview now shows a "HEALTH COLOUR" swatch line.
+
+## OPL2 + CMF music
+
+* Added `port/src/opl2.*`: register-level YM3812 core (9 two-operator channels,
+  four waveforms, ADSR + key scaling, feedback/connection, vibrato/tremolo and
+  the five rhythm voices).
+* Added `port/src/cmf.*`: CMF parser for `*.ddt` and the Onesimus
+  `SONG*.ARK` tracks (header, 11-byte OPL instrument records, MIDI events with
+  running status).
+* Added `port/src/music.*`: MIDI-to-OPL sequencer (note on/off, programs,
+  controllers 0x07/0x63/0x67/0x68/0x69, melody and rhythm channel mapping,
+  loop at end of track) and `port/src/audio.*`: SDL audio device + offline WAV
+  renderer.
+* Board CHECKPT `*name.ddt` strings now start level music
+  (`Engine::take_music_request`), and a new `title_music` manifest key plays a
+  front-end track (`funky.ddt` / `peaks.ddt` / `wild.ddt` / `SONG5.ARK`).
+* New `OPTIONS > AUDIO` screen (MUSIC ON/OFF, VOLUME), `[audio]` ini keys,
+  `--no-music`, `--music-volume`, `--music-file`, `--music-seconds` and
+  `--dump-music FILE` for offline verification.
+* The map music checkpoint (p13 = 0) is now always allowed to fire and repeats
+  are suppressed, so hub tracks start once instead of every tick.
+* Docs: `docs/port-sound.md`; `title_music` documented in
+  `docs/game-manifests.md` and `MODS.md`.
+
+## Sound menu + audio device fixes
+
+* Renamed the options screen to **OPTIONS > SOUND** and labelled its second row
+  `MUSIC VOLUME: N%` (the first row is `MUSIC: ON/OFF`).
+* SDL audio open is now tolerant: it allows the endpoint to return 44.1 kHz (or
+  another rate/format) and rebuilds the sequencer at that rate instead of
+  failing a strict 48 kHz request.  The callback handles 16-bit and float
+  device formats and any channel count.
+* Added `--audio-check`: opens the device, plays the title track for 1.5 s and
+  reports device format, mixed frame count and peak level.
+* Raised the OPL mix headroom (0.18 -> 0.30) so the shipped tracks sit at a
+  comfortable level at the default 80% volume.
+* `ProfileDef` now carries `title_music` (generated from
+  `docs/profiles.json` frontend); built-in fallback games and manifests that
+  omit the key still get the correct title track.
+
+## Sampled sound effects
+
+* Added `port/src/sfx.*`: `.vcl` bank loader (50 unsigned 8-bit mono PCM
+  samples, 6000 Hz), the shared logical-id remap table, and a single priority
+  voice that resamples to the device rate and mixes with the OPL music.
+* `Engine::sound(priority, id)` now queues requests (bounded to 64 per tick);
+  the app drains them after each tick.  The two intentionally empty samples
+  (`0x11`/`0x25`) remain silent no-ops.
+* `OPTIONS > SOUND` gained `SFX: ON/OFF` and `SFX VOLUME: N%`; settings are
+  `[audio] sfx` / `[audio] sfx_volume`, plus `--no-sfx` and `--sfx-volume`.
+* Headless runs print `sfx requests: N`; `--audio-check` now also plays an
+  effect and reports its peak level.
+* Docs: `docs/port-sound.md` now covers the sampled path.
+
+## JillE total conversion limits
+
+* Diagnosed the `object count out of range` failures on the JillE mod: its
+  boards carry 245-258 objects, while `Board::load` still used the shipped
+  engine's 192-object assumption.  The original loader actually reads any u16
+  count straight into the 0x100-record array (no cap).  `Board::kMaxObjects`
+  is now 384 and `Engine::kObjectLimit` follows it, so all 21 JillE boards
+  load and run (verified 300 ticks each).
+* F3 level select now scrolls after 16 rows instead of growing past the
+  320x200 screen (JillE lists 21 boards).
+* Added per-manifest `save_prefix` / `save_slots`; JillE sets
+  `save_prefix = jillesave` so its saves no longer collide with Jill 1's
+  `jn1save` slots.
+* Save/load round-trip verified on a 258-object board.
+
+## Display / modding round
+
+* Doubled the kind-id ceiling (`ProfileDef::kind_limit()` = max(138, table)) so
+  mods can carry ids beyond the compiled 69; unknown ids use the safe dummy
+  metadata.  Doubled the visible/active object cap (`kActiveLimit` 0xC0 ->
+  0x180) to match the 384-object pool.
+* Added `OPTIONS > CHEATS > LEVEL SELECT`, which opens the same scrolling board
+  picker as F3.
+* Added `OPTIONS > VIDEO > BACKGROUND GRADIENT` (default OFF), a vertical
+  82%-100% brightness ramp applied during palette conversion.
+* Added `OPTIONS > VIDEO > FILTER` with `NONE / SMOOTH / CRT`:
+  - SMOOTH: separable 3-tap blur blended 75/25 with the original.
+  - CRT: 1-2-1 horizontal bleed, 72% scanlines and a radial vignette.
+  Filters run on the 320x200 frame before upload (works with the software
+  renderer too).  `--dump` renders the same path headlessly.
+* Settings: `[video] gradient`, `[video] filter`; CLI `--gradient`,
+  `--no-gradient`, `--filter 0|1|2`.
+* Docs: `docs/port-display.md`.
+
+## Sparks, entrance rise, paths and bindings
+
+* Removed the BACKGROUND GRADIENT video option and its palette-conversion
+  shader; the VIDEO menu is back to NONE/SMOOTH/CRT only.
+* VINECLIMB (kind 65): the handler seeds `dy = 2` only when `dy == 0` (the
+  earlier port tested `p13`), so the blue sparks now patrol the full climbable
+  span up and down instead of jittering every eight ticks.
+* Player state 4 (entry / respawn recover) now draws the sprite at
+  `y + 0x21 - p11`, rising one pixel per frame out of the floor, with solid
+  tiles redrawn over the lower half while she is still behind the ground.
+  This restores the level-entrance rise animation.
+* Launch directory: `jill.ini` is searched in the working directory, the
+  executable directory and up to four parents; the working directory is moved
+  to the folder that holds it, so running `port\build\Release\jill.exe`
+  directly finds `games/`, `profiles/` and the configured asset paths.
+* Per-game controls: `[controls.<game id>]` overrides any of the six actions
+  over `[controls]`; editing CONTROLS writes the active game's section and
+  removes it when it matches the base.
+* Docs: `docs/game-manifests.md`; `MODS.md` example.

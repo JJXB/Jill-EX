@@ -25,6 +25,9 @@ struct GameDef {
     std::string menu_block;    // optional .dma tile name for the menu frame ring
     std::string palette;       // optional 768-byte raw palette file
     std::string pages_file;    // .vcl sampled-sound bank with the text pages
+    std::string title_music;   // CMF title/menu track (.ddt or SONG*.ARK)
+    std::string save_prefix;   // per-game save stem (defaults to the profile's)
+    int save_slots = 0;        // 0 = the profile's slot count (max 6)
     int suit_index = -1;       // palette index, -1 = derive from the player art
     int hud_icon_bank = 0x0E;  // shape bank holding item icons and health pips
     std::vector<std::string> boards;  // level-select names, no extension

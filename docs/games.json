@@ -6,20 +6,23 @@
       "id": "jill1",
       "title": "Jill of the Jungle",
       "profile": "jill1",
-      "data": "jillt"
+      "data": "jillt",
+      "title_music": "funky.ddt"
     },
     {
       "id": "jill2",
       "title": "Jill goes Underground",
       "profile": "jill2",
-      "data": "jillt"
+      "data": "jillt",
+      "title_music": "peaks.ddt"
     },
     {
       "id": "jill3",
       "title": "Jill Saves the Prince",
       "profile": "jill3",
       "data": "jillt",
-      "menu_block": "REDB"
+      "menu_block": "REDB",
+      "title_music": "wild.ddt"
     }
   ]
 }

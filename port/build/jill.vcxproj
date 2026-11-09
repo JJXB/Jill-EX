@@ -437,6 +437,11 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\game.cpp" />
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\textpages.cpp" />
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\config.cpp" />
+    <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\cmf.cpp" />
+    <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\opl2.cpp" />
+    <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\music.cpp" />
+    <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\sfx.cpp" />
+    <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\audio.cpp" />
   </ItemGroup>
   <ItemGroup />
   <ItemGroup>

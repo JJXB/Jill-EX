@@ -53,7 +53,7 @@ bool Board::load(const std::string& path, std::string& err) {
     size_t p = 0x4000;
     int count = rd16(&d[p]);
     p += 2;
-    if (count < 1 || count > 192) {
+    if (count < 1 || count > kMaxObjects) {
         err = path + ": object count out of range";
         return false;
     }
@@ -230,5 +230,5 @@ bool Board::looks_like_board(const std::string& path) {
         return false;
     }
     int count = buf[0] | (buf[1] << 8);
-    return count >= 1 && count <= 192;
+    return count >= 1 && count <= kMaxObjects;
 }

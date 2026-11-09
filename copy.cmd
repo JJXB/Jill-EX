@@ -1,0 +1,1 @@
+copy .\port\build\Release\*.* D:\Games\JillEX\

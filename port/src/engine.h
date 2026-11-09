@@ -42,10 +42,12 @@ public:
     // Replay a recorded `*.mac` input script (the `&end*.mac` ending macros).
     void start_macro(const std::string& name);
     int save_slots() const {
-        if (!profile_ || profile_->save_slots <= 0) {
-            return 6;
-        }
-        return profile_->save_slots > 6 ? 6 : profile_->save_slots;
+        const int slots = game_.save_slots > 0
+                              ? game_.save_slots
+                              : (profile_ && profile_->save_slots > 0
+                                     ? profile_->save_slots
+                                     : 6);
+        return slots > 6 ? 6 : slots;
     }
     // Empty when the slot has no file yet.
     const std::string& save_label(int slot) const;
@@ -107,6 +109,10 @@ public:
     // HUD label/text colour (palette index, default 7 = white).
     void set_hud_text(int c) { hud_text_ = c & 0xFF; }
     int hud_text() const { return hud_text_; }
+    // HUD health colour: -1 keeps the original pip art, 0..15 repaints the
+    // health pips/flags in that palette index.
+    void set_hud_health(int c) { hud_health_ = c; }
+    int hud_health() const { return hud_health_; }
     // Resolve the configured background to a palette index (may derive the
     // per-episode suit shade from the player sprite on first use).
     int hud_bg_colour();
@@ -229,7 +235,13 @@ public:
     // --- engine services (used by the player handler) ---------------------
     // The header's item list caps at 15 entries (see add_item), so that is also
     // the largest number of feathers (item 9) a jump can be scaled by.
-    static constexpr int kObjectLimit = 0x100;  // original object storage
+    // The original array holds 0x100 records; total-conversion boards can
+    // start with more (JillE uses up to 258), so the port's runtime vector
+    // allows the same generous ceiling as Board::kMaxObjects.
+    static constexpr int kObjectLimit = Board::kMaxObjects;
+    // Visible/active list.  The original caps it at 0xC0; mods with dense
+    // boards can need more, so allow up to the object-pool ceiling.
+    static constexpr int kActiveLimit = 0x180;
     static constexpr int kMaxInventory = 15;
     int add_obj(int kind, int x, int y);
     uint16_t cando(int i, int x, int y, uint16_t mask) const;
@@ -244,7 +256,17 @@ public:
     void add_item(int id);
     void player_kill(int amount, int dir);
     void respawn();
-    void sound(int a, int b) { (void)a; (void)b; }  // not wired up yet
+    // `_sound(priority, logical_id)`: the app drains the queue after a tick and
+    // hands it to the sampled-effect voice.
+    void sound(int priority, int id);
+    std::vector<uint16_t> take_sound_requests();
+    // Music requested by a CHECKPT string (`*name.ddt`).  The app polls this
+    // after each update and hands the file to the CMF player.
+    std::string take_music_request() {
+        std::string s;
+        s.swap(music_request_);
+        return s;
+    }
     void kill_obj(int i);                          // 26F4:1863 _killobj
     void add_score(int n, int x, int y);           // 26F4:1fb2 _addscore
     void explode1(int x, int y, int n);            // 1A41:09a8 (n x EXPL1)
@@ -289,6 +311,11 @@ private:
                            bool transparent);
     void build_player_remap();
     void draw_shape(Framebuffer& fb, int shape, int x, int y, bool transparent);
+    // Draws the shape's set pixels in a single palette colour (health pips).
+    void draw_shape_tint(Framebuffer& fb, int shape, int x, int y,
+                         uint8_t colour);
+    // Health pip: original art, or the selected HUD health colour.
+    void draw_health_pip(Framebuffer& fb, int frame, int x, int y);
     // Horizontal mirror, used only when an episode lacks real right-facing
     // frames for a kind (Jill 2/3 ROMAN art is a 7-frame left-facing sheet).
     void draw_shape_mirrored(Framebuffer& fb, int shape, int x, int y,
@@ -339,6 +366,7 @@ private:
     int max_knives_ = 3;
     int hud_bg_ = -2;  // -2 = suit colour (default), -3 = vibrant suit
     int hud_text_ = 7; // HUD label colour (palette index)
+    int hud_health_ = -1;  // -1 = original pip art, else palette index
     int suit_colour_ = -1;
     int suit_vibrant_ = -1;
     int super_jump_ = 0;
@@ -364,6 +392,9 @@ private:
     std::string hub_name_;
     int last_facing_ = 0;        // last non-zero player facing (enhancement aid)
     std::string pending_warp_;   // CHECKPT string, handled on the next tick
+    std::string music_request_;  // `*name.ddt` from a CHECKPT, polled by the app
+    std::string last_music_;     // last requested track (do not restart it)
+    std::vector<uint16_t> sound_queue_;  // packed priority<<8 | logical id
     // Recorded ending macro (`&end1.mac`): one record per input change.  Time
     // is an absolute tick count from playback start (jill1-engine.md 13.1).
     struct MacroRec {

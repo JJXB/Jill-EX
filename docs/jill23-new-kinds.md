@@ -119,7 +119,7 @@ half speed. **[verified]**
 
 ```
 obj.p13 = (obj.p13 + 1) & 7
-if obj.p13 == 0:
+if obj.dy == 0:
     obj.dy = 2
 if _cando(obj, obj.x, obj.y + obj.dy, 4):
     _setorigin(obj)                 ; blocked -> snap back, stop bobbing
@@ -129,9 +129,9 @@ else:
         obj.dy = -obj.dy
 ```
 
-The `p13 == 0` reload of `dy = 2` restarts a downward stroke once per 8 ticks;
-each stroke reverses when the move is illegal. Net effect is a slow sine-like bob
-of a couple of pixels. The `4` mask passed to `_cando` tests tile attribute bit 2
+The `dy == 0` seed starts a downward stroke; the spark keeps that direction and
+only reverses when the destination leaves the climbable span.  Net effect is a
+continuous up/down patrol along the vine or chain. The `4` mask passed to `_cando` tests tile attribute bit 2
 (see `jill1-engine.md` 6.3); because stored attrs are XOR `0x4006`, mask 4 means
 "the cell is solid for this object". **[verified]**
 

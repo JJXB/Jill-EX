@@ -6,10 +6,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "audio.h"
 #include "engine.h"
 #include "framebuffer.h"
 #include "game.h"
@@ -46,6 +49,107 @@ bool load_palette(const std::string& path, uint8_t rgb[768]) {
     return true;
 }
 
+// Resolve a music name from a manifest / CHECKPT string.  Absolute paths are
+// used as-is; everything else lives in the game's asset directory.
+std::string track_path(const GameDef& g, const std::string& name) {
+    if (name.size() > 1 &&
+        (name[1] == ':' || name[0] == '/' || name[0] == '\\')) {
+        return name;
+    }
+    return g.data_dir + "/" + name;
+}
+
+std::shared_ptr<CmfSong> load_track(const GameDef& g, const std::string& name,
+                                    std::string& err) {
+    auto song = std::make_shared<CmfSong>();
+    if (!cmf_load(track_path(g, name), *song, err)) {
+        return nullptr;
+    }
+    return song;
+}
+
+// --- display post-process -------------------------------------------------
+// These work on the 320x200 ARGB frame just before it is uploaded.  They are
+// deliberately cheap: no shader pipeline, so they also work with SDL's
+// software renderer.
+
+void filter_smooth(std::vector<uint32_t>& argb, int w, int h) {
+    static std::vector<uint32_t> tmp;
+    tmp.resize(argb.size());
+    // Horizontal pass (1,2,1)/4.
+    for (int y = 0; y < h; ++y) {
+        const size_t row = static_cast<size_t>(y) * w;
+        for (int x = 0; x < w; ++x) {
+            const uint32_t l = argb[row + (x > 0 ? x - 1 : x)];
+            const uint32_t c = argb[row + x];
+            const uint32_t r = argb[row + (x + 1 < w ? x + 1 : x)];
+            uint32_t out = 0xFF000000u;
+            for (int s = 16; s >= 0; s -= 8) {
+                out |= ((l >> s & 0xFF) + 2 * ((c >> s) & 0xFF) +
+                        ((r >> s) & 0xFF)) / 4
+                       << s;
+            }
+            tmp[row + x] = out;
+        }
+    }
+    // Vertical pass, blended with the original so details stay readable.
+    for (int y = 0; y < h; ++y) {
+        const size_t row = static_cast<size_t>(y) * w;
+        const size_t up = static_cast<size_t>(y > 0 ? y - 1 : y) * w;
+        const size_t dn = static_cast<size_t>(y + 1 < h ? y + 1 : y) * w;
+        for (int x = 0; x < w; ++x) {
+            const uint32_t c = tmp[row + x];
+            const uint32_t u = tmp[up + x];
+            const uint32_t d = tmp[dn + x];
+            uint32_t mixed = 0xFF000000u;
+            for (int s = 16; s >= 0; s -= 8) {
+                const uint32_t bv =
+                    (((u >> s) & 0xFF) + 2 * ((c >> s) & 0xFF) +
+                     ((d >> s) & 0xFF)) / 4;
+                const uint32_t ov = (argb[row + x] >> s) & 0xFF;
+                mixed |= ((bv * 3 + ov) / 4) << s;
+            }
+            argb[row + x] = mixed;
+        }
+    }
+}
+
+void filter_crt(std::vector<uint32_t>& argb, int w, int h) {
+    static std::vector<uint32_t> src;
+    src = argb;
+    const float cx = (w - 1) * 0.5f;
+    const float cy = (h - 1) * 0.5f;
+    for (int y = 0; y < h; ++y) {
+        const size_t row = static_cast<size_t>(y) * w;
+        const bool scan = (y & 1) != 0;
+        const float sy = scan ? 0.72f : 1.0f;
+        const float dy = (y - cy) / (h * 0.5f);
+        for (int x = 0; x < w; ++x) {
+            const uint32_t l = src[row + (x > 0 ? x - 1 : x)];
+            const uint32_t c = src[row + x];
+            const uint32_t r = src[row + (x + 1 < w ? x + 1 : x)];
+            const float dx = (x - cx) / (w * 0.5f);
+            float v = 1.0f - 0.22f * (dx * dx + dy * dy);
+            if (v < 0.62f) {
+                v = 0.62f;
+            }
+            const float scale = sy * v;
+            uint32_t out = 0xFF000000u;
+            for (int s = 16; s >= 0; s -= 8) {
+                const uint32_t blur =
+                    (((l >> s) & 0xFF) + 2 * ((c >> s) & 0xFF) +
+                     ((r >> s) & 0xFF)) / 4;
+                uint32_t ch = static_cast<uint32_t>(blur * scale + 0.5f);
+                if (ch > 255) {
+                    ch = 255;
+                }
+                out |= ch << s;
+            }
+            argb[row + x] = out;
+        }
+    }
+}
+
 int run_headless(Engine& engine, const Options& opt) {
     std::printf("%s\n", engine.status().c_str());
     if (!engine.caption().empty()) {
@@ -75,8 +179,16 @@ int run_headless(Engine& engine, const Options& opt) {
     if (opt.face != 0) {
         engine.debug_face(opt.face);
     }
+    int sfx_requests = 0;
     for (int i = 0; i < opt.ticks; ++i) {
-        engine.set_input(0, 0, false, opt.fire && i == 0);        engine.tick();
+        engine.set_input(0, 0, false, opt.fire && i == 0);
+        engine.tick();
+        const std::string music = engine.take_music_request();
+        if (!music.empty()) {
+            std::printf("music: %s\n", music.c_str());
+        }
+        sfx_requests +=
+            static_cast<int>(engine.take_sound_requests().size());
         if (opt.watch_tile >= 0) {
             const TileInfo& t = engine.tile(opt.watch_tile);
             std::printf("tick %3d frame %3d tile 0x%03X shape 0x%04X flags 0x%04X\n",
@@ -89,6 +201,9 @@ int run_headless(Engine& engine, const Options& opt) {
         }
     }
     std::printf("done: %s\n", engine.status().c_str());
+    if (sfx_requests > 0) {
+        std::printf("sfx requests: %d\n", sfx_requests);
+    }
     if (!engine.caption().empty()) {
         std::string cap = engine.caption();
         for (char& c : cap) {
@@ -132,16 +247,29 @@ int run_headless(Engine& engine, const Options& opt) {
         load_palette(opt.palette, palette);
         Framebuffer fb;
         engine.render(fb);
+        std::vector<uint32_t> argb(fb.px.size());
+        for (size_t i = 0; i < fb.px.size(); ++i) {
+            const uint8_t c = fb.px[i];
+            const uint32_t r = palette[c * 3 + 0];
+            const uint32_t g = palette[c * 3 + 1];
+            const uint32_t b = palette[c * 3 + 2];
+            argb[i] = 0xFF000000u | (r << 16) | (g << 8) | b;
+        }
+        if (opt.filter == 1) {
+            filter_smooth(argb, Framebuffer::W, Framebuffer::H);
+        } else if (opt.filter == 2) {
+            filter_crt(argb, Framebuffer::W, Framebuffer::H);
+        }
         FILE* f = std::fopen(opt.dump.c_str(), "wb");
         if (!f) {
             std::fprintf(stderr, "cannot write %s\n", opt.dump.c_str());
             return 1;
         }
         std::fprintf(f, "P6\n%d %d\n255\n", Framebuffer::W, Framebuffer::H);
-        for (size_t i = 0; i < fb.px.size(); ++i) {
-            uint8_t rgb[3] = {palette[fb.px[i] * 3 + 0],
-                              palette[fb.px[i] * 3 + 1],
-                              palette[fb.px[i] * 3 + 2]};
+        for (uint32_t p : argb) {
+            uint8_t rgb[3] = {static_cast<uint8_t>(p >> 16),
+                              static_cast<uint8_t>(p >> 8),
+                              static_cast<uint8_t>(p)};
             std::fwrite(rgb, 1, 3, f);
         }
         std::fclose(f);
@@ -188,9 +316,10 @@ std::string scancode_name(SDL_Scancode sc) {
     return (n && *n) ? std::string(n) : std::string();
 }
 
-void load_bindings_ini(const IniFile& ini, Bindings& b) {
+void load_bindings_ini(const IniFile& ini, Bindings& b,
+                       const std::string& section = "controls") {
     for (int a = 0; a < ACT_COUNT; ++a) {
-        const std::string value = ini.get("controls", kBindActionKey[a]);
+        const std::string value = ini.get(section, kBindActionKey[a]);
         if (!value.empty()) {
             const size_t bar = value.find('|');
             const std::string first = value.substr(0, bar);
@@ -208,27 +337,38 @@ void load_bindings_ini(const IniFile& ini, Bindings& b) {
                             : SDL_GetScancodeFromName(second.c_str());
         }
         const std::string pad = ini.get(
-            "controls", std::string(kBindActionKey[a]) + "_pad");
+            section, std::string(kBindActionKey[a]) + "_pad");
         b.pad[a] = pad.empty()
                        ? -1
                        : SDL_GameControllerGetButtonFromString(pad.c_str());
     }
 }
 
-void save_bindings_ini(IniFile& ini, const Bindings& b) {
+void save_bindings_ini(IniFile& ini, const Bindings& b,
+                       const std::string& section = "controls") {
     for (int a = 0; a < ACT_COUNT; ++a) {
         std::string value = scancode_name(b.key1[a]);
         if (b.key2[a] != SDL_SCANCODE_UNKNOWN) {
             value += "|" + scancode_name(b.key2[a]);
         }
-        ini.set("controls", kBindActionKey[a], value);
+        ini.set(section, kBindActionKey[a], value);
         const char* pad = b.pad[a] >= 0
                               ? SDL_GameControllerGetStringForButton(
                                     static_cast<SDL_GameControllerButton>(b.pad[a]))
                               : "";
-        ini.set("controls", std::string(kBindActionKey[a]) + "_pad",
+        ini.set(section, std::string(kBindActionKey[a]) + "_pad",
                 pad ? pad : "");
     }
+}
+
+bool bindings_equal(const Bindings& a, const Bindings& b) {
+    for (int i = 0; i < ACT_COUNT; ++i) {
+        if (a.key1[i] != b.key1[i] || a.key2[i] != b.key2[i] ||
+            a.pad[i] != b.pad[i]) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool key_down(const uint8_t* keys, const Bindings& b, int action) {
@@ -340,8 +480,16 @@ void draw_select(Framebuffer& fb, Engine& engine,
     }
     const GameDef& g = games[static_cast<size_t>(sel.game)];
     int n = g.board_count();
+    // A total-conversion board list can exceed the screen (JillE has 21).  Show
+    // a scrolling window instead of letting the panel grow past 200 pixels.
+    constexpr int kMaxRows = 16;
+    const int shown = std::min(n, kMaxRows);
+    int first = 0;
+    if (n > shown) {
+        first = std::max(0, std::min(sel.board - shown / 2, n - shown));
+    }
     int boxw = 168;
-    int boxh = 46 + n * 8;
+    int boxh = 46 + shown * 8;
     int x = (Framebuffer::W - boxw) / 2;
     int y = (Framebuffer::H - boxh) / 2;
     if (y < 2) {
@@ -353,10 +501,17 @@ void draw_select(Framebuffer& fb, Engine& engine,
     std::snprintf(line, sizeof(line), "%s", upper_ascii(g.title.c_str()).c_str());
     engine.draw_text(fb, x + 6, y + 4, 7, line);
     engine.draw_text(fb, x + 6, y + 12, 7, "UP/DOWN  LEFT/RIGHT  ENTER");
-    for (int i = 0; i < n; ++i) {
+    if (n > shown) {
+        std::snprintf(line, sizeof(line), "%d-%d / %d", first + 1,
+                      first + shown, n);
+        const int w = 6 * static_cast<int>(std::strlen(line));
+        engine.draw_text(fb, x + boxw - 6 - w, y + 4, 5, line);
+    }
+    for (int r = 0; r < shown; ++r) {
+        const int i = first + r;
         std::snprintf(line, sizeof(line), "%c %s",
                       i == sel.board ? '>' : ' ', g.board(i).c_str());
-        engine.draw_text(fb, x + 8, y + 24 + i * 8,
+        engine.draw_text(fb, x + 8, y + 24 + r * 8,
                          i == sel.board ? 7 : 5, line);
     }
     engine.draw_text(fb, x + 6, y + boxh - 12, 7, "F3/ESC CLOSE");
@@ -376,6 +531,7 @@ bool apply_selection(Engine& engine, const std::vector<GameDef>& games,
     const bool hud = engine.hud_classic();
     const int hud_bg = engine.hud_bg();
     const int hud_text = engine.hud_text();
+    const int hud_health = engine.hud_health();
     const bool fly = engine.debug_fly();
     const bool invincible = engine.invincible();
     const int super_jump = engine.super_jump();
@@ -409,6 +565,7 @@ bool apply_selection(Engine& engine, const std::vector<GameDef>& games,
     engine.set_hud_classic(hud);
     engine.set_hud_bg(hud_bg);
     engine.set_hud_text(hud_text);
+    engine.set_hud_health(hud_health);
     engine.set_debug_fly(fly);
     engine.set_invincible(invincible);
     engine.set_super_jump(super_jump);
@@ -433,6 +590,7 @@ enum class MenuScreen {
     Options,
     Hud,
     Video,
+    Audio,
     Menus,
     Controls,
     Cheats,
@@ -448,12 +606,17 @@ struct Menu {
     int opt_sel = 0;
     int hud_sel = 0;
     int video_sel = 0;
+    int audio_sel = 0;
     int menus_sel = 0;
     int ctrl_sel = 0;
     int cheat_sel = 0;
     int enh_sel = 0;
     int save_sel = 0;
     int rebind_action = -1;  // >= 0: waiting for the next key/button
+    bool music_on = true;    // mirrored from the player for the SOUND screen
+    int music_volume = 80;
+    bool sfx_on = true;
+    int sfx_volume = 80;
 };
 
 bool menu_open(const Menu& m) { return m.screen != MenuScreen::Closed; }
@@ -468,6 +631,8 @@ int& menu_sel(Menu& m) {
             return m.hud_sel;
         case MenuScreen::Video:
             return m.video_sel;
+        case MenuScreen::Audio:
+            return m.audio_sel;
         case MenuScreen::Menus:
             return m.menus_sel;
         case MenuScreen::Controls:
@@ -569,6 +734,21 @@ const char* hud_text_name(int c) {
 
 int next_hud_text(int c) { return (c + 1) & 0x0F; }
 
+// HUD health colour: -1 keeps the original pip art, 0..15 repaints the pips.
+const char* hud_health_name(int c) {
+    if (c < 0) {
+        return "ORIGINAL";
+    }
+    return hud_text_name(c);
+}
+
+int next_hud_health(int c) {
+    if (c < 0) {
+        return 0;
+    }
+    return (c >= 15) ? -1 : c + 1;
+}
+
 // --- video settings -------------------------------------------------------
 struct VideoSettings {
     int mode = 0;        // 0 windowed, 1 fullscreen, 2 borderless
@@ -577,6 +757,7 @@ struct VideoSettings {
     int high_fps = 60;   // presentation rate, 0 = 18.2 Hz
     int splash = 0;      // 0 off, N = games[N-1] intro publisher screen
     bool interpolate = true;  // high-framerate smoothing (needs high_fps > 0)
+    int filter = 0;      // 0 none, 1 smooth (light blur), 2 CRT
 };
 
 // Presentation rates.  The world always ticks at 18.2065 Hz; these only change
@@ -591,6 +772,16 @@ std::string high_fps_name(int hz) {
     }
     return std::to_string(hz) + " FPS";
 }
+
+const char* filter_name(int filter) {
+    switch (filter) {
+        case 1: return "SMOOTH";
+        case 2: return "CRT";
+        default: return "NONE";
+    }
+}
+
+int filter_next(int filter) { return (filter + 1) % 3; }
 
 struct ResolutionOption {
     const char* label;
@@ -686,8 +877,8 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
             return v;
         }
         case MenuScreen::Options:
-            return {"HUD", "VIDEO", "CHEATS", "CONTROLS", "MENUS", "GAMEPLAY",
-                    "BACK"};
+            return {"HUD", "VIDEO", "SOUND", "CHEATS", "CONTROLS", "MENUS",
+                    "GAMEPLAY", "BACK"};
         case MenuScreen::Video: {
             char size[64];
             if (video.resolution) {
@@ -711,14 +902,25 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                              : (video.interpolate ? "ON" : "OFF")),
                     std::string("MESSAGE BOX: ") +
                         (engine.message_box() ? "ON" : "OFF"),
-                    "FILTERS: NONE (COMING SOON)", "BACK"};
+                    std::string("FILTER: ") + filter_name(video.filter),
+                    "BACK"};
         }
+        case MenuScreen::Audio:
+            return {std::string("MUSIC: ") + (m.music_on ? "ON" : "OFF"),
+                    std::string("MUSIC VOLUME: ") +
+                        std::to_string(m.music_volume) + "%",
+                    std::string("SFX: ") + (m.sfx_on ? "ON" : "OFF"),
+                    std::string("SFX VOLUME: ") +
+                        std::to_string(m.sfx_volume) + "%",
+                    "BACK"};
         case MenuScreen::Hud:
             return {std::string("STYLE: ") +
                         (engine.hud_classic() ? "CLASSIC" : "MODERN"),
                     std::string("BACKGROUND: ") +
                         hud_bg_name(engine.hud_bg()),
                     std::string("TEXT: ") + hud_text_name(engine.hud_text()),
+                    std::string("HEALTH: ") +
+                        hud_health_name(engine.hud_health()),
                     "BACK"};
         case MenuScreen::Menus:
             return {std::string("THEME: ") +
@@ -746,7 +948,7 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                     "ADD KNIFE", "ADD KEY", "ADD GEM", "ADD BLADE",
                     "REFILL HEALTH",
                     "BECOME JILL", "BECOME FROG", "BECOME BIRD",
-                    "BECOME SPIDER", "BECOME FISH", "BACK"};
+                    "BECOME SPIDER", "BECOME FISH", "LEVEL SELECT", "BACK"};
         case MenuScreen::SaveGame:
         case MenuScreen::LoadGame: {
             std::vector<std::string> v;
@@ -1042,6 +1244,7 @@ void draw_menu(Framebuffer& fb, Engine& engine, Menu& m, bool started,
         case MenuScreen::Options: sub = "OPTIONS"; break;
         case MenuScreen::Hud: sub = "HUD"; break;
         case MenuScreen::Video: sub = "VIDEO"; break;
+        case MenuScreen::Audio: sub = "SOUND"; break;
         case MenuScreen::Menus: sub = "MENU THEMES"; break;
         case MenuScreen::Controls: sub = "CONTROLS"; break;
         case MenuScreen::Cheats: sub = "CHEATS"; break;
@@ -1122,6 +1325,12 @@ void draw_menu(Framebuffer& fb, Engine& engine, Menu& m, bool started,
         engine.draw_text(fb, 14, py + 3,
                          static_cast<uint8_t>(engine.hud_text()),
                          "LEVEL 1  [2] 3  HEALTH  SCORE 0");
+        // Health colour swatch: the label itself is drawn in that colour, or
+        // in the text colour while the original pip art is selected.
+        const int hc = engine.hud_health() < 0 ? engine.hud_text()
+                                               : engine.hud_health();
+        engine.draw_text(fb, 14, py + 16, static_cast<uint8_t>(hc),
+                         "HEALTH COLOUR");
     }
     const int footer_y = std::min(Framebuffer::H - 12, by + boxh + 2);
     if (m.rebind_action >= 0) {
@@ -1182,6 +1391,7 @@ bool start_game(Engine& engine, const std::vector<GameDef>& games, int index) {
     const bool hud = engine.hud_classic();
     const int hud_bg = engine.hud_bg();
     const int hud_text = engine.hud_text();
+    const int hud_health = engine.hud_health();
     const bool fly = engine.debug_fly();
     const bool inv = engine.invincible();
     const int super_jump = engine.super_jump();
@@ -1215,6 +1425,7 @@ bool start_game(Engine& engine, const std::vector<GameDef>& games, int index) {
     engine.set_hud_classic(hud);
     engine.set_hud_bg(hud_bg);
     engine.set_hud_text(hud_text);
+    engine.set_hud_health(hud_health);
     engine.set_debug_fly(fly);
     engine.set_invincible(inv);
     engine.set_super_jump(super_jump);
@@ -1251,6 +1462,7 @@ int run_sdl(const Options& opt, Engine& engine,
     video.high_fps = opt.high_fps;
     video.splash = opt.splash;
     video.interpolate = opt.interpolate;
+    video.filter = opt.filter;
 
     SDL_Window* window = SDL_CreateWindow(
         "Jill (port skeleton)", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
@@ -1291,6 +1503,51 @@ int run_sdl(const Options& opt, Engine& engine,
     SplashImage splash_image;
     LevelSelect select;
     Menu menu;
+    menu.music_on = opt.music;
+    menu.music_volume = std::max(0, std::min(100, opt.music_volume));
+    menu.sfx_on = opt.sfx;
+    menu.sfx_volume = std::max(0, std::min(100, opt.sfx_volume));
+    MusicPlayer music_player;
+    music_player.set_enabled(menu.music_on);
+    music_player.set_volume(menu.music_volume / 100.0f);
+    music_player.set_sfx_volume(menu.sfx_on ? menu.sfx_volume / 100.0f : 0.0f);
+    {
+        std::string audio_err;
+        if (!music_player.open(audio_err)) {
+            std::fprintf(stderr, "%s\n", audio_err.c_str());
+        }
+    }
+    if (!engine.game().pages_file.empty()) {
+        std::string sfx_err;
+        if (!music_player.load_sfx(
+                track_path(engine.game(), engine.game().pages_file),
+                sfx_err)) {
+            std::fprintf(stderr, "%s\n", sfx_err.c_str());
+        }
+    }
+    std::string music_game = engine.game().id;
+    if (!engine.game().title_music.empty()) {
+        std::string merr;
+        auto song = load_track(engine.game(), engine.game().title_music, merr);
+        if (song) {
+            music_player.play(song);
+        } else {
+            std::fprintf(stderr, "%s\n", merr.c_str());
+        }
+    }
+    if (opt.audio_check) {
+        SDL_Delay(1500);
+        std::printf("audio-check: device %s, %d Hz, %d ch, music '%s', "
+                    "frames %llu, peak %.3f\n",
+                    music_player.is_open() ? "open" : "FAILED",
+                    music_player.sample_rate(), music_player.channels(),
+                    music_player.title().c_str(),
+                    music_player.frames_mixed(), music_player.peak_level());
+        music_player.play_sfx(6, 0x19);  // APPLE pickup sound
+        SDL_Delay(400);
+        std::printf("audio-check: sfx peak %.3f\n", music_player.sfx_peak());
+        return music_player.is_open() ? 0 : 1;
+    }
     if (!opt.board.empty()) {
         menu.screen = MenuScreen::Closed;  // explicit --board run: skip the menu
     }
@@ -1351,12 +1608,33 @@ int run_sdl(const Options& opt, Engine& engine,
     const double freq = static_cast<double>(SDL_GetPerformanceFrequency());
     uint32_t title_timer = SDL_GetTicks();
 
-    Bindings bindings;
+    // Bindings: `[controls]` is the base; `[controls.<game id>]` overrides it
+    // for one installed game.  Editing in the Controls menu changes the active
+    // game's set and is written back to its section.
+    Bindings base_bindings;
+    std::map<std::string, Bindings> game_bindings;
     {
         IniFile ini;
         std::string ini_err;
         if (ini.load("jill.ini", ini_err)) {
-            load_bindings_ini(ini, bindings);
+            load_bindings_ini(ini, base_bindings);
+            for (const std::string& sec : ini.sections()) {
+                static const std::string kPrefix = "controls.";
+                if (sec.compare(0, kPrefix.size(), kPrefix) == 0 &&
+                    sec.size() > kPrefix.size()) {
+                    Bindings b = base_bindings;
+                    load_bindings_ini(ini, b, sec);
+                    game_bindings[sec.substr(kPrefix.size())] = b;
+                }
+            }
+        }
+    }
+    std::string bindings_game = engine.game().id;
+    Bindings bindings = base_bindings;
+    {
+        const auto it = game_bindings.find(bindings_game);
+        if (it != game_bindings.end()) {
+            bindings = it->second;
         }
     }
     SDL_GameController* controller = nullptr;
@@ -1443,6 +1721,8 @@ int run_sdl(const Options& opt, Engine& engine,
                 engine.set_hud_bg(next_hud_bg(engine.hud_bg()));
             } else if (menu.screen == MenuScreen::Hud && sel == 2) {
                 engine.set_hud_text(next_hud_text(engine.hud_text()));
+            } else if (menu.screen == MenuScreen::Hud && sel == 3) {
+                engine.set_hud_health(next_hud_health(engine.hud_health()));
             } else if (menu.screen == MenuScreen::Menus && sel == 0) {
                 engine.set_menu_theme(menu_theme_next(engine.menu_theme(), 1, games));
             } else if (menu.screen == MenuScreen::Enhancements && sel == 0) {
@@ -1591,17 +1871,43 @@ int run_sdl(const Options& opt, Engine& engine,
                 } else if (nav == 5 && sel == 1) {
                     menu.screen = MenuScreen::Video;
                 } else if (nav == 5 && sel == 2) {
-                    menu.screen = MenuScreen::Cheats;
+                    menu.screen = MenuScreen::Audio;
+                    menu.audio_sel = 0;
                 } else if (nav == 5 && sel == 3) {
-                    menu.screen = MenuScreen::Controls;
+                    menu.screen = MenuScreen::Cheats;
                 } else if (nav == 5 && sel == 4) {
-                    menu.screen = MenuScreen::Menus;
+                    menu.screen = MenuScreen::Controls;
                 } else if (nav == 5 && sel == 5) {
-                    menu.screen = MenuScreen::Enhancements;
+                    menu.screen = MenuScreen::Menus;
                 } else if (nav == 5 && sel == 6) {
+                    menu.screen = MenuScreen::Enhancements;
+                } else if (nav == 5 && sel == 7) {
                     menu.screen = MenuScreen::Main;
                 } else {
                     toggle_option();
+                }
+                break;
+            case MenuScreen::Audio:
+                if (nav == 5 && sel == 4) {
+                    menu.screen = MenuScreen::Options;
+                } else if (sel == 0 && (nav == 5 || nav == 3 || nav == 4)) {
+                    menu.music_on = !menu.music_on;
+                    music_player.set_enabled(menu.music_on);
+                } else if (sel == 1 && (nav == 3 || nav == 4)) {
+                    menu.music_volume =
+                        std::max(0, std::min(100, menu.music_volume +
+                                                      (nav == 3 ? -10 : 10)));
+                    music_player.set_volume(menu.music_volume / 100.0f);
+                } else if (sel == 2 && (nav == 5 || nav == 3 || nav == 4)) {
+                    menu.sfx_on = !menu.sfx_on;
+                    music_player.set_sfx_volume(
+                        menu.sfx_on ? menu.sfx_volume / 100.0f : 0.0f);
+                } else if (sel == 3 && (nav == 3 || nav == 4)) {
+                    menu.sfx_volume =
+                        std::max(0, std::min(100, menu.sfx_volume +
+                                                      (nav == 3 ? -10 : 10)));
+                    music_player.set_sfx_volume(
+                        menu.sfx_on ? menu.sfx_volume / 100.0f : 0.0f);
                 }
                 break;
             case MenuScreen::Video:
@@ -1616,7 +1922,9 @@ int run_sdl(const Options& opt, Engine& engine,
                         engine.set_message_box(!engine.message_box());
                     }
                 } else if (sel == 6) {
-                    break;  // FILTERS: placeholder
+                    if (nav == 5 || nav == 3 || nav == 4) {
+                        video.filter = filter_next(video.filter);
+                    }
                 } else if (nav == 3) {
                     video_step(-1);
                 } else if (nav == 4 || nav == 5) {
@@ -1624,9 +1932,9 @@ int run_sdl(const Options& opt, Engine& engine,
                 }
                 break;
             case MenuScreen::Hud:
-                if (nav == 5 && sel == 3) {
+                if (nav == 5 && sel == 4) {
                     menu.screen = MenuScreen::Options;
-                } else if (sel >= 0 && sel <= 2) {
+                } else if (sel >= 0 && sel <= 3) {
                     toggle_option();
                 }
                 break;
@@ -1695,6 +2003,26 @@ int run_sdl(const Options& opt, Engine& engine,
                     // 8 Jill, 9 frog, 10 bird, 11 spider, 12 fish.
                     static const int kItem[5] = {0, 4, 5, 6, 7};
                     engine.debug_morph(kItem[sel - 8]);
+                } else if (sel == 13) {
+                    // Same panel as F3, opened from the cheats list.
+                    select.open = true;
+                    select.game = 0;
+                    for (size_t i = 0; i < games.size(); ++i) {
+                        if (games[i].id == engine.game().id) {
+                            select.game = static_cast<int>(i);
+                            break;
+                        }
+                    }
+                    select.board = 0;
+                    const GameDef& cur =
+                        games[static_cast<size_t>(select.game)];
+                    for (int i = 0; i < cur.board_count(); ++i) {
+                        if (engine.board_name() == cur.board(i)) {
+                            select.board = i;
+                            break;
+                        }
+                    }
+                    menu.screen = MenuScreen::Closed;
                 } else {
                     menu.screen = MenuScreen::Options;
                 }
@@ -2030,6 +2358,45 @@ int run_sdl(const Options& opt, Engine& engine,
             game_started = false;
         }
 
+        // Per-game bindings: stash edits when the episode changes, then load
+        // the new game's override set.
+        if (engine.game().id != bindings_game) {
+            game_bindings[bindings_game] = bindings;
+            bindings_game = engine.game().id;
+            const auto it = game_bindings.find(bindings_game);
+            bindings = (it != game_bindings.end()) ? it->second : base_bindings;
+        }
+
+        // Music: a `*name.ddt` CHECKPT starts that track; switching episode
+        // in the menu falls back to the new game's title theme.
+        if (engine.game().id != music_game) {
+            music_game = engine.game().id;
+            music_player.stop();
+            if (!engine.game().title_music.empty()) {
+                std::string merr;
+                auto song =
+                    load_track(engine.game(), engine.game().title_music, merr);
+                if (song) {
+                    music_player.play(song);
+                } else {
+                    std::fprintf(stderr, "%s\n", merr.c_str());
+                }
+            }
+        }
+        const std::string music_request = engine.take_music_request();
+        if (!music_request.empty()) {
+            std::string merr;
+            auto song = load_track(engine.game(), music_request, merr);
+            if (song) {
+                music_player.play(song);
+            } else {
+                std::fprintf(stderr, "%s\n", merr.c_str());
+            }
+        }
+        for (uint16_t s : engine.take_sound_requests()) {
+            music_player.play_sfx(s >> 8, s & 0xFF);
+        }
+
         if (splash_active) {
             const std::vector<uint8_t>& page = splash_image.pages[splash_page];
             if (page.size() == fb.px.size()) {
@@ -2072,11 +2439,16 @@ int run_sdl(const Options& opt, Engine& engine,
             (splash_active && splash_image.palette_ready) ? splash_image.palette
                                                           : palette;
         for (size_t i = 0; i < fb.px.size(); ++i) {
-            uint8_t c = fb.px[i];
-            uint32_t r = out_pal[c * 3 + 0];
-            uint32_t g = out_pal[c * 3 + 1];
-            uint32_t b = out_pal[c * 3 + 2];
+            const uint8_t c = fb.px[i];
+            const uint32_t r = out_pal[c * 3 + 0];
+            const uint32_t g = out_pal[c * 3 + 1];
+            const uint32_t b = out_pal[c * 3 + 2];
             argb[i] = 0xFF000000u | (r << 16) | (g << 8) | b;
+        }
+        if (video.filter == 1) {
+            filter_smooth(argb, Framebuffer::W, Framebuffer::H);
+        } else if (video.filter == 2) {
+            filter_crt(argb, Framebuffer::W, Framebuffer::H);
         }
         SDL_UpdateTexture(texture, nullptr, argb.data(),
                           Framebuffer::W * static_cast<int>(sizeof(uint32_t)));
@@ -2140,6 +2512,11 @@ int run_sdl(const Options& opt, Engine& engine,
         ini.set_int("video", "high_fps", video.high_fps);
         ini.set_int("video", "splash", video.splash);
         ini.set_bool("video", "interpolate", video.interpolate);
+        ini.set_int("video", "filter", video.filter);
+        ini.set_bool("audio", "music", menu.music_on);
+        ini.set_int("audio", "volume", menu.music_volume);
+        ini.set_bool("audio", "sfx", menu.sfx_on);
+        ini.set_int("audio", "sfx_volume", menu.sfx_volume);
         ini.set_bool("hud", "classic", engine.hud_classic());
         std::string bg_name;
         if (engine.hud_bg() == -2) {
@@ -2151,6 +2528,11 @@ int run_sdl(const Options& opt, Engine& engine,
         }
         ini.set("hud", "background", bg_name);
         ini.set_int("hud", "text", engine.hud_text());
+        if (engine.hud_health() < 0) {
+            ini.set("hud", "health", "original");
+        } else {
+            ini.set_int("hud", "health", engine.hud_health());
+        }
         ini.set_bool("gameplay", "fire_crouched",
                      engine.fire_while_crouched());
         ini.set_int("gameplay", "max_knives", engine.max_knives());
@@ -2163,7 +2545,16 @@ int run_sdl(const Options& opt, Engine& engine,
         ini.set_int("gameplay", "player_look", engine.player_look());
         ini.set_int("gameplay", "player_suit", engine.player_suit());
         ini.set_int("gameplay", "menu_theme", engine.menu_theme());
-        save_bindings_ini(ini, bindings);
+        game_bindings[bindings_game] = bindings;
+        save_bindings_ini(ini, base_bindings);
+        for (const auto& kv : game_bindings) {
+            const std::string sec = "controls." + kv.first;
+            if (bindings_equal(kv.second, base_bindings)) {
+                ini.remove_section(sec);
+            } else {
+                save_bindings_ini(ini, kv.second, sec);
+            }
+        }
         ini.save("jill.ini");
     }
 
@@ -2300,6 +2691,7 @@ int run_app(const Options& opt) {
     apply_player_look(engine, games, opt.player_look, opt.player_suit);
     engine.set_hud_bg(opt.hud_bg);
     engine.set_hud_text(opt.hud_text);
+    engine.set_hud_health(opt.hud_health);
     std::string board = opt.board.empty() ? game.first_board : opt.board;
     if (!engine.load_board(board, err)) {
         std::fprintf(stderr, "%s\n", err.c_str());
@@ -2329,6 +2721,33 @@ int run_app(const Options& opt) {
 
     if (opt.ticks > 0) {
         return run_headless(engine, run_opt);
+    }
+
+    if (!opt.dump_music.empty()) {
+        std::string track =
+            opt.music_file.empty() ? game.title_music : opt.music_file;
+        if (track.empty()) {
+            std::fprintf(stderr,
+                         "%s has no title_music; use --music-file NAME\n",
+                         game.id.c_str());
+            return 2;
+        }
+        CmfSong song;
+        std::string merr;
+        if (!cmf_load(track_path(game, track), song, merr)) {
+            std::fprintf(stderr, "%s\n", merr.c_str());
+            return 2;
+        }
+        const float vol =
+            std::max(0, std::min(100, opt.music_volume)) / 100.0f;
+        if (!MusicPlayer::render_wav(song, opt.dump_music, opt.music_seconds,
+                                     48000, vol, merr)) {
+            std::fprintf(stderr, "%s\n", merr.c_str());
+            return 2;
+        }
+        std::printf("wrote %s (%s, %.1fs)\n", opt.dump_music.c_str(),
+                    track.c_str(), opt.music_seconds);
+        return 0;
     }
 
 #ifdef JILL_HAVE_SDL

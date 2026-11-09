@@ -12,4 +12,5 @@ pages = jill2.vcl
 board_ext = .jn2
 first_board = 0
 intro_board = intro
+title_music = peaks.ddt
 boards = 0, 1, 3, 9, 10, 11, 13, 15, 17, 20, intro

@@ -35,6 +35,10 @@ struct Board {
     static constexpr int kCols = 128;
     static constexpr int kRows = 64;
     static constexpr int kHeaderSize = 0x46;
+    // The shipped loader reads any u16 count; the runtime pool has room for
+    // 0x100 records, and total-conversion mods exceed that (JillE peaks at
+    // 258).  The port uses a vector, so allow a generous ceiling.
+    static constexpr int kMaxObjects = 384;
 
     std::array<uint16_t, kCols * kRows> map{};
     std::vector<BoardObject> objects;

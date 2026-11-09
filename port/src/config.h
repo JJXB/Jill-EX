@@ -1,6 +1,7 @@
 #pragma once
 #include <map>
 #include <string>
+#include <vector>
 
 // Minimal INI reader/writer for `jill.ini`.  Keys are case-insensitive and
 // values are kept verbatim; `#` and `;` start a comment on their own line.
@@ -18,6 +19,9 @@ public:
     // Returns the keys in a section (used for per-game data paths).
     std::map<std::string, std::string> section(
         const std::string& name) const;
+    // Section names in file order (lower case).
+    std::vector<std::string> sections() const;
+    void remove_section(const std::string& name);
 
     void set(const std::string& section, const std::string& key,
              const std::string& value);

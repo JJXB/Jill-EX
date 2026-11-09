@@ -376,6 +376,11 @@ that places the player at another object's position and sets state 4. It
 restores the normal 16x32 body (the death state uses the 0x20x0x20 corpse),
 uses `p11` as a 0x20-frame timer and then returns to ground control.
 
+The state-4 draw adds `0x21 - p11` to the sprite's y, so Jill rises one pixel
+per frame out of the floor over the whole timer (the entry "rise").  The
+handler also blits a 16x16 overlay from `DGROUP:0xB986`; the port's equivalent
+redraws solid floor cells over the lowered sprite.
+
 ### 4.5 State 5 - death (`0x20BE4`) **[verified]**
 
 ```

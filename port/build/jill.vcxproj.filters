@@ -37,6 +37,21 @@
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\config.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\cmf.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\opl2.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\music.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\sfx.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\audio.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="C:\Users\jjxb_\GIT\Jill-EX\port\CMakeLists.txt" />

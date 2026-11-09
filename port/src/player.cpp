@@ -568,7 +568,37 @@ void Engine::player_draw(int i, Framebuffer& fb) {
             break;
     }
 
-    draw_player_shape(fb, 0x0800 | (f & 0xFF), o.x - cam_x_, o.y - cam_y_, true);
+    int px = o.x - cam_x_;
+    int py = o.y - cam_y_;
+    if (o.state == 4) {
+        // Level entrance / respawn: the original draws the sprite at
+        // y + 0x21 - p11, so Jill rises one pixel per frame out of the floor
+        // over the 0x20-frame recover timer.  Redraw the solid cells over her
+        // lower half while she is still behind the ground.
+        const int rise = 0x21 - std::max(0, std::min(o.p11, 0x20));
+        py += rise;
+        const int wy = o.y + rise;
+        draw_player_shape(fb, 0x0800 | (f & 0xFF), px, py, true);
+        const int c0 = o.x >> 4;
+        const int c1 = (o.x + 15) >> 4;
+        const int r0 = wy >> 4;
+        const int r1 = (wy + 31) >> 4;
+        for (int c = c0; c <= c1; ++c) {
+            for (int r = r0; r <= r1; ++r) {
+                if (c < 0 || c >= Board::kCols || r < 0 || r >= Board::kRows) {
+                    continue;
+                }
+                const int id = map_[c * Board::kRows + r] & 0x3FFF;
+                if (id < TileDefs::kCount &&
+                    (tiles_.at(id).flags & 0x0007) == 0x0006) {
+                    draw_shape(fb, tiles_.at(id).shape, c * 16 - cam_x_,
+                               r * 16 - cam_y_, false);
+                }
+            }
+        }
+        return;
+    }
+    draw_player_shape(fb, 0x0800 | (f & 0xFF), px, py, true);
 }
 
 // Morphed Jill forms (kinds 54-57), behaviour from

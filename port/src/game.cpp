@@ -87,6 +87,12 @@ bool apply_key(GameDef& g, const std::string& raw_key, const std::string& value,
         g.palette = value;
     } else if (key == "pages" || key == "text_pages" || key == "vcl") {
         g.pages_file = value;
+    } else if (key == "title_music" || key == "music") {
+        g.title_music = value;
+    } else if (key == "save_prefix") {
+        g.save_prefix = value;
+    } else if (key == "save_slots") {
+        g.save_slots = parse_int(value, 0);
     } else if (key == "suit" || key == "suit_index") {
         g.suit_index = parse_int(value, -1);
     } else if (key == "hud_icon_bank") {
@@ -135,6 +141,15 @@ void apply_profile_defaults(GameDef& g) {
     }
     if (g.pages_file.empty() && p.sound_bank) {
         g.pages_file = p.sound_bank;
+    }
+    if (g.title_music.empty() && p.title_music) {
+        g.title_music = p.title_music;
+    }
+    if (g.save_prefix.empty() && p.save_prefix) {
+        g.save_prefix = p.save_prefix;
+    }
+    if (g.save_slots <= 0) {
+        g.save_slots = p.save_slots;
     }
     if (g.boards.empty() && p.boards) {
         for (int i = 0; i < p.board_count; ++i) {

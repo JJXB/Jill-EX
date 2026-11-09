@@ -25,6 +25,7 @@ Use this when your mod only replaces boards, art, tiles or text pages.
    shapes = jill1.sha
    tiles = jill.dma
    pages = jill1.vcl
+   title_music = funky.ddt
    board_ext = .jn1
    first_board = map
    intro_board = intro
@@ -32,8 +33,10 @@ Use this when your mod only replaces boards, art, tiles or text pages.
    ```
 
    `data` is the folder holding the mod assets. `shapes`, `tiles` and `pages`
-   are file names inside that folder. `boards` lists the playable boards without
-   the extension.
+   are file names inside that folder. `pages` is the `.vcl` bank, which also
+   supplies the sampled sound effects. `title_music` is the CMF track played by
+   the front end (omit it to stay silent in the menu). `boards` lists the
+   playable boards without the extension.
 
 3. Optionally put the folder in `jill.ini` instead:
 
@@ -48,6 +51,14 @@ Use this when your mod only replaces boards, art, tiles or text pages.
 
    ```bat
    port\build\Release\jill.exe --game mymod
+   ```
+
+5. Optional per-mod controls in `jill.ini` (missing keys use `[controls]`):
+
+   ```ini
+   [controls.mymod]
+   jump = Z|Space
+   throw = C
    ```
 
 ### 2. New executable or total conversion

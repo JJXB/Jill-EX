@@ -29,6 +29,7 @@ struct OwnedProfile {
     std::map<int, const char*> title_at;   // level-title index -> text
     std::vector<const char*> title_ptrs;
     std::string sound_bank;                // runtime .vcl name
+    std::string title_music;               // front-end CMF track
     std::string save_prefix;               // save file stem
     std::string id;
 };
@@ -122,6 +123,9 @@ void finalise(OwnedProfile& p) {
     p.def.sound_bank = p.sound_bank.empty()
                            ? (p.def.sound_bank ? p.def.sound_bank : "")
                            : p.sound_bank.c_str();
+    p.def.title_music = p.title_music.empty()
+                            ? (p.def.title_music ? p.def.title_music : "")
+                            : p.title_music.c_str();
     p.def.save_prefix = p.save_prefix.empty()
                             ? (p.def.save_prefix ? p.def.save_prefix : "")
                             : p.save_prefix.c_str();
@@ -162,6 +166,9 @@ void apply_key(OwnedProfile& p, const std::string& key,
     } else if (key == "board_ext") {
         p.strings.push_back(value);
         p.def.board_ext = p.strings.back().c_str();
+    } else if (key == "title_music" || key == "music") {
+        p.title_music = value;
+        p.def.title_music = p.title_music.c_str();
     } else if (key == "pages" || key == "text_pages" || key == "sound_bank") {
         p.sound_bank = value;
         p.def.sound_bank = p.sound_bank.c_str();

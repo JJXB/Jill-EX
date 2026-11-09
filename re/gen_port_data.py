@@ -184,6 +184,7 @@ def main():
                      % (n, len(fr["board_list"]), n))
         lines.append("        kTitles%d, %d," % (n, tt["count"]))
         lines.append("        \"%s\"," % ep["sound"]["bank"])
+        lines.append("        \"%s\"," % fr.get("title_music", ""))
         lines.append("        {%d, %d, %d, %d, %d, %d, %d, %d, %d, %d},"
                      % (a["tile_map"], a["board_header"], a["tile_table"],
                         a["object_array"], a["object_count"], a["visible_count"],

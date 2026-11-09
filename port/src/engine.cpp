@@ -175,6 +175,9 @@ bool Engine::load_board(const std::string& name, std::string& err) {
     }
     has_player_ = board_.objects[0].kind == 0 || board_.objects[0].kind == 23;
     pending_warp_.clear();
+    music_request_.clear();
+    last_music_.clear();
+    sound_queue_.clear();
     last_facing_ = 0;
     msg_text_.clear();
     msg_ttl_ = 0;
@@ -502,7 +505,7 @@ void Engine::update_pass() {
         bool visible =
             o.x + o.w >= cam_x_ - 0x60 && o.x <= cam_x_ + Framebuffer::W + 0x60 &&
             o.y + o.h >= cam_y_ - 0x30 && o.y <= cam_y_ + Framebuffer::H + 0x30;
-        if (visible && active_.size() < 0xC0) {
+        if (visible && active_.size() < static_cast<size_t>(kActiveLimit)) {
             active_.push_back(i);
             o.flags &= ~0xC000;
         } else {
@@ -541,14 +544,14 @@ void Engine::update_pass() {
         // (FUN_26f4_12b9 0x28448).  Pairs where both sides carry 0x0008 are
         // handled once.
         const BoardObject& a0 = objects_[static_cast<size_t>(i)];
-        if (a0.kind < profile_->kind_count &&
+        if (a0.kind < profile_->kind_limit() &&
             (profile_->kind(a0.kind).flags & 0x0008)) {
             for (int j : active_) {
                 if (j == i) {
                     continue;
                 }
                 const BoardObject& b0 = objects_[static_cast<size_t>(j)];
-                if (b0.kind < profile_->kind_count &&
+                if (b0.kind < profile_->kind_limit() &&
                     (profile_->kind(b0.kind).flags & 0x0008) && j < i) {
                     continue;
                 }
@@ -1217,11 +1220,11 @@ bool Engine::update_object(int i) {
             return false;
         }
 
-        case 65:  // VINECLIMB (1a53:49b1): slow bob, reverse when blocked
+        case 65:  // VINECLIMB (1a53:49b1): patrol the climbable span
             o.p13 = (o.p13 + 1) & 7;
-            if (o.p13 == 0) {
-                o.dy = 2;
-            }
+            // The handler only seeds dy when it is zero; it does NOT restart a
+            // downward stroke every 8 ticks (the earlier port read p13 here,
+            // which made the sparks jitter instead of travelling the vine).
             if (o.dy == 0) {
                 o.dy = 2;
             }
@@ -1809,7 +1812,9 @@ bool Engine::on_hit(int a, int b) {
                 macro_playing_ = false;
                 return true;
             }
-            if (o.p13 == level_id()) {
+            // p13 == 0 is the map music trigger, not a level entrance; it
+            // always fires even when the hub's stored level id is also 0.
+            if (o.p13 != 0 && o.p13 == level_id()) {
                 return false;
             }
             // Snapshot the fields before touching the player record.
@@ -2501,9 +2506,9 @@ void Engine::render_hud_classic(Framebuffer& fb) {
     draw_text(fb, 2, 2, kLabel, "HEALTH");
     if (hp > 0) {
         for (int i = 0; i < hp - 1; ++i) {
-            draw_shape(fb, icon_shape(0x2A), i * 3 + 0x2A, 2, true);
+            draw_health_pip(fb, 0x2A, i * 3 + 0x2A, 2);
         }
-        draw_shape(fb, icon_shape(0x2B), (hp - 1) * 3 + 0x28, 2, true);
+        draw_health_pip(fb, 0x2B, (hp - 1) * 3 + 0x28, 2);
     }
 
     char buf[16];
@@ -2596,9 +2601,9 @@ void Engine::render_hud_modern(Framebuffer& fb) {
     }
     if (hp > 0) {
         for (int i = 0; i < hp - 1; ++i) {
-            draw_shape(fb, icon_shape(0x2A), kHpX + 2 + i * 3, 3, true);
+            draw_health_pip(fb, 0x2A, kHpX + 2 + i * 3, 3);
         }
-        draw_shape(fb, icon_shape(0x2B), kHpX, 3, true);
+        draw_health_pip(fb, 0x2B, kHpX, 3);
     }
 
     std::snprintf(buf, sizeof(buf), "SCORE %u",
@@ -3189,6 +3194,34 @@ void Engine::draw_shape(Framebuffer& fb, int shape, int x, int y,
             fb.put(x + sx, y + sy, c);
         }
     }
+}
+
+void Engine::draw_shape_tint(Framebuffer& fb, int shape, int x, int y,
+                             uint8_t colour) {
+    int entry = (shape >> 8) & 0x3F;
+    int index = shape & 0xFF;
+    const ShapeFrame* f = shapes_.frame(entry, index);
+    if (!f) {
+        return;
+    }
+    for (int sy = 0; sy < f->h; ++sy) {
+        for (int sx = 0; sx < f->w; ++sx) {
+            uint8_t c = f->px[static_cast<size_t>(sy) * f->w + sx];
+            if (c == 0) {
+                continue;
+            }
+            fb.put(x + sx, y + sy, colour);
+        }
+    }
+}
+
+void Engine::draw_health_pip(Framebuffer& fb, int frame, int x, int y) {
+    const int shape = icon_shape(frame);
+    if (hud_health_ < 0) {
+        draw_shape(fb, shape, x, y, true);
+        return;
+    }
+    draw_shape_tint(fb, shape, x, y, static_cast<uint8_t>(hud_health_ & 0xFF));
 }
 
 void Engine::draw_shape_mirrored(Framebuffer& fb, int shape, int x, int y,
@@ -4001,7 +4034,7 @@ void Engine::send_trig(int trig, int code, int self) {
     int count = static_cast<int>(objects_.size());
     for (int i = 0; i < count; ++i) {
         const BoardObject& o = objects_[static_cast<size_t>(i)];
-        if (o.kind < profile_->kind_count &&
+        if (o.kind < profile_->kind_limit() &&
             (profile_->kind(o.kind).flags & 0x0100) && o.p13 == trig) {
             trig_object(i, code, self);
         }
@@ -4326,6 +4359,20 @@ void Engine::process_pending_warp() {
             // Ending / demo input script: play it back instead of changing
             // boards.  The ending boards use `&end1.mac` / `&end2.mac`.
             start_macro(cmd.substr(1));
+        } else if (c == '*') {
+            // Level / hub music: the app resolves the name against the data
+            // directory and starts the CMF track.
+            std::string name = cmd.substr(1);
+            while (!name.empty() &&
+                   (name.back() == ' ' || name.back() == '\r')) {
+                name.pop_back();
+            }
+            // The hub's music checkpoint can be touched every tick (the
+            // player is placed on it), so only report a change of track.
+            if (!name.empty() && name != last_music_) {
+                music_request_ = name;
+                last_music_ = name;
+            }
         }
         return;  // music / conditional / macro commands: no board change
     }
@@ -4482,10 +4529,16 @@ void Engine::place_at_checkpoint(int level) {
 }
 
 std::string Engine::save_path(int slot) const {
-    if (!profile_ || !profile_->save_prefix || !profile_->save_prefix[0]) {
+    // A mod can override the profile's save stem so its slots do not collide
+    // with the base game's (JillE uses `jillesave` instead of `jn1save`).
+    const std::string prefix =
+        !game_.save_prefix.empty()
+            ? game_.save_prefix
+            : (profile_ && profile_->save_prefix ? profile_->save_prefix : "");
+    if (prefix.empty()) {
         return std::string();
     }
-    return std::string(profile_->save_prefix) + "." + std::to_string(slot);
+    return prefix + "." + std::to_string(slot);
 }
 
 void Engine::refresh_save_labels() {
@@ -4623,4 +4676,19 @@ std::string Engine::status() const {
                   static_cast<int>(objects_.size()), cam_x_, cam_y_,
                   invincible_ ? "  INV" : "");
     return buf;
+}
+
+void Engine::sound(int priority, int id) {
+    // Bounded: a busy collision tick must not grow the queue without limit.
+    if (sound_queue_.size() >= 64) {
+        return;
+    }
+    sound_queue_.push_back(static_cast<uint16_t>(
+        ((priority & 0xFF) << 8) | (id & 0xFF)));
+}
+
+std::vector<uint16_t> Engine::take_sound_requests() {
+    std::vector<uint16_t> out;
+    out.swap(sound_queue_);
+    return out;
 }

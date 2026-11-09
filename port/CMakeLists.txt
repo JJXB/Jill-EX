@@ -18,6 +18,11 @@ add_executable(jill
     src/game.cpp
     src/textpages.cpp
     src/config.cpp
+    src/cmf.cpp
+    src/opl2.cpp
+    src/music.cpp
+    src/sfx.cpp
+    src/audio.cpp
 )
 
 target_compile_definitions(jill PRIVATE SDL_MAIN_HANDLED)

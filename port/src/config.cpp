@@ -84,6 +84,19 @@ bool IniFile::save(const std::string& path) const {
     return static_cast<bool>(out);
 }
 
+std::vector<std::string> IniFile::sections() const {
+    std::vector<std::string> out;
+    out.reserve(data_.size());
+    for (const auto& kv : data_) {
+        out.push_back(kv.first);
+    }
+    return out;
+}
+
+void IniFile::remove_section(const std::string& name) {
+    data_.erase(ini_lower(name));
+}
+
 std::string IniFile::get(const std::string& section, const std::string& key,
                          const std::string& fallback) const {
     auto s = data_.find(ini_lower(section));

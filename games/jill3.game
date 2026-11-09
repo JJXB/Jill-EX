@@ -12,5 +12,6 @@ pages = jill3.vcl
 board_ext = .jn3
 first_board = map
 intro_board = intro
+title_music = wild.ddt
 menu_block = REDB
 boards = 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, map, intro

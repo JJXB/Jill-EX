@@ -72,6 +72,7 @@ struct ProfileDef {
     const char* const* level_titles;  // 36-entry title table (index = level+4)
     int title_count;
     const char* sound_bank;       // .vcl: sampled sounds + text page table
+    const char* title_music;      // front-end CMF track (.ddt)
     Anchors anchors;
     const char* id;               // stable name a game manifest can refer to
     const char* save_prefix;      // save file stem, e.g. "jn1save"
@@ -80,6 +81,13 @@ struct ProfileDef {
     const KindInfo& kind(int k) const {
         static const KindInfo dummy{0, "?", 0, 0, 0, 0, 0};
         return (k >= 0 && k < kind_count) ? kinds[k] : dummy;
+    }
+    // Double the shipped table (Jill 1 initialises 69 kinds).  Mods may use
+    // ids above the compiled table; those report safe dummy metadata instead
+    // of being rejected by the object passes.
+    static constexpr int kMinKindLimit = 138;
+    int kind_limit() const {
+        return kind_count > kMinKindLimit ? kind_count : kMinKindLimit;
     }
 };
 

@@ -126,6 +126,12 @@ def emit(game, cfg):
         "first_board = %s" % strip_ext(game.get("first_board", fr["first_board"]), ext),
         "intro_board = %s" % strip_ext(game.get("intro_board", fr["intro_board"]), ext),
     ]
+    if game.get("title_music"):
+        lines.append("title_music = %s" % game["title_music"])
+    if game.get("save_prefix"):
+        lines.append("save_prefix = %s" % game["save_prefix"])
+    if game.get("save_slots") is not None:
+        lines.append("save_slots = %d" % game["save_slots"])
     if game.get("palette"):
         lines.append("palette = %s" % game["palette"])
     if game.get("menu_block"):

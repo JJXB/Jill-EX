@@ -24,6 +24,7 @@ struct Options {
     int scale = 3;              // windowed integer scale (1..6)
     int high_fps = 60;          // presentation rate: 0 = 18.2 Hz, else 60..144
     bool interpolate = true;    // --no-interpolate: no high-fps smoothing
+    int filter = 0;             // --filter N: 0 none, 1 smooth, 2 CRT
     int window_mode = 0;        // 0 windowed, 1 fullscreen, 2 borderless
     int resolution = 0;         // 0 desktop, else index into kResolutions
     int resolution_w = 0;       // --resolution WxH, resolved at start-up
@@ -38,6 +39,15 @@ struct Options {
     int max_knives = 3;         // --max-knives N: enhancement default (3/5)
     int hud_bg = -2;            // --hud-bg: palette index, -2 suit, -3 vibrant
     int hud_text = 7;           // --hud-text: HUD label colour palette index
+    int hud_health = -1;        // --hud-health: -1 original pips, else palette
+    bool music = true;          // --no-music: keep the CMF player silent
+    int music_volume = 80;      // --music-volume N: 0..100
+    bool sfx = true;            // --no-sfx: keep sampled effects silent
+    int sfx_volume = 80;        // --sfx-volume N: 0..100
+    std::string dump_music;     // --dump-music FILE: render a CMF to WAV
+    bool audio_check = false;   // --audio-check: open the device, report levels
+    std::string music_file;     // --music-file NAME: track for --dump-music
+    double music_seconds = 10.0;  // --music-seconds N
     bool fullscreen = false;    // legacy alias for window_mode = 1
     bool hud_classic = false;   // --hud: use the original HUD panel art
     bool invincible = false;    // --invincible: debug no-damage mode
