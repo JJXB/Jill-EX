@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "comment": "Installed games. re/gen_games.py merges each entry with its engine profile from docs/profiles.json and writes games/<id>.game. Asset fields not listed here come from the profile's frontend block; 'data' defaults to jillt.",
+  "games": [
+    {
+      "id": "jill1",
+      "title": "Jill of the Jungle",
+      "profile": "jill1",
+      "data": "jillt"
+    },
+    {
+      "id": "jill2",
+      "title": "Jill goes Underground",
+      "profile": "jill2",
+      "data": "jillt"
+    },
+    {
+      "id": "jill3",
+      "title": "Jill Saves the Prince",
+      "profile": "jill3",
+      "data": "jillt",
+      "menu_block": "REDB"
+    }
+  ]
+}

@@ -1,0 +1,366 @@
+{
+  "schema": 1,
+  "handler_tables": {
+    "base_episode": 1,
+    "fly_frame": 3114,
+    "fly_y": 3122,
+    "phoenix_frame": 3138,
+    "phoenix_mirror": 3154,
+    "demon_frame": 3170,
+    "fatso_frame": 3182,
+    "expl2_frame": 3906,
+    "bat_frame": 3960,
+    "bat_y": 3968,
+    "snake_head": 3924,
+    "snake_mid": 3932,
+    "snake_tail": 3940,
+    "boll": 3948,
+    "knight_xoff": 3976,
+    "knight_frame": 3998,
+    "beeswarm": 4020,
+    "croc_head": 4084,
+    "croc_tail": 4092,
+    "skull_b": 4100,
+    "skull_a": 4116,
+    "jelly": 4124,
+    "badfish": 4144
+  },
+  "episodes": [
+    {
+      "episode": 1,
+      "exe": "D:/Emu/DOS/C/jillt/jill1.exe",
+      "exe_size": 216804,
+      "mz_header_size": 7168,
+      "load_module_size": 185478,
+      "debug_tail_size": 24158,
+      "image": "re/img.bin",
+      "image_size": 209636,
+      "dgroup_runtime_segment": 11519,
+      "dgroup_stored_segment": 7423,
+      "dgroup_image_base": 118768,
+      "kind_count": 69,
+      "board_extension": ".jn1",
+      "anchors": {
+        "tile_map": 17318,
+        "board_header": 33702,
+        "tile_table": 33772,
+        "object_array": 38572,
+        "object_stride": 31,
+        "object_max": 192,
+        "object_count": 47900,
+        "frame_counter": 48698,
+        "kind_flags": 48700,
+        "visible_count": 48844,
+        "active_list": 48300,
+        "camera_ptr": 47090,
+        "pending_transition": 47902,
+        "item_icon_table": 3796
+      },
+      "epic_score": 25,
+      "score_overrides": { "4": 6 },
+      "kind_table": {
+        "initializer_image": 25666,
+        "initializer_stored_seg": 1604,
+        "initializer_stored_off": 2,
+        "fields": {
+          "handler_off": 47182,
+          "handler_seg": 47184,
+          "width": 46774,
+          "height": 46912,
+          "name_off": 47516,
+          "name_seg": 47518,
+          "flags": 48700,
+          "tileset": 47934,
+          "default_count": 48072
+        }
+      },
+      "handler_tables_delta": 0,
+      "sound": {
+        "runtime_seg": 5505,
+        "runtime_off": 376,
+        "stored_seg": 1409,
+        "image": 22920,
+        "remap_table": 4626,
+        "bank": "jill1.vcl",
+        "sfx_used": 23
+      },
+      "frontend": {
+        "shape": "jill1.sha",
+        "tile_defs": "jill.dma",
+        "config": "jill1.cfg",
+        "intro_board": "intro.jn1",
+        "first_board": "map.jn1",
+        "title_music": "funky.ddt",
+        "save_prefix": "jn1save",
+        "save_slots": 6,
+        "menu_prompt_dgroup": 5288,
+        "menu_prompt_image": 87740,
+        "board_list": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "6",
+          "9",
+          "50",
+          "map",
+          "intro"
+        ],
+        "demo": {
+          "code": null,
+          "board_table": null,
+          "level_bytes": null,
+          "macro_table": null,
+          "hud_level_word": 33702,
+          "boards": [
+            "0.dem",
+            "2.dem",
+            "1.dem"
+          ],
+          "macros": [
+            "jn1demo.mac"
+          ],
+          "level_ids": null
+        },
+        "title_table": {
+          "image": 128129,
+          "dgroup": 9361,
+          "stored_seg": 7423,
+          "count": 36,
+          "first_string_dgroup": 9545
+        }
+      }
+    },
+    {
+      "episode": 2,
+      "exe": "D:/Emu/DOS/C/jillt/jill2.exe",
+      "exe_size": 185574,
+      "mz_header_size": 7168,
+      "load_module_size": 178406,
+      "debug_tail_size": 0,
+      "image": "re/img2.bin",
+      "image_size": 178406,
+      "dgroup_runtime_segment": 11570,
+      "dgroup_stored_segment": 7474,
+      "dgroup_image_base": 119584,
+      "kind_count": 69,
+      "board_extension": ".jn2",
+      "anchors": {
+        "tile_map": 16608,
+        "board_header": 32992,
+        "tile_table": 33062,
+        "object_array": 37862,
+        "object_stride": 31,
+        "object_max": 192,
+        "object_count": 47190,
+        "frame_counter": 47988,
+        "kind_flags": 47990,
+        "visible_count": 48134,
+        "active_list": null,
+        "camera_ptr": 46380,
+        "pending_transition": 47192,
+        "item_icon_table": 3952
+      },
+      "epic_score": 25,
+      "score_overrides": { "4": 6 },
+      "kind_table": {
+        "initializer_image": 26391,
+        "initializer_stored_seg": 1649,
+        "initializer_stored_off": 7,
+        "fields": {
+          "handler_off": 46472,
+          "handler_seg": 46474,
+          "width": 46064,
+          "height": 46202,
+          "name_off": 46806,
+          "name_seg": 46808,
+          "flags": 47990,
+          "tileset": 47224,
+          "default_count": 47362
+        }
+      },
+      "handler_tables_delta": 156,
+      "sound": {
+        "runtime_seg": 5611,
+        "runtime_off": 474,
+        "stored_seg": 1515,
+        "image": 24714,
+        "remap_table": 4782,
+        "bank": "jill2.vcl",
+        "sfx_used": 24
+      },
+      "frontend": {
+        "shape": "jill2.sha",
+        "tile_defs": "jill.dma",
+        "config": "jill2.cfg",
+        "intro_board": "intro.jn2",
+        "first_board": "0.jn2",
+        "title_music": "peaks.ddt",
+        "save_prefix": "jn2save",
+        "save_slots": 6,
+        "menu_prompt_dgroup": 5444,
+        "menu_prompt_image": 88359,
+        "board_list": [
+          "0",
+          "1",
+          "3",
+          "9",
+          "10",
+          "11",
+          "13",
+          "15",
+          "17",
+          "20",
+          "intro"
+        ],
+        "demo": {
+          "code": "2000:5AE5",
+          "board_table": 6282,
+          "level_bytes": 6322,
+          "macro_table": 6332,
+          "hud_level_word": 32992,
+          "boards": [
+            "3.jn2",
+            "9.jn2",
+            "17.jn2"
+          ],
+          "macros": [
+            "jn2dem1.mac",
+            "jn2dem2.mac",
+            "jn2dem3.mac"
+          ],
+          "level_ids": [
+            3,
+            9,
+            17
+          ]
+        },
+        "title_table": {
+          "image": 128329,
+          "dgroup": 8745,
+          "stored_seg": 7474,
+          "count": 36,
+          "first_string_dgroup": 8958
+        }
+      }
+    },
+    {
+      "episode": 3,
+      "exe": "D:/Emu/DOS/C/jillt/jill3.exe",
+      "exe_size": 204174,
+      "mz_header_size": 7168,
+      "load_module_size": 179638,
+      "debug_tail_size": 16856,
+      "image": "re/img3.bin",
+      "image_size": 196494,
+      "dgroup_runtime_segment": 11637,
+      "dgroup_stored_segment": 7541,
+      "dgroup_image_base": 120656,
+      "kind_count": 69,
+      "board_extension": ".jn3",
+      "anchors": {
+        "tile_map": 15938,
+        "board_header": 32322,
+        "tile_table": 32392,
+        "object_array": 37192,
+        "object_stride": 31,
+        "object_max": 192,
+        "object_count": 46584,
+        "frame_counter": 48150,
+        "kind_flags": 48152,
+        "visible_count": 48296,
+        "active_list": null,
+        "camera_ptr": 45710,
+        "pending_transition": 46586,
+        "item_icon_table": 4224
+      },
+      "epic_score": 25,
+      "score_overrides": { "4": 6 },
+      "kind_table": {
+        "initializer_image": 25856,
+        "initializer_stored_seg": 1616,
+        "initializer_stored_off": 0,
+        "fields": {
+          "handler_off": 45802,
+          "handler_seg": 45804,
+          "width": 45394,
+          "height": 45532,
+          "name_off": 46136,
+          "name_seg": 46138,
+          "flags": 48152,
+          "tileset": 46618,
+          "default_count": 46756
+        }
+      },
+      "handler_tables_delta": 428,
+      "sound": {
+        "runtime_seg": 5494,
+        "runtime_off": 488,
+        "stored_seg": 1398,
+        "image": 22856,
+        "remap_table": 5036,
+        "bank": "jill3.vcl",
+        "sfx_used": 23
+      },
+      "frontend": {
+        "shape": "jill3.sha",
+        "tile_defs": "jill.dma",
+        "config": "jill3.cfg",
+        "intro_board": "intro.jn3",
+        "first_board": "map.jn3",
+        "title_music": "wild.ddt",
+        "save_prefix": "jn3save",
+        "save_slots": 6,
+        "menu_prompt_dgroup": 6492,
+        "menu_prompt_image": 89067,
+        "board_list": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12",
+          "13",
+          "14",
+          "map",
+          "intro"
+        ],
+        "demo": {
+          "code": "2000:59F9",
+          "board_table": 6607,
+          "level_bytes": 6647,
+          "macro_table": 6657,
+          "hud_level_word": 32322,
+          "boards": [
+            "1.jn3",
+            "5.jn3",
+            "12.jn3"
+          ],
+          "macros": [
+            "jn3dem1.mac",
+            "jn3dem2.mac",
+            "jn3dem3.mac"
+          ],
+          "level_ids": [
+            1,
+            5,
+            12
+          ]
+        },
+        "title_table": {
+          "image": 129637,
+          "dgroup": 8981,
+          "stored_seg": 7541,
+          "count": 36,
+          "first_string_dgroup": 9194
+        }
+      }
+    }
+  ]
+}

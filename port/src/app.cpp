@@ -1,0 +1,2341 @@
+#include "app.h"
+
+#include "config.h"
+
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "engine.h"
+#include "framebuffer.h"
+#include "game.h"
+#include "profile.h"
+
+#ifdef JILL_HAVE_SDL
+#include <SDL.h>
+#endif
+
+namespace {
+
+std::string upper_ascii(const char* s);
+std::string player_look_name(const std::vector<GameDef>& games, int look);
+std::string player_suit_name(int suit);
+void apply_player_look(Engine& engine, const std::vector<GameDef>& games,
+                       int look, int suit);
+
+bool load_palette(const std::string& path, uint8_t rgb[768]) {
+    vga_default_palette(rgb);
+    if (path.empty()) {
+        return true;
+    }
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) {
+        std::fprintf(stderr, "cannot open palette %s\n", path.c_str());
+        return false;
+    }
+    size_t got = std::fread(rgb, 1, 768, f);
+    std::fclose(f);
+    if (got != 768) {
+        std::fprintf(stderr, "%s is not a 768-byte palette\n", path.c_str());
+        return false;
+    }
+    return true;
+}
+
+int run_headless(Engine& engine, const Options& opt) {
+    std::printf("%s\n", engine.status().c_str());
+    if (!engine.caption().empty()) {
+        std::string cap = engine.caption();
+        for (char& c : cap) {
+            if (c == '\n') {
+                c = '/';
+            }
+        }
+        std::printf("caption: %s\n", cap.c_str());
+    }
+    if (opt.start_x >= 0 && opt.start_y >= 0) {
+        engine.warp_player(opt.start_x, opt.start_y);
+    }
+    if (opt.level >= 0) {
+        engine.set_level_id(opt.level);
+    }
+    if (opt.text_page > 0) {
+        engine.show_text_page(opt.text_page);
+    }
+    if (opt.blade) {
+        engine.debug_spawn_blade();
+    }
+    if (opt.morph >= 0) {
+        engine.debug_morph(opt.morph);
+    }
+    if (opt.face != 0) {
+        engine.debug_face(opt.face);
+    }
+    for (int i = 0; i < opt.ticks; ++i) {
+        engine.set_input(0, 0, false, opt.fire && i == 0);        engine.tick();
+        if (opt.watch_tile >= 0) {
+            const TileInfo& t = engine.tile(opt.watch_tile);
+            std::printf("tick %3d frame %3d tile 0x%03X shape 0x%04X flags 0x%04X\n",
+                        i + 1, engine.frame(), opt.watch_tile,
+                        static_cast<unsigned>(t.shape),
+                        static_cast<unsigned>(t.flags));
+        }
+        if ((i + 1) % 60 == 0) {
+            std::printf("tick %d: %s\n", i + 1, engine.status().c_str());
+        }
+    }
+    std::printf("done: %s\n", engine.status().c_str());
+    if (!engine.caption().empty()) {
+        std::string cap = engine.caption();
+        for (char& c : cap) {
+            if (c == '\n') {
+                c = '/';
+            }
+        }
+        std::printf("caption now: %s\n", cap.c_str());
+    }
+
+    if (opt.save_slot >= 0) {
+        std::string save_err;
+        if (engine.save_game(opt.save_slot, save_err)) {
+            std::printf("saved slot %d\n", opt.save_slot);
+        } else {
+            std::fprintf(stderr, "save slot %d: %s\n", opt.save_slot,
+                         save_err.c_str());
+        }
+    }
+
+    if (!opt.dump_objects.empty()) {
+        FILE* f = std::fopen(opt.dump_objects.c_str(), "w");
+        if (!f) {
+            std::fprintf(stderr, "cannot write %s\n", opt.dump_objects.c_str());
+            return 1;
+        }
+        std::fprintf(f, "# idx kind x y dx dy w h state p0f p11 p13 flags ttl\n");
+        const auto& objs = engine.objects();
+        for (size_t i = 0; i < objs.size(); ++i) {
+            const BoardObject& o = objs[i];
+            std::fprintf(f, "%3d %2d %4d %4d %3d %3d %2d %2d %3d %3d %3d %3d 0x%04X %d\n",
+                         static_cast<int>(i), o.kind, o.x, o.y, o.dx, o.dy,
+                         o.w, o.h, o.state, o.p0f, o.p11, o.p13,
+                         static_cast<unsigned>(o.flags), o.ttl);
+        }
+        std::fclose(f);
+    }
+
+    if (!opt.dump.empty()) {
+        uint8_t palette[768];
+        load_palette(opt.palette, palette);
+        Framebuffer fb;
+        engine.render(fb);
+        FILE* f = std::fopen(opt.dump.c_str(), "wb");
+        if (!f) {
+            std::fprintf(stderr, "cannot write %s\n", opt.dump.c_str());
+            return 1;
+        }
+        std::fprintf(f, "P6\n%d %d\n255\n", Framebuffer::W, Framebuffer::H);
+        for (size_t i = 0; i < fb.px.size(); ++i) {
+            uint8_t rgb[3] = {palette[fb.px[i] * 3 + 0],
+                              palette[fb.px[i] * 3 + 1],
+                              palette[fb.px[i] * 3 + 2]};
+            std::fwrite(rgb, 1, 3, f);
+        }
+        std::fclose(f);
+        std::printf("wrote %s\n", opt.dump.c_str());
+    }
+    return 0;
+}
+
+#ifdef JILL_HAVE_SDL
+
+// Keyboard/gamepad bindings.  Every action has two keyboard slots (the second
+// may be SDL_SCANCODE_UNKNOWN) and one SDL game-controller button.
+enum ActionId {
+    ACT_LEFT,
+    ACT_RIGHT,
+    ACT_UP,
+    ACT_DOWN,
+    ACT_JUMP,
+    ACT_THROW,
+    ACT_COUNT
+};
+
+struct Bindings {
+    SDL_Scancode key1[ACT_COUNT] = {
+        SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT, SDL_SCANCODE_UP,
+        SDL_SCANCODE_DOWN, SDL_SCANCODE_Z, SDL_SCANCODE_X};
+    SDL_Scancode key2[ACT_COUNT] = {
+        SDL_SCANCODE_A, SDL_SCANCODE_D, SDL_SCANCODE_W,
+        SDL_SCANCODE_UNKNOWN, SDL_SCANCODE_SPACE, SDL_SCANCODE_LALT};
+    int pad[ACT_COUNT] = {-1, -1, -1, -1, SDL_CONTROLLER_BUTTON_A,
+                          SDL_CONTROLLER_BUTTON_X};
+};
+
+void reset_bindings(Bindings& b) { b = Bindings{}; }
+
+const char* const kBindActionKey[ACT_COUNT] = {
+    "move_left", "move_right", "move_up", "move_down", "jump", "throw"};
+
+std::string scancode_name(SDL_Scancode sc) {
+    if (sc == SDL_SCANCODE_UNKNOWN) {
+        return "";
+    }
+    const char* n = SDL_GetScancodeName(sc);
+    return (n && *n) ? std::string(n) : std::string();
+}
+
+void load_bindings_ini(const IniFile& ini, Bindings& b) {
+    for (int a = 0; a < ACT_COUNT; ++a) {
+        const std::string value = ini.get("controls", kBindActionKey[a]);
+        if (!value.empty()) {
+            const size_t bar = value.find('|');
+            const std::string first = value.substr(0, bar);
+            const std::string second =
+                bar == std::string::npos ? std::string() : value.substr(bar + 1);
+            // Older ports bound move-down to S as well.  S is the original
+            // in-game SAVE key, so the default binding gives S back.
+            const bool legacy_s_down =
+                a == ACT_DOWN && first == "Down" && second == "S";
+            if (!first.empty()) {
+                b.key1[a] = SDL_GetScancodeFromName(first.c_str());
+            }
+            b.key2[a] = (second.empty() || legacy_s_down)
+                            ? SDL_SCANCODE_UNKNOWN
+                            : SDL_GetScancodeFromName(second.c_str());
+        }
+        const std::string pad = ini.get(
+            "controls", std::string(kBindActionKey[a]) + "_pad");
+        b.pad[a] = pad.empty()
+                       ? -1
+                       : SDL_GameControllerGetButtonFromString(pad.c_str());
+    }
+}
+
+void save_bindings_ini(IniFile& ini, const Bindings& b) {
+    for (int a = 0; a < ACT_COUNT; ++a) {
+        std::string value = scancode_name(b.key1[a]);
+        if (b.key2[a] != SDL_SCANCODE_UNKNOWN) {
+            value += "|" + scancode_name(b.key2[a]);
+        }
+        ini.set("controls", kBindActionKey[a], value);
+        const char* pad = b.pad[a] >= 0
+                              ? SDL_GameControllerGetStringForButton(
+                                    static_cast<SDL_GameControllerButton>(b.pad[a]))
+                              : "";
+        ini.set("controls", std::string(kBindActionKey[a]) + "_pad",
+                pad ? pad : "");
+    }
+}
+
+bool key_down(const uint8_t* keys, const Bindings& b, int action) {
+    if (keys[b.key1[action]]) {
+        return true;
+    }
+    return b.key2[action] != SDL_SCANCODE_UNKNOWN && keys[b.key2[action]];
+}
+
+bool pad_button(SDL_GameController* gc, const Bindings& b, int action) {
+    return gc && b.pad[action] >= 0 &&
+           SDL_GameControllerGetButton(
+               gc, static_cast<SDL_GameControllerButton>(b.pad[action])) != 0;
+}
+
+// XInput pads arrive through SDL_GameController; DirectInput / HID pads that
+// SDL does not map as controllers arrive through the raw SDL_Joystick fallback.
+void poll_input(const uint8_t* keys, const Bindings& b,
+                SDL_GameController* gc, SDL_Joystick* joy, Engine& engine) {
+    int h = 0;
+    int v = 0;
+    if (key_down(keys, b, ACT_LEFT) || pad_button(gc, b, ACT_LEFT)) {
+        --h;
+    }
+    if (key_down(keys, b, ACT_RIGHT) || pad_button(gc, b, ACT_RIGHT)) {
+        ++h;
+    }
+    if (key_down(keys, b, ACT_UP) || pad_button(gc, b, ACT_UP)) {
+        --v;
+    }
+    if (key_down(keys, b, ACT_DOWN) || pad_button(gc, b, ACT_DOWN)) {
+        ++v;
+    }
+
+    bool jump = key_down(keys, b, ACT_JUMP) || pad_button(gc, b, ACT_JUMP);
+    bool throw_btn = key_down(keys, b, ACT_THROW) || pad_button(gc, b, ACT_THROW);
+
+    if (gc) {
+        const int dz = 8000;
+        int ax = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTX);
+        int ay = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTY);
+        if (ax < -dz) {
+            --h;
+        } else if (ax > dz) {
+            ++h;
+        }
+        if (ay < -dz) {
+            --v;
+        } else if (ay > dz) {
+            ++v;
+        }
+        if (SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_DPAD_LEFT)) {
+            --h;
+        }
+        if (SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) {
+            ++h;
+        }
+        if (SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_DPAD_UP)) {
+            --v;
+        }
+        if (SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_DPAD_DOWN)) {
+            ++v;
+        }
+    } else if (joy) {
+        const int dz = 8000;
+        int ax = SDL_JoystickGetAxis(joy, 0);
+        int ay = SDL_JoystickGetAxis(joy, 1);
+        if (ax < -dz) {
+            --h;
+        } else if (ax > dz) {
+            ++h;
+        }
+        if (ay < -dz) {
+            --v;
+        } else if (ay > dz) {
+            ++v;
+        }
+        Uint8 hat = SDL_JoystickGetHat(joy, 0);
+        if (hat & SDL_HAT_LEFT) {
+            --h;
+        }
+        if (hat & SDL_HAT_RIGHT) {
+            ++h;
+        }
+        if (hat & SDL_HAT_UP) {
+            --v;
+        }
+        if (hat & SDL_HAT_DOWN) {
+            ++v;
+        }
+        // Standard DirectInput pad layout: 0 = A, 2 = X.
+        jump = jump || SDL_JoystickGetButton(joy, 0) != 0;
+        throw_btn = throw_btn || SDL_JoystickGetButton(joy, 2) != 0;
+    }
+
+    engine.set_input(h, v, jump, throw_btn);
+}
+
+struct LevelSelect {
+    bool open = false;
+    int game = 0;   // index into the installed game list
+    int board = 0;
+};
+
+void draw_select(Framebuffer& fb, Engine& engine,
+                 const std::vector<GameDef>& games, const LevelSelect& sel) {
+    if (sel.game < 0 || sel.game >= static_cast<int>(games.size())) {
+        return;
+    }
+    const GameDef& g = games[static_cast<size_t>(sel.game)];
+    int n = g.board_count();
+    int boxw = 168;
+    int boxh = 46 + n * 8;
+    int x = (Framebuffer::W - boxw) / 2;
+    int y = (Framebuffer::H - boxh) / 2;
+    if (y < 2) {
+        y = 2;
+    }
+    fb.fill_rect(x, y, boxw, boxh, 0);
+    fb.fill_rect(x + 1, y + 1, boxw - 2, boxh - 2, 8);
+    char line[64];
+    std::snprintf(line, sizeof(line), "%s", upper_ascii(g.title.c_str()).c_str());
+    engine.draw_text(fb, x + 6, y + 4, 7, line);
+    engine.draw_text(fb, x + 6, y + 12, 7, "UP/DOWN  LEFT/RIGHT  ENTER");
+    for (int i = 0; i < n; ++i) {
+        std::snprintf(line, sizeof(line), "%c %s",
+                      i == sel.board ? '>' : ' ', g.board(i).c_str());
+        engine.draw_text(fb, x + 8, y + 24 + i * 8,
+                         i == sel.board ? 7 : 5, line);
+    }
+    engine.draw_text(fb, x + 6, y + boxh - 12, 7, "F3/ESC CLOSE");
+}
+
+// Apply the selected game/board.  A different game needs a fresh Engine (the
+// shape bank, tile table and kind tables can all differ).
+bool apply_selection(Engine& engine, const std::vector<GameDef>& games,
+                     const LevelSelect& sel) {
+    if (sel.game < 0 || sel.game >= static_cast<int>(games.size())) {
+        return false;
+    }
+    const GameDef& g = games[static_cast<size_t>(sel.game)];
+    if (sel.board < 0 || sel.board >= g.board_count()) {
+        return false;
+    }
+    const bool hud = engine.hud_classic();
+    const int hud_bg = engine.hud_bg();
+    const int hud_text = engine.hud_text();
+    const bool fly = engine.debug_fly();
+    const bool invincible = engine.invincible();
+    const int super_jump = engine.super_jump();
+    const int menu_theme = engine.menu_theme();
+    const bool fire_crouched = engine.fire_while_crouched();
+    const int knives = engine.max_knives();
+    const bool retain_items = engine.retain_items();
+    const bool fast_dialogs = engine.fast_dialogs();
+    const bool message_box = engine.message_box();
+    const bool air_jump = engine.air_jump_buffer();
+    const bool minimap = engine.minimap();
+    const bool center_fish = engine.center_fish_shot();
+    const int player_look = engine.player_look();
+    const int player_suit = engine.player_suit();
+    std::string err;
+    if (engine.game().id != g.id) {
+        Engine fresh;
+        if (!fresh.init(g, err)) {
+            std::fprintf(stderr, "%s: %s\n", g.id.c_str(), err.c_str());
+            return false;
+        }
+        engine = std::move(fresh);
+    }
+    engine.set_fast_dialogs(fast_dialogs);
+    engine.set_message_box(message_box);
+    if (!engine.load_board(g.board(sel.board), err)) {
+        std::fprintf(stderr, "load %s: %s\n", g.board(sel.board).c_str(),
+                     err.c_str());
+        return false;
+    }
+    engine.set_hud_classic(hud);
+    engine.set_hud_bg(hud_bg);
+    engine.set_hud_text(hud_text);
+    engine.set_debug_fly(fly);
+    engine.set_invincible(invincible);
+    engine.set_super_jump(super_jump);
+    engine.set_menu_theme(menu_theme);
+    engine.set_fire_while_crouched(fire_crouched);
+    engine.set_max_knives(knives);
+    engine.set_retain_items(retain_items);
+    engine.set_fast_dialogs(fast_dialogs);
+    engine.set_message_box(message_box);
+    engine.set_air_jump_buffer(air_jump);
+    engine.set_minimap(minimap);
+    engine.set_center_fish_shot(center_fish);
+    apply_player_look(engine, games, player_look, player_suit);
+    return true;
+}
+
+// Front end: main menu -> episode select / options -> controls/enhancements.
+enum class MenuScreen {
+    Closed,
+    Main,
+    Episodes,
+    Options,
+    Hud,
+    Video,
+    Menus,
+    Controls,
+    Cheats,
+    Enhancements,
+    SaveGame,
+    LoadGame
+};
+
+struct Menu {
+    MenuScreen screen = MenuScreen::Main;
+    int main_sel = 0;
+    int ep_sel = 0;
+    int opt_sel = 0;
+    int hud_sel = 0;
+    int video_sel = 0;
+    int menus_sel = 0;
+    int ctrl_sel = 0;
+    int cheat_sel = 0;
+    int enh_sel = 0;
+    int save_sel = 0;
+    int rebind_action = -1;  // >= 0: waiting for the next key/button
+};
+
+bool menu_open(const Menu& m) { return m.screen != MenuScreen::Closed; }
+
+int& menu_sel(Menu& m) {
+    switch (m.screen) {
+        case MenuScreen::Episodes:
+            return m.ep_sel;
+        case MenuScreen::Options:
+            return m.opt_sel;
+        case MenuScreen::Hud:
+            return m.hud_sel;
+        case MenuScreen::Video:
+            return m.video_sel;
+        case MenuScreen::Menus:
+            return m.menus_sel;
+        case MenuScreen::Controls:
+            return m.ctrl_sel;
+        case MenuScreen::Cheats:
+            return m.cheat_sel;
+        case MenuScreen::Enhancements:
+            return m.enh_sel;
+        case MenuScreen::SaveGame:
+        case MenuScreen::LoadGame:
+            return m.save_sel;
+        default:
+            return m.main_sel;
+    }
+}
+
+const char* const kActionLabel[ACT_COUNT] = {"MOVE LEFT", "MOVE RIGHT",
+                                             "MOVE UP", "MOVE DOWN", "JUMP",
+                                             "THROW"};
+
+std::string upper_ascii(const char* s) {
+    std::string out = s ? s : "";
+    for (char& c : out) {
+        if (c >= 'a' && c <= 'z') {
+            c = static_cast<char>(c - 'a' + 'A');
+        }
+    }
+    return out;
+}
+
+std::string key_name(SDL_Scancode sc) {
+    if (sc == SDL_SCANCODE_UNKNOWN) {
+        return "-";
+    }
+    const char* n = SDL_GetScancodeName(sc);
+    return (n && *n) ? upper_ascii(n) : "?";
+}
+
+std::string pad_name(int button) {
+    if (button < 0) {
+        return "-";
+    }
+    const char* n = SDL_GameControllerGetStringForButton(
+        static_cast<SDL_GameControllerButton>(button));
+    std::string out = upper_ascii(n);
+    for (char& c : out) {
+        if (c == '_') {
+            c = ' ';
+        }
+    }
+    return out.empty() ? "?" : out;
+}
+
+std::string binding_label(const Bindings& b, int action) {
+    std::string s = key_name(b.key1[action]);
+    if (b.key2[action] != SDL_SCANCODE_UNKNOWN) {
+        s += "/" + key_name(b.key2[action]);
+    }
+    if (b.pad[action] >= 0) {
+        s += " [" + pad_name(b.pad[action]) + "]";
+    }
+    return s;
+}
+
+const char* hud_bg_name(int bg) {
+    switch (bg) {
+        case 0: return "BLACK";
+        case 1: return "DARK BLUE";
+        case 2: return "DARK GREEN";
+        case 4: return "DARK RED";
+        case 5: return "DARK PURPLE";
+        case 6: return "BROWN";
+        case 8: return "GREY";
+        case -2: return "SUIT";
+        case -3: return "SUIT VIBRANT";
+        default: return "CUSTOM";
+    }
+}
+
+int next_hud_bg(int bg) {
+    static const int kOrder[] = {8, 0, 1, 2, 4, 6, 5, -2, -3};
+    const int n = static_cast<int>(sizeof(kOrder) / sizeof(kOrder[0]));
+    for (int i = 0; i < n; ++i) {
+        if (kOrder[i] == bg) {
+            return kOrder[(i + 1) % n];
+        }
+    }
+    return 8;
+}
+
+// HUD text colours: the 16 EGA palette entries the original text routines use.
+const char* hud_text_name(int c) {
+    static const char* const kNames[16] = {
+        "BLACK", "BLUE", "GREEN", "CYAN", "RED", "PURPLE", "BROWN", "WHITE",
+        "GREY", "LT BLUE", "LT GREEN", "LT CYAN", "LT RED", "LT PURPLE",
+        "YELLOW", "BRIGHT WHITE"};
+    return kNames[c & 0x0F];
+}
+
+int next_hud_text(int c) { return (c + 1) & 0x0F; }
+
+// --- video settings -------------------------------------------------------
+struct VideoSettings {
+    int mode = 0;        // 0 windowed, 1 fullscreen, 2 borderless
+    int scale = 3;       // windowed integer scale, 1..6
+    int resolution = 0;  // 0 desktop, else index into kResolutions
+    int high_fps = 60;   // presentation rate, 0 = 18.2 Hz
+    int splash = 0;      // 0 off, N = games[N-1] intro publisher screen
+    bool interpolate = true;  // high-framerate smoothing (needs high_fps > 0)
+};
+
+// Presentation rates.  The world always ticks at 18.2065 Hz; these only change
+// how often the already-ticked frame is presented.
+const int kHighFps[] = {0, 60, 90, 120, 144};
+constexpr int kHighFpsCount =
+    static_cast<int>(sizeof(kHighFps) / sizeof(kHighFps[0]));
+
+std::string high_fps_name(int hz) {
+    if (hz <= 0) {
+        return "OFF (18.2 FPS)";
+    }
+    return std::to_string(hz) + " FPS";
+}
+
+struct ResolutionOption {
+    const char* label;
+    int w;
+    int h;
+};
+
+const ResolutionOption kResolutions[] = {
+    {"DESKTOP", 0, 0},   {"640x480", 640, 480},   {"800x600", 800, 600},
+    {"1024x768", 1024, 768}, {"1280x720", 1280, 720}, {"1600x900", 1600, 900},
+    {"1920x1080", 1920, 1080},
+};
+constexpr int kResolutionCount =
+    static_cast<int>(sizeof(kResolutions) / sizeof(kResolutions[0]));
+
+int match_resolution(int w, int h) {
+    for (int i = 0; i < kResolutionCount; ++i) {
+        if (kResolutions[i].w == w && kResolutions[i].h == h) {
+            return i;
+        }
+    }
+    return 0;
+}
+const char* const kWindowModes[] = {"WINDOWED", "FULLSCREEN", "BORDERLESS"};
+
+int window_width(const VideoSettings& v) {
+    return v.resolution ? kResolutions[v.resolution].w
+                        : Framebuffer::W * v.scale;
+}
+
+int window_height(const VideoSettings& v) {
+    return v.resolution ? kResolutions[v.resolution].h
+                        : Framebuffer::H * v.scale;
+}
+
+std::string super_jump_name(int n) {
+    if (n <= 0) {
+        return "OFF";
+    }
+    return std::to_string(n) + " FEATHERS";
+}
+
+std::string menu_theme_name(int t, const std::vector<GameDef>& games) {
+    if (t <= 0 || t > static_cast<int>(games.size())) {
+        return "PORT";
+    }
+    return upper_ascii(games[static_cast<size_t>(t - 1)].title.c_str());
+}
+
+std::string splash_name(int t, const std::vector<GameDef>& games) {
+    if (t <= 0 || t > static_cast<int>(games.size())) {
+        return "OFF";
+    }
+    return upper_ascii(games[static_cast<size_t>(t - 1)].id.c_str());
+}
+
+// Theme 0 is the plain port backdrop, 1..N are the installed games' intro
+// boards, so the cycle length follows the game list instead of a fixed 3.
+int menu_theme_next(int t, int step, const std::vector<GameDef>& games) {
+    const int n = static_cast<int>(games.size()) + 1;
+    int v = (t + step) % n;
+    return (v < 0) ? v + n : v;
+}
+
+int splash_next(int t, int step, const std::vector<GameDef>& games) {
+    return menu_theme_next(t, step, games);
+}
+
+std::vector<std::string> menu_items(const Menu& m, bool started,
+                                    const VideoSettings& video,
+                                    const Engine& engine,
+                                    const Bindings& bindings,
+                                    const std::vector<GameDef>& games) {
+    switch (m.screen) {
+        case MenuScreen::Main: {
+            std::vector<std::string> v;
+            if (started) {
+                v.push_back("RESUME");
+                v.push_back("SAVE GAME");
+                v.push_back("RESTORE GAME");
+            }
+            v.push_back("START GAME");
+            v.push_back("OPTIONS");
+            v.push_back("QUIT");
+            return v;
+        }
+        case MenuScreen::Episodes: {
+            std::vector<std::string> v;
+            for (const GameDef& g : games) {
+                v.push_back(upper_ascii(g.title.c_str()));
+            }
+            v.push_back("BACK");
+            return v;
+        }
+        case MenuScreen::Options:
+            return {"HUD", "VIDEO", "CHEATS", "CONTROLS", "MENUS", "GAMEPLAY",
+                    "BACK"};
+        case MenuScreen::Video: {
+            char size[64];
+            if (video.resolution) {
+                std::snprintf(size, sizeof(size), "WINDOW SIZE: AUTO (%dx%d)",
+                              window_width(video), window_height(video));
+            } else {
+                std::snprintf(size, sizeof(size), "WINDOW SIZE: %dx (%dx%d)",
+                              video.scale, window_width(video),
+                              window_height(video));
+            }
+            return {std::string("WINDOW TYPE: ") +
+                        kWindowModes[video.mode % 3],
+                    size,
+                    std::string("RESOLUTION: ") +
+                        kResolutions[video.resolution % kResolutionCount].label,
+                    std::string("HIGH FRAMERATE: ") +
+                        high_fps_name(video.high_fps),
+                    std::string("INTERPOLATE: ") +
+                        (video.high_fps <= 0
+                             ? "N/A (HIGH FRAMERATE OFF)"
+                             : (video.interpolate ? "ON" : "OFF")),
+                    std::string("MESSAGE BOX: ") +
+                        (engine.message_box() ? "ON" : "OFF"),
+                    "FILTERS: NONE (COMING SOON)", "BACK"};
+        }
+        case MenuScreen::Hud:
+            return {std::string("STYLE: ") +
+                        (engine.hud_classic() ? "CLASSIC" : "MODERN"),
+                    std::string("BACKGROUND: ") +
+                        hud_bg_name(engine.hud_bg()),
+                    std::string("TEXT: ") + hud_text_name(engine.hud_text()),
+                    "BACK"};
+        case MenuScreen::Menus:
+            return {std::string("THEME: ") +
+                        menu_theme_name(engine.menu_theme(), games),
+                    std::string("SPLASH: ") +
+                        splash_name(video.splash, games),
+                    "BACK"};
+        case MenuScreen::Controls: {
+            std::vector<std::string> v;
+            for (int i = 0; i < ACT_COUNT; ++i) {
+                v.push_back(std::string(kActionLabel[i]) + ": " +
+                            binding_label(bindings, i));
+            }
+            v.push_back("RESET DEFAULTS");
+            v.push_back("BACK");
+            return v;
+        }
+        case MenuScreen::Cheats:
+            return {std::string("INVINCIBLE: ") +
+                        (engine.invincible() ? "ON" : "OFF"),
+                    std::string("DEBUG FLY: ") +
+                        (engine.debug_fly() ? "ON" : "OFF"),
+                    std::string("SUPER JUMP: ") +
+                        super_jump_name(engine.super_jump()),
+                    "ADD KNIFE", "ADD KEY", "ADD GEM", "ADD BLADE",
+                    "REFILL HEALTH",
+                    "BECOME JILL", "BECOME FROG", "BECOME BIRD",
+                    "BECOME SPIDER", "BECOME FISH", "BACK"};
+        case MenuScreen::SaveGame:
+        case MenuScreen::LoadGame: {
+            std::vector<std::string> v;
+            const int slots = engine.save_slots();
+            for (int i = 0; i < slots; ++i) {
+                const std::string& label = engine.save_label(i);
+                char line[80];
+                std::snprintf(line, sizeof(line), "SLOT %d: %s", i + 1,
+                              label.empty() ? "EMPTY" : label.c_str());
+                v.push_back(line);
+            }
+            v.push_back("BACK");
+            return v;
+        }
+        case MenuScreen::Enhancements:
+            return {std::string("FIRE WHILE CROUCHED: ") +
+                        (engine.fire_while_crouched() ? "ON" : "OFF"),
+                    std::string("MAX KNIVES: ") +
+                        (engine.max_knives() >= 5 ? "5" : "3"),
+                    std::string("RETAIN ITEMS BETWEEN LEVELS: ") +
+                        (engine.retain_items() ? "ON" : "OFF"),
+                    std::string("FASTER DIALOG BOXES: ") +
+                        (engine.fast_dialogs() ? "ON" : "OFF"),
+                    std::string("AIR JUMP BUFFER: ") +
+                        (engine.air_jump_buffer() ? "ON" : "OFF"),
+                    std::string("MINIMAP: ") +
+                        (engine.minimap() ? "ON" : "OFF"),
+                    std::string("CENTER FISH SHOT: ") +
+                        (engine.center_fish_shot() ? "ON" : "OFF"),
+                    std::string("JILL LOOK: ") +
+                        player_look_name(games, engine.player_look()),
+                    std::string("JILL COLOUR: ") +
+                        player_suit_name(engine.player_suit()),
+                    "BACK"};        default:
+            return {};
+    }
+}
+
+// Cached 320x200 backdrop for the menu themes.  The original front end shows
+// each episode's intro board behind the text menu; the menu panel itself is
+// framed with that board's own tiles (a solid tile for the border ring, its
+// most common walkable tile for the interior).
+struct ThemeTile {
+    bool ok = false;
+    int w = 0;
+    int h = 0;
+    std::vector<uint8_t> px;
+};
+
+struct ThemeBackdrop {
+    int built = -1;
+    std::vector<uint8_t> px;
+    ThemeTile frame;
+    ThemeTile fill;
+};
+
+// Splash screens: the publisher/logo card and the title card are separate
+// regions of the intro board.  The port finds them from the board data instead
+// of hardcoding coordinates (the original has no PCX/LBM splash files).
+struct SplashImage {
+    int built = -1;
+    std::vector<std::vector<uint8_t>> pages;
+    uint8_t palette[768] = {};
+    bool palette_ready = false;
+};
+
+std::string lower_ascii(std::string s) {
+    for (char& c : s) {
+        if (c >= 'A' && c <= 'Z') {
+            c = static_cast<char>(c - 'A' + 'a');
+        }
+    }
+    return s;
+}
+
+bool text_has_word(const std::string& text, const std::string& word) {
+    if (word.empty()) {
+        return false;
+    }
+    return lower_ascii(text).find(lower_ascii(word)) != std::string::npos;
+}
+
+void ensure_splash_image(SplashImage& img, int index,
+                         const std::vector<GameDef>& games) {
+    if (img.built == index) {
+        return;
+    }
+    img.built = index;
+    img.pages.clear();
+    img.palette_ready = false;
+    if (index < 1 || index > static_cast<int>(games.size())) {
+        return;
+    }
+    const GameDef& g = games[static_cast<size_t>(index - 1)];
+    img.palette_ready = load_palette(g.palette, img.palette);
+    Engine tmp;
+    std::string err;
+    if (!tmp.init(g, err)) {
+        std::fprintf(stderr, "splash %s: %s\n", g.id.c_str(), err.c_str());
+        return;
+    }
+    if (!tmp.load_board(g.intro_board, err)) {
+        std::fprintf(stderr, "splash %s: %s\n", g.id.c_str(), err.c_str());
+        return;
+    }
+    tmp.finish_dialogs();
+    const int board_w = Board::kCols * 16;
+    const int board_h = Board::kRows * 16;
+    auto clamp_cam = [&](int& x, int& y) {
+        x = std::max(0, std::min(x, board_w - Framebuffer::W));
+        y = std::max(0, std::min(y, board_h - Framebuffer::H));
+    };
+    auto render_page = [&](int cx, int cy) {
+        clamp_cam(cx, cy);
+        Framebuffer fb;
+        tmp.render_at(fb, cx, cy, false);
+        img.pages.push_back(std::move(fb.px));
+    };
+
+    // 1. Publisher logo: the top-most cluster of MEGA (42) / EPIC (49)
+    //    objects.  Jill 1/2/3 spell "MegaGames"/"Epic MegaGames"; Onesimus's
+    //    bank uses the same kinds for its own ARK logo.
+    const std::vector<BoardObject>& objs = tmp.objects();
+    struct Cluster {
+        int minx = 0, miny = 0, maxx = 0, maxy = 0;
+        int count = 0;
+    };
+    std::vector<Cluster> clusters;
+    for (const BoardObject& o : objs) {
+        if (o.kind != 42 && o.kind != 49) {
+            continue;
+        }
+        bool joined = false;
+        for (Cluster& c : clusters) {
+            if (o.x <= c.maxx + 64 && o.x + o.w >= c.minx - 64 &&
+                o.y <= c.maxy + 64 && o.y + o.h >= c.miny - 64) {
+                c.minx = std::min(c.minx, o.x);
+                c.miny = std::min(c.miny, o.y);
+                c.maxx = std::max(c.maxx, o.x + o.w);
+                c.maxy = std::max(c.maxy, o.y + o.h);
+                ++c.count;
+                joined = true;
+                break;
+            }
+        }
+        if (!joined) {
+            Cluster c;
+            c.minx = o.x;
+            c.miny = o.y;
+            c.maxx = o.x + o.w;
+            c.maxy = o.y + o.h;
+            c.count = 1;
+            clusters.push_back(c);
+        }
+    }
+    const Cluster* logo = nullptr;
+    for (const Cluster& c : clusters) {
+        if (!logo || c.count > logo->count ||
+            (c.count == logo->count && c.miny < logo->miny)) {
+            logo = &c;
+        }
+    }
+    if (logo && logo->count >= 2) {
+        render_page((logo->minx + logo->maxx) / 2 - Framebuffer::W / 2,
+                    (logo->miny + logo->maxy) / 2 - Framebuffer::H / 2);
+    }
+
+    // 2. Title card: the top-most TEXT6/TEXT8 object that mentions the first
+    //    word of the game title ("Jill" / "Onesimus").
+    std::string title_word = g.title;
+    const size_t space = title_word.find_first_of(" :");
+    if (space != std::string::npos) {
+        title_word.resize(space);
+    }
+    const BoardObject* title = nullptr;
+    for (const BoardObject& o : objs) {
+        if ((o.kind != 20 && o.kind != 21) || o.text.empty() ||
+            !text_has_word(o.text, title_word)) {
+            continue;
+        }
+        if (!title || o.y < title->y ||
+            (o.y == title->y && o.x < title->x)) {
+            title = &o;
+        }
+    }
+    if (title) {
+        const int char_w = title->kind == 21 ? 8 : 6;
+        const int text_w = static_cast<int>(title->text.size()) * char_w;
+        render_page(title->x + text_w / 2 - Framebuffer::W / 2,
+                    title->y + 6 - Framebuffer::H / 2);
+    }
+
+    // Fallback for a board without either feature.
+    if (img.pages.empty()) {
+        render_page(240, 0);
+    }
+}
+
+void dump_splash_pages(const std::vector<GameDef>& games, int index,
+                       const std::string& prefix) {
+    SplashImage img;
+    ensure_splash_image(img, index, games);
+    uint8_t palette[768];
+    if (img.palette_ready) {
+        std::memcpy(palette, img.palette, sizeof(palette));
+    } else {
+        vga_default_palette(palette);
+    }
+    for (size_t i = 0; i < img.pages.size(); ++i) {
+        const std::string path =
+            prefix + std::to_string(i + 1) + std::string(".ppm");
+        FILE* f = std::fopen(path.c_str(), "wb");
+        if (!f) {
+            std::fprintf(stderr, "cannot write %s\n", path.c_str());
+            continue;
+        }
+        std::fprintf(f, "P6\n%d %d\n255\n", Framebuffer::W, Framebuffer::H);
+        for (uint8_t c : img.pages[i]) {
+            uint8_t rgb[3] = {palette[c * 3 + 0], palette[c * 3 + 1],
+                              palette[c * 3 + 2]};
+            std::fwrite(rgb, 1, 3, f);
+        }
+        std::fclose(f);
+        std::printf("wrote %s\n", path.c_str());
+    }
+}
+
+void ensure_theme_backdrop(ThemeBackdrop& tb, int theme,
+                           const std::vector<GameDef>& games) {
+    if (tb.built == theme) {
+        return;
+    }
+    tb.built = theme;
+    tb.px.clear();
+    tb.frame = ThemeTile{};
+    tb.fill = ThemeTile{};
+    if (theme < 1 || theme > static_cast<int>(games.size())) {
+        return;
+    }
+    const GameDef& g = games[static_cast<size_t>(theme - 1)];
+    Engine tmp;
+    std::string err;
+    if (!tmp.init(g, err)) {
+        return;
+    }
+    if (!tmp.load_board(g.intro_board, err)) {
+        return;
+    }
+    tmp.finish_dialogs();  // the backdrop shows the whole intro page at once
+    Framebuffer fb;
+    tmp.render_at(fb, 0, 0, false);
+    tb.px = std::move(fb.px);
+
+    tb.frame.ok = tmp.tile_pixels(tmp.theme_tile(true), tb.frame.px,
+                                  tb.frame.w, tb.frame.h);
+    tb.fill.ok = tmp.tile_pixels(tmp.theme_tile(false), tb.fill.px, tb.fill.w,
+                                 tb.fill.h);
+    if (!tb.fill.ok) {
+        tb.fill = tb.frame;
+    }
+}
+
+void menu_title(Framebuffer& fb, Engine& engine, int y, const char* s) {
+    int w = static_cast<int>(std::strlen(s)) * 6;
+    engine.draw_text(fb, (Framebuffer::W - w) / 2, y, 7, s);
+}
+
+void draw_menu(Framebuffer& fb, Engine& engine, Menu& m, bool started,
+               const VideoSettings& video, const Bindings& bindings,
+               ThemeBackdrop& backdrop, const std::vector<GameDef>& games) {
+    ensure_theme_backdrop(backdrop, engine.menu_theme(), games);
+    if (backdrop.px.empty()) {
+        fb.fill_rect(0, 0, Framebuffer::W, Framebuffer::H, 0);
+    } else {
+        // 50% checkerboard dim so the menu text stays readable on top of the
+        // intro-board artwork.
+        for (int y = 0; y < Framebuffer::H; ++y) {
+            for (int x = 0; x < Framebuffer::W; ++x) {
+                size_t i = static_cast<size_t>(y) * Framebuffer::W + x;
+                if (((x + y) & 1) != 0) {
+                    fb.px[i] = backdrop.px[i];
+                } else {
+                    fb.px[i] = 0;
+                }
+            }
+        }
+    }
+    menu_title(fb, engine, 16,
+               upper_ascii(engine.game().title.c_str()).c_str());
+    const char* sub = "MAIN MENU";
+    switch (m.screen) {
+        case MenuScreen::Episodes: sub = "SELECT EPISODE"; break;
+        case MenuScreen::Options: sub = "OPTIONS"; break;
+        case MenuScreen::Hud: sub = "HUD"; break;
+        case MenuScreen::Video: sub = "VIDEO"; break;
+        case MenuScreen::Menus: sub = "MENU THEMES"; break;
+        case MenuScreen::Controls: sub = "CONTROLS"; break;
+        case MenuScreen::Cheats: sub = "CHEATS"; break;
+        case MenuScreen::Enhancements: sub = "GAMEPLAY"; break;
+        case MenuScreen::SaveGame: sub = "SAVE GAME"; break;
+        case MenuScreen::LoadGame: sub = "RESTORE GAME"; break;
+        default: break;
+    }
+    menu_title(fb, engine, 28, sub);
+
+    std::vector<std::string> items =
+        menu_items(m, started, video, engine, bindings, games);
+    int sel = menu_sel(m);
+    if (sel < 0 || sel >= static_cast<int>(items.size())) {
+        sel = 0;
+    }
+    int maxlen = 0;
+    for (const std::string& item : items) {
+        maxlen = std::max(maxlen, static_cast<int>(item.size()));
+    }
+    int boxw = std::max(200, 34 + (maxlen + 2) * 6);
+    boxw = std::min(boxw, Framebuffer::W - 12);
+    // 10 px rows (2 px gap); the 14-row CHEATS screen uses 9 px so it fits.
+    const int line_h = items.size() > 12 ? 9 : 10;
+    int boxh = 8 + static_cast<int>(items.size()) * line_h + 6;
+    int bx = (Framebuffer::W - boxw) / 2;
+    int by = 42;
+
+    // Themed menu frame: a ring of the theme board's blocking tile around the
+    // panel and its walkable tile inside, both dimmed 50% so the text reads.
+    const bool tiled = engine.menu_theme() > 0 && backdrop.frame.ok;
+    const int ring = 8;
+    if (tiled) {
+        auto blit_tile = [&](const ThemeTile& t, int x0, int y0, int x1,
+                             int y1, bool dim) {
+            if (!t.ok || t.w <= 0 || t.h <= 0) {
+                return;
+            }
+            for (int y = y0; y < y1; ++y) {
+                for (int x = x0; x < x1; ++x) {
+                    if (dim && ((x + y) & 1) == 0) {
+                        continue;
+                    }
+                    uint8_t c = t.px[static_cast<size_t>((y - y0) % t.h) * t.w +
+                                   (x - x0) % t.w];
+                    fb.put(x, y, c);
+                }
+            }
+        };
+        // Interior first, then the ring around the outside of the panel.
+        blit_tile(backdrop.fill, bx, by, bx + boxw, by + boxh, true);
+        blit_tile(backdrop.frame, bx - ring, by - ring, bx + boxw + ring,
+                  by, false);
+        blit_tile(backdrop.frame, bx - ring, by + boxh, bx + boxw + ring,
+                  by + boxh + ring, false);
+        blit_tile(backdrop.frame, bx - ring, by, bx, by + boxh, false);
+        blit_tile(backdrop.frame, bx + boxw, by, bx + boxw + ring, by + boxh,
+                  false);
+        fb.fill_rect(bx, by, boxw, 1, 0);
+        fb.fill_rect(bx, by + boxh - 1, boxw, 1, 0);
+    } else {
+        fb.fill_rect(bx, by, boxw, boxh, 8);
+        fb.fill_rect(bx + 1, by + 1, boxw - 2, boxh - 2, 0);
+    }
+    for (int i = 0; i < static_cast<int>(items.size()); ++i) {
+        char line[96];
+        std::snprintf(line, sizeof(line), "%c %s", i == sel ? '>' : ' ',
+                      items[static_cast<size_t>(i)].c_str());
+        uint8_t colour = (i == sel && m.rebind_action >= 0) ? 6
+                          : (i == sel ? 7 : 5);
+        engine.draw_text(fb, bx + 14, by + 5 + i * line_h, colour, line);
+    }
+    if (m.screen == MenuScreen::Hud) {
+        // Live background preview: the bar uses the chosen palette index.
+        int py = 150;
+        fb.fill_rect(10, py, Framebuffer::W - 20, 12,
+                     static_cast<uint8_t>(engine.hud_bg_colour()));
+        engine.draw_text(fb, 14, py + 3,
+                         static_cast<uint8_t>(engine.hud_text()),
+                         "LEVEL 1  [2] 3  HEALTH  SCORE 0");
+    }
+    const int footer_y = std::min(Framebuffer::H - 12, by + boxh + 2);
+    if (m.rebind_action >= 0) {
+        menu_title(fb, engine, footer_y, "PRESS A KEY OR PAD BUTTON");
+        menu_title(fb, engine, footer_y + 9, "ESC CANCELS");
+    } else {
+        menu_title(fb, engine, footer_y, "UP/DOWN MOVE   ENTER SELECT   ESC BACK");
+    }
+}
+
+// Jill Select: find the chosen game's player colour table.  Look 0 keeps the
+// running episode; 1..N indexes the installed game list.
+std::string player_look_name(const std::vector<GameDef>& games, int look) {
+    if (look <= 0 || look > static_cast<int>(games.size())) {
+        return "GAME DEFAULT";
+    }
+    return upper_ascii(games[static_cast<size_t>(look - 1)].title.c_str());
+}
+
+std::string player_suit_name(int suit) {
+    static const char* const kNames[9] = {
+        "DEFAULT", "GREEN", "RED", "BLUE", "YELLOW",
+        "ORANGE", "CYAN", "PURPLE", "SILVER"};
+    if (suit < 0 || suit > 8) {
+        return kNames[0];
+    }
+    return kNames[suit];
+}
+
+std::string path_join(const std::string& dir, const std::string& name) {
+    if (dir.empty()) {
+        return name;
+    }
+    const char last = dir.back();
+    return dir + ((last == '/' || last == '\\') ? "" : "/") + name;
+}
+
+void apply_player_look(Engine& engine, const std::vector<GameDef>& games,
+                       int look, int suit) {
+    std::string path;
+    if (look >= 1 && look <= static_cast<int>(games.size())) {
+        const GameDef& g = games[static_cast<size_t>(look - 1)];
+        path = path_join(g.data_dir, g.shape_file);
+    }
+    if (!engine.set_player_look(look, path)) {
+        engine.set_player_look(0, std::string());
+    }
+    engine.set_player_suit(suit);
+}
+
+// Start a fresh game on a game's first board, keeping the current
+// display/engine options.
+bool start_game(Engine& engine, const std::vector<GameDef>& games, int index) {
+    if (index < 0 || index >= static_cast<int>(games.size())) {
+        return false;
+    }
+    const GameDef& g = games[static_cast<size_t>(index)];
+    const bool hud = engine.hud_classic();
+    const int hud_bg = engine.hud_bg();
+    const int hud_text = engine.hud_text();
+    const bool fly = engine.debug_fly();
+    const bool inv = engine.invincible();
+    const int super_jump = engine.super_jump();
+    const int menu_theme = engine.menu_theme();
+    const bool crouch_fire = engine.fire_while_crouched();
+    const int knives = engine.max_knives();
+    const bool retain = engine.retain_items();
+    const bool fast_dialogs = engine.fast_dialogs();
+    const bool message_box = engine.message_box();
+    const bool air_jump = engine.air_jump_buffer();
+    const bool minimap = engine.minimap();
+    const bool center_fish = engine.center_fish_shot();
+    const int player_look = engine.player_look();
+    const int player_suit = engine.player_suit();
+    std::string err;
+    if (engine.game().id != g.id) {
+        Engine fresh;
+        if (!fresh.init(g, err)) {
+            std::fprintf(stderr, "%s: %s\n", g.id.c_str(), err.c_str());
+            return false;
+        }
+        engine = std::move(fresh);
+    }
+    engine.set_fast_dialogs(fast_dialogs);
+    engine.set_message_box(message_box);
+    if (!engine.load_board(g.first_board, err)) {
+        std::fprintf(stderr, "load %s: %s\n", g.first_board.c_str(),
+                     err.c_str());
+        return false;
+    }
+    engine.set_hud_classic(hud);
+    engine.set_hud_bg(hud_bg);
+    engine.set_hud_text(hud_text);
+    engine.set_debug_fly(fly);
+    engine.set_invincible(inv);
+    engine.set_super_jump(super_jump);
+    engine.set_menu_theme(menu_theme);
+    engine.set_fire_while_crouched(crouch_fire);
+    engine.set_max_knives(knives);
+    engine.set_retain_items(retain);
+    engine.set_fast_dialogs(fast_dialogs);
+    engine.set_message_box(message_box);
+    engine.set_air_jump_buffer(air_jump);
+    engine.set_minimap(minimap);
+    engine.set_center_fish_shot(center_fish);
+    apply_player_look(engine, games, player_look, player_suit);
+    return true;
+}
+
+int run_sdl(const Options& opt, Engine& engine,
+            const std::vector<GameDef>& games) {
+    // Let SDL drive Xbox pads through XInput and legacy pads through the
+    // DirectInput path (both hints default to on; set them explicitly).
+    SDL_SetHint(SDL_HINT_XINPUT_ENABLED, "1");
+    SDL_SetHint(SDL_HINT_DIRECTINPUT_ENABLED, "1");
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMECONTROLLER |
+                 SDL_INIT_JOYSTICK) != 0) {
+        std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
+        return 1;
+    }
+    std::atexit(SDL_Quit);
+
+    VideoSettings video;
+    video.mode = opt.fullscreen ? 1 : opt.window_mode;
+    video.scale = opt.scale;
+    video.resolution = opt.resolution;
+    video.high_fps = opt.high_fps;
+    video.splash = opt.splash;
+    video.interpolate = opt.interpolate;
+
+    SDL_Window* window = SDL_CreateWindow(
+        "Jill (port skeleton)", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+        window_width(video), window_height(video), SDL_WINDOW_RESIZABLE);
+    if (!window) {
+        std::fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError());
+        return 1;
+    }
+    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    if (!renderer) {
+        renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
+    }
+    if (!renderer) {
+        std::fprintf(stderr, "SDL_CreateRenderer: %s\n", SDL_GetError());
+        return 1;
+    }
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
+    SDL_RenderSetLogicalSize(renderer, Framebuffer::W, Framebuffer::H);
+    SDL_RenderSetIntegerScale(renderer, SDL_TRUE);
+
+    SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
+                                             SDL_TEXTUREACCESS_STREAMING,
+                                             Framebuffer::W, Framebuffer::H);
+    if (!texture) {
+        std::fprintf(stderr, "SDL_CreateTexture: %s\n", SDL_GetError());
+        return 1;
+    }
+
+    uint8_t palette[768];
+    if (!load_palette(opt.palette.empty() ? engine.game().palette : opt.palette,
+                      palette)) {
+        return 1;
+    }
+    std::vector<uint32_t> argb(static_cast<size_t>(Framebuffer::W) * Framebuffer::H);
+
+    Framebuffer fb;
+    ThemeBackdrop theme_backdrop;
+    SplashImage splash_image;
+    LevelSelect select;
+    Menu menu;
+    if (!opt.board.empty()) {
+        menu.screen = MenuScreen::Closed;  // explicit --board run: skip the menu
+    }
+    bool game_started = !opt.board.empty();
+    bool running = true;
+    int page_axis_x = 0;  // text-page stick edge latches
+    int page_axis_y = 0;
+    const int splash_index =
+        std::max(0, std::min(video.splash, static_cast<int>(games.size())));
+    bool splash_active = false;
+    size_t splash_page = 0;
+    Uint32 splash_page_start = 0;
+    if (splash_index > 0) {
+        ensure_splash_image(splash_image, splash_index, games);
+        if (!splash_image.pages.empty()) {
+            splash_active = true;
+            splash_page = 0;
+            splash_page_start = SDL_GetTicks();
+        }
+    }
+    if (opt.text_page > 0) {
+        engine.show_text_page(opt.text_page);
+    }
+
+    // Apply the current WINDOW TYPE / WINDOW SIZE / RESOLUTION triple.
+    auto apply_video = [&]() {
+        if (video.mode == 2) {  // borderless fullscreen
+            SDL_SetWindowBordered(window, SDL_FALSE);
+            SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+            return;
+        }
+        SDL_SetWindowBordered(window, SDL_TRUE);
+        if (video.mode == 1) {  // exclusive fullscreen at the chosen mode
+            if (video.resolution) {
+                SDL_DisplayMode want{};
+                want.w = kResolutions[video.resolution].w;
+                want.h = kResolutions[video.resolution].h;
+                want.format = SDL_PIXELFORMAT_UNKNOWN;
+                want.refresh_rate = 0;
+                SDL_DisplayMode closest{};
+                if (SDL_GetClosestDisplayMode(0, &want, &closest)) {
+                    SDL_SetWindowDisplayMode(window, &closest);
+                }
+            }
+            SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN);
+            return;
+        }
+        // Windowed: leave fullscreen, then size to the resolution or scale.
+        SDL_SetWindowFullscreen(window, 0);
+        SDL_SetWindowSize(window, window_width(video), window_height(video));
+        SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED,
+                              SDL_WINDOWPOS_CENTERED);
+    };
+    apply_video();
+    const double step = 1.0 / 18.2065;  // one BIOS tick per update (18.2 fps)
+    double accumulator = 0.0;
+    uint64_t last = SDL_GetPerformanceCounter();
+    const double freq = static_cast<double>(SDL_GetPerformanceFrequency());
+    uint32_t title_timer = SDL_GetTicks();
+
+    Bindings bindings;
+    {
+        IniFile ini;
+        std::string ini_err;
+        if (ini.load("jill.ini", ini_err)) {
+            load_bindings_ini(ini, bindings);
+        }
+    }
+    SDL_GameController* controller = nullptr;
+    SDL_Joystick* joystick = nullptr;
+    auto close_pads = [&]() {
+        if (controller) {
+            SDL_GameControllerClose(controller);
+            controller = nullptr;
+        }
+        if (joystick) {
+            SDL_JoystickClose(joystick);
+            joystick = nullptr;
+        }
+    };
+    auto open_pads = [&]() {
+        if (controller || joystick) {
+            return;
+        }
+        for (int i = 0; i < SDL_NumJoysticks(); ++i) {
+            if (SDL_IsGameController(i)) {
+                controller = SDL_GameControllerOpen(i);
+                if (controller) {
+                    return;
+                }
+            }
+        }
+        if (SDL_NumJoysticks() > 0) {
+            joystick = SDL_JoystickOpen(0);
+        }
+    };
+    open_pads();
+
+    // Shared menu/level-select navigation.  Codes: 1 up, 2 down, 3 left,
+    // 4 right, 5 confirm, 6 cancel/back.
+    auto menu_nav = [&](int nav) {
+        if (select.open) {
+            const GameDef* sg =
+                (select.game >= 0 && select.game < static_cast<int>(games.size()))
+                    ? &games[static_cast<size_t>(select.game)]
+                    : nullptr;
+            int n = sg ? sg->board_count() : 1;
+            switch (nav) {
+                case 6:
+                    select.open = false;
+                    break;
+                case 1:
+                    select.board = (select.board + n - 1) % n;
+                    break;
+                case 2:
+                    select.board = (select.board + 1) % n;
+                    break;
+                case 3:
+                case 4: {
+                    const int count = static_cast<int>(games.size());
+                    select.game = (select.game + (nav == 3 ? count - 1 : 1)) % count;
+                    select.board = 0;
+                    break;
+                }
+                case 5:
+                    if (apply_selection(engine, games, select)) {
+                        select.open = false;
+                        game_started = true;
+                    }
+                    break;
+                default:
+                    break;
+            }
+            return;
+        }
+        if (!menu_open(menu) || menu.rebind_action >= 0) {
+            return;
+        }
+        std::vector<std::string> items =
+            menu_items(menu, game_started, video, engine, bindings, games);
+        int& sel = menu_sel(menu);
+        const int n = static_cast<int>(items.size());
+        if (sel < 0 || sel >= n) {
+            sel = 0;
+        }
+        auto toggle_option = [&]() {
+            if (menu.screen == MenuScreen::Hud && sel == 0) {
+                engine.set_hud_classic(!engine.hud_classic());
+            } else if (menu.screen == MenuScreen::Hud && sel == 1) {
+                engine.set_hud_bg(next_hud_bg(engine.hud_bg()));
+            } else if (menu.screen == MenuScreen::Hud && sel == 2) {
+                engine.set_hud_text(next_hud_text(engine.hud_text()));
+            } else if (menu.screen == MenuScreen::Menus && sel == 0) {
+                engine.set_menu_theme(menu_theme_next(engine.menu_theme(), 1, games));
+            } else if (menu.screen == MenuScreen::Enhancements && sel == 0) {
+                engine.set_fire_while_crouched(!engine.fire_while_crouched());
+            } else if (menu.screen == MenuScreen::Enhancements && sel == 1) {
+                engine.set_max_knives(engine.max_knives() >= 5 ? 3 : 5);
+            } else if (menu.screen == MenuScreen::Enhancements && sel == 2) {
+                engine.set_retain_items(!engine.retain_items());
+            } else if (menu.screen == MenuScreen::Enhancements && sel == 3) {
+                engine.set_fast_dialogs(!engine.fast_dialogs());
+            } else if (menu.screen == MenuScreen::Enhancements && sel == 4) {
+                engine.set_air_jump_buffer(!engine.air_jump_buffer());
+            } else if (menu.screen == MenuScreen::Enhancements && sel == 5) {
+                engine.set_minimap(!engine.minimap());
+            } else if (menu.screen == MenuScreen::Enhancements && sel == 6) {
+                engine.set_center_fish_shot(!engine.center_fish_shot());
+            } else if (menu.screen == MenuScreen::Enhancements && sel == 7) {
+                int look = engine.player_look() + 1;
+                if (look > static_cast<int>(games.size())) {
+                    look = 0;
+                }
+                apply_player_look(engine, games, look, engine.player_suit());
+            } else if (menu.screen == MenuScreen::Enhancements && sel == 8) {
+                int suit = engine.player_suit() + 1;
+                if (suit > 8) {
+                    suit = 0;
+                }
+                engine.set_player_suit(suit);
+            }
+        };
+        auto video_step = [&](int delta) {
+            if (sel == 0) {
+                video.mode = (video.mode + 3 + delta) % 3;
+            } else if (sel == 1) {
+                video.scale = ((video.scale - 1 + 6 + delta) % 6) + 1;
+            } else if (sel == 2) {
+                video.resolution =
+                    (video.resolution + kResolutionCount + delta) % kResolutionCount;
+            } else if (sel == 3) {
+                int i = 0;
+                for (int k = 0; k < kHighFpsCount; ++k) {
+                    if (kHighFps[k] == video.high_fps) {
+                        i = k;
+                        break;
+                    }
+                }
+                i = (i + kHighFpsCount + delta) % kHighFpsCount;
+                video.high_fps = kHighFps[i];
+                return;  // presentation rate only; no window change
+            } else {
+                return;  // FILTERS is a placeholder
+            }
+            apply_video();
+        };
+
+        if (nav == 6) {  // cancel / back
+            if (menu.screen == MenuScreen::Main) {
+                if (game_started) {
+                    menu.screen = MenuScreen::Closed;
+                } else {
+                    running = false;
+                }
+            } else if (menu.screen == MenuScreen::SaveGame ||
+                       menu.screen == MenuScreen::LoadGame) {
+                menu.screen = MenuScreen::Main;
+            } else if (menu.screen == MenuScreen::Enhancements ||
+                       menu.screen == MenuScreen::Controls ||
+                       menu.screen == MenuScreen::Hud ||
+                       menu.screen == MenuScreen::Video ||
+                       menu.screen == MenuScreen::Menus ||
+                       menu.screen == MenuScreen::Cheats) {
+                menu.screen = MenuScreen::Options;
+            } else {
+                menu.screen = MenuScreen::Main;
+            }
+            return;
+        }
+        if (nav == 1) {
+            sel = (sel + n - 1) % n;
+            return;
+        }
+        if (nav == 2) {
+            sel = (sel + 1) % n;
+            return;
+        }
+
+        switch (menu.screen) {
+            case MenuScreen::Main: {
+                if (nav != 5) {
+                    break;
+                }
+                if (game_started) {
+                    switch (sel) {
+                        case 0: menu.screen = MenuScreen::Closed; break;
+                        case 1: menu.screen = MenuScreen::SaveGame; menu.save_sel = 0; break;
+                        case 2: menu.screen = MenuScreen::LoadGame; menu.save_sel = 0; break;
+                        case 3:
+                            menu.screen = MenuScreen::Episodes;
+                            menu.ep_sel = 0;
+                            for (size_t i = 0; i < games.size(); ++i) {
+                                if (games[i].id == engine.game().id) {
+                                    menu.ep_sel = static_cast<int>(i);
+                                    break;
+                                }
+                            }
+                            break;
+                        case 4: menu.screen = MenuScreen::Options; break;
+                        default: running = false; break;
+                    }
+                } else {
+                    switch (sel) {
+                        case 0:
+                            menu.screen = MenuScreen::Episodes;
+                            menu.ep_sel = 0;
+                            for (size_t i = 0; i < games.size(); ++i) {
+                                if (games[i].id == engine.game().id) {
+                                    menu.ep_sel = static_cast<int>(i);
+                                    break;
+                                }
+                            }
+                            break;
+                        case 1: menu.screen = MenuScreen::Options; break;
+                        default: running = false; break;
+                    }
+                }
+                break;
+            }
+            case MenuScreen::Episodes: {
+                const int count = static_cast<int>(games.size());
+                if (nav == 3 || nav == 4) {
+                    menu.ep_sel =
+                        (menu.ep_sel + (nav == 3 ? count - 1 : 1)) % count;
+                } else if (sel < count) {
+                    if (start_game(engine, games, sel)) {
+                        game_started = true;
+                        menu.screen = MenuScreen::Closed;
+                    }
+                } else {
+                    menu.screen = MenuScreen::Main;
+                }
+                break;
+            }
+            case MenuScreen::Options:
+                if (nav == 5 && sel == 0) {
+                    menu.screen = MenuScreen::Hud;
+                } else if (nav == 5 && sel == 1) {
+                    menu.screen = MenuScreen::Video;
+                } else if (nav == 5 && sel == 2) {
+                    menu.screen = MenuScreen::Cheats;
+                } else if (nav == 5 && sel == 3) {
+                    menu.screen = MenuScreen::Controls;
+                } else if (nav == 5 && sel == 4) {
+                    menu.screen = MenuScreen::Menus;
+                } else if (nav == 5 && sel == 5) {
+                    menu.screen = MenuScreen::Enhancements;
+                } else if (nav == 5 && sel == 6) {
+                    menu.screen = MenuScreen::Main;
+                } else {
+                    toggle_option();
+                }
+                break;
+            case MenuScreen::Video:
+                if (nav == 5 && sel == 7) {
+                    menu.screen = MenuScreen::Options;
+                } else if (sel == 4) {
+                    if (nav == 5 || nav == 3 || nav == 4) {
+                        video.interpolate = !video.interpolate;
+                    }
+                } else if (sel == 5) {
+                    if (nav == 5 || nav == 3 || nav == 4) {
+                        engine.set_message_box(!engine.message_box());
+                    }
+                } else if (sel == 6) {
+                    break;  // FILTERS: placeholder
+                } else if (nav == 3) {
+                    video_step(-1);
+                } else if (nav == 4 || nav == 5) {
+                    video_step(1);
+                }
+                break;
+            case MenuScreen::Hud:
+                if (nav == 5 && sel == 3) {
+                    menu.screen = MenuScreen::Options;
+                } else if (sel >= 0 && sel <= 2) {
+                    toggle_option();
+                }
+                break;
+            case MenuScreen::Menus:
+                if (nav == 5 && sel == 2) {
+                    menu.screen = MenuScreen::Options;
+                } else if (sel == 0) {
+                    if (nav == 3) {
+                        engine.set_menu_theme(
+                            menu_theme_next(engine.menu_theme(), -1, games));
+                    } else {
+                        engine.set_menu_theme(
+                            menu_theme_next(engine.menu_theme(), 1, games));
+                    }
+                } else if (sel == 1) {
+                    if (nav == 3) {
+                        video.splash = splash_next(video.splash, -1, games);
+                    } else {
+                        video.splash = splash_next(video.splash, 1, games);
+                    }
+                }
+                break;
+            case MenuScreen::Controls:
+                if (nav != 5) {
+                    break;
+                }
+                if (sel < ACT_COUNT) {
+                    menu.rebind_action = sel;
+                } else if (sel == ACT_COUNT) {
+                    reset_bindings(bindings);
+                } else {
+                    menu.screen = MenuScreen::Options;
+                }
+                break;
+            case MenuScreen::Cheats:
+                if (nav == 3 || nav == 4) {
+                    if (sel == 0) {
+                        engine.set_invincible(!engine.invincible());
+                    } else if (sel == 1) {
+                        engine.set_debug_fly(!engine.debug_fly());
+                    } else if (sel == 2) {
+                        engine.set_super_jump((engine.super_jump() + 1) % 16);
+                    }
+                    break;
+                }
+                if (nav != 5) {
+                    break;
+                }
+                if (sel == 0) {
+                    engine.set_invincible(!engine.invincible());
+                } else if (sel == 1) {
+                    engine.set_debug_fly(!engine.debug_fly());
+                } else if (sel == 2) {
+                    engine.set_super_jump((engine.super_jump() + 1) % 16);
+                } else if (sel == 3) {
+                    engine.add_item(2);  // knife
+                } else if (sel == 4) {
+                    engine.add_item(1);  // key
+                } else if (sel == 5) {
+                    engine.add_item(3);  // gem
+                } else if (sel == 6) {
+                    engine.add_item(8);  // spinning blade
+                } else if (sel == 7) {
+                    engine.debug_heal();
+                } else if (sel >= 8 && sel <= 12) {
+                    // 8 Jill, 9 frog, 10 bird, 11 spider, 12 fish.
+                    static const int kItem[5] = {0, 4, 5, 6, 7};
+                    engine.debug_morph(kItem[sel - 8]);
+                } else {
+                    menu.screen = MenuScreen::Options;
+                }
+                break;
+            case MenuScreen::SaveGame: {
+                if (nav != 5) {
+                    break;
+                }
+                if (sel >= engine.save_slots()) {
+                    menu.screen = MenuScreen::Main;
+                    break;
+                }
+                std::string err;
+                if (!engine.save_game(sel, err)) {
+                    std::fprintf(stderr, "save: %s\n", err.c_str());
+                }
+                break;
+            }
+            case MenuScreen::LoadGame: {
+                if (nav != 5) {
+                    break;
+                }
+                if (sel >= engine.save_slots()) {
+                    menu.screen = MenuScreen::Main;
+                    break;
+                }
+                std::string err;
+                if (!engine.load_game(sel, err)) {
+                    std::fprintf(stderr, "restore: %s\n", err.c_str());
+                } else {
+                    game_started = true;
+                    menu.screen = MenuScreen::Closed;
+                }
+                break;
+            }
+            case MenuScreen::Enhancements:
+                if (nav == 5 && sel == 9) {
+                    menu.screen = MenuScreen::Options;
+                } else {
+                    toggle_option();
+                }
+                break;
+            default:
+                break;
+        }
+    };
+
+    while (running) {
+        const uint64_t frame_start = SDL_GetPerformanceCounter();
+        SDL_Event ev;
+        while (SDL_PollEvent(&ev)) {
+            if (ev.type == SDL_QUIT) {
+                running = false;
+            } else if (splash_active &&
+                       (ev.type == SDL_KEYDOWN ||
+                        ev.type == SDL_MOUSEBUTTONDOWN ||
+                        ev.type == SDL_CONTROLLERBUTTONDOWN)) {
+                splash_active = false;  // any input skips the publisher screen
+            } else if (ev.type == SDL_CONTROLLERDEVICEADDED ||
+                       ev.type == SDL_CONTROLLERDEVICEREMOVED ||
+                       ev.type == SDL_JOYDEVICEADDED ||
+                       ev.type == SDL_JOYDEVICEREMOVED) {
+                // Re-scan so an XInput pad takes precedence over a raw pad and
+                // unplugged devices are released.
+                close_pads();
+                open_pads();
+            } else if (ev.type == SDL_CONTROLLERAXISMOTION &&
+                       engine.text_page_open()) {
+                const int dir = ev.caxis.value > 16000
+                                    ? 1
+                                    : (ev.caxis.value < -16000 ? -1 : 0);
+                if (ev.caxis.axis == SDL_CONTROLLER_AXIS_LEFTY) {
+                    if (dir != page_axis_y) {
+                        page_axis_y = dir;
+                        if (dir != 0) {
+                            engine.scroll_text_page(dir * 2);
+                        }
+                    }
+                } else if (ev.caxis.axis == SDL_CONTROLLER_AXIS_LEFTX) {
+                    if (dir != page_axis_x) {
+                        page_axis_x = dir;
+                        if (dir != 0) {
+                            engine.cycle_text_page(dir);
+                        }
+                    }
+                }
+            } else if (ev.type == SDL_JOYHATMOTION &&
+                       engine.text_page_open()) {
+                const Uint8 h = ev.jhat.value;
+                if (h & SDL_HAT_UP) {
+                    engine.scroll_text_page(-1);
+                } else if (h & SDL_HAT_DOWN) {
+                    engine.scroll_text_page(1);
+                }
+                if (h & SDL_HAT_LEFT) {
+                    engine.cycle_text_page(-1);
+                } else if (h & SDL_HAT_RIGHT) {
+                    engine.cycle_text_page(1);
+                }
+            } else if (ev.type == SDL_CONTROLLERBUTTONDOWN) {
+                const int b = ev.cbutton.button;
+                if (engine.text_page_open()) {
+                    switch (b) {
+                        case SDL_CONTROLLER_BUTTON_DPAD_UP:
+                            engine.scroll_text_page(-1);
+                            break;
+                        case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+                            engine.scroll_text_page(1);
+                            break;
+                        case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+                            engine.cycle_text_page(-1);
+                            break;
+                        case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+                            engine.cycle_text_page(1);
+                            break;
+                        case SDL_CONTROLLER_BUTTON_A:
+                        case SDL_CONTROLLER_BUTTON_B:
+                        case SDL_CONTROLLER_BUTTON_START:
+                        case SDL_CONTROLLER_BUTTON_BACK:
+                            engine.close_text_page();
+                            break;
+                        default:
+                            break;
+                    }
+                    continue;
+                }
+                if (menu_open(menu) && menu.rebind_action >= 0) {
+                    bindings.pad[menu.rebind_action] = b;
+                    menu.rebind_action = -1;
+                } else {
+                    int nav = 0;
+                    switch (b) {
+                        case SDL_CONTROLLER_BUTTON_DPAD_UP: nav = 1; break;
+                        case SDL_CONTROLLER_BUTTON_DPAD_DOWN: nav = 2; break;
+                        case SDL_CONTROLLER_BUTTON_DPAD_LEFT: nav = 3; break;
+                        case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: nav = 4; break;
+                        case SDL_CONTROLLER_BUTTON_A: nav = 5; break;
+                        case SDL_CONTROLLER_BUTTON_B: nav = 6; break;
+                        case SDL_CONTROLLER_BUTTON_START:
+                            if (select.open) {
+                                nav = 6;
+                            } else if (!menu_open(menu)) {
+                                // Start pauses into the main menu.
+                                menu.screen = MenuScreen::Main;
+                                menu.main_sel = 0;
+                            } else if (game_started) {
+                                nav = 6;  // resume
+                            }
+                            break;
+                        default:
+                            break;
+                    }
+                    if (nav != 0) {
+                        menu_nav(nav);
+                    }
+                }
+            } else if (ev.type == SDL_KEYDOWN && !ev.key.repeat) {
+                const SDL_Scancode sc = ev.key.keysym.scancode;
+                if (engine.text_page_open()) {
+                    switch (sc) {
+                        case SDL_SCANCODE_UP: engine.scroll_text_page(-1); break;
+                        case SDL_SCANCODE_DOWN: engine.scroll_text_page(1); break;
+                        case SDL_SCANCODE_PAGEUP:
+                            engine.scroll_text_page(-8);
+                            break;
+                        case SDL_SCANCODE_PAGEDOWN:
+                            engine.scroll_text_page(8);
+                            break;
+                        case SDL_SCANCODE_LEFT: engine.cycle_text_page(-1); break;
+                        case SDL_SCANCODE_RIGHT: engine.cycle_text_page(1); break;
+                        case SDL_SCANCODE_ESCAPE:
+                        case SDL_SCANCODE_RETURN:
+                        case SDL_SCANCODE_KP_ENTER:
+                        case SDL_SCANCODE_F1:
+                            engine.close_text_page();
+                            break;
+                        default: break;
+                    }
+                    continue;
+                }
+                if (menu_open(menu) && menu.rebind_action >= 0) {
+                    if (sc == SDL_SCANCODE_ESCAPE) {
+                        menu.rebind_action = -1;
+                    } else {
+                        bindings.key1[menu.rebind_action] = sc;
+                        bindings.key2[menu.rebind_action] =
+                            SDL_SCANCODE_UNKNOWN;
+                        menu.rebind_action = -1;
+                    }
+                    continue;
+                }
+                int nav = 0;
+                switch (sc) {
+                    case SDL_SCANCODE_UP: nav = 1; break;
+                    case SDL_SCANCODE_DOWN: nav = 2; break;
+                    case SDL_SCANCODE_LEFT: nav = 3; break;
+                    case SDL_SCANCODE_RIGHT: nav = 4; break;
+                    case SDL_SCANCODE_RETURN:
+                    case SDL_SCANCODE_KP_ENTER: nav = 5; break;
+                    case SDL_SCANCODE_ESCAPE: nav = 6; break;
+                    default: break;
+                }
+                if (nav != 0) {
+                    if (nav == 6 && !menu_open(menu) && !select.open) {
+                        menu.screen = MenuScreen::Main;  // Esc pauses
+                        menu.main_sel = 0;
+                    } else {
+                        menu_nav(nav);
+                    }
+                    continue;
+                }
+                if (menu_open(menu)) {
+                    continue;  // other keys do nothing while a menu is up
+                }
+                if (select.open) {
+                    if (sc == SDL_SCANCODE_F3) {
+                        select.open = false;
+                    }
+                    continue;
+                }
+                switch (sc) {
+                    case SDL_SCANCODE_F11:
+                        video.mode = (video.mode == 0) ? 1 : 0;
+                        apply_video();
+                        break;
+                    case SDL_SCANCODE_R:
+                        // Original in-game RESTORE key (22AB jump table: R).
+                        if ((ev.key.keysym.mod & KMOD_CTRL) != 0) {
+                            std::string err;
+                            if (!engine.load_board(engine.board_name(), err)) {
+                                std::fprintf(stderr, "reload: %s\n", err.c_str());
+                            }
+                        } else if (game_started) {
+                            menu.screen = MenuScreen::LoadGame;
+                            menu.save_sel = 0;
+                        }
+                        break;
+                    case SDL_SCANCODE_S:
+                        // Original in-game SAVE key (22AB jump table: S).
+                        if (game_started) {
+                            menu.screen = MenuScreen::SaveGame;
+                            menu.save_sel = 0;
+                        }
+                        break;
+                    case SDL_SCANCODE_F1:
+                        // F1 help: the sampled-sound bank's page 1 is "How the
+                        // Heck to Play" (the original's PRESS F1 FOR HELP).
+                        if (engine.text_pages_available()) {
+                            engine.show_text_page(1);
+                        } else {
+                            std::printf("%s\n", engine.status().c_str());
+                        }
+                        break;
+                    case SDL_SCANCODE_F2:
+                        engine.set_hud_classic(!engine.hud_classic());
+                        std::printf("HUD: %s\n",
+                                    engine.hud_classic() ? "classic" : "minimal");
+                        break;
+                    case SDL_SCANCODE_F3: {
+                        if (games.empty()) {
+                            break;
+                        }
+                        select.open = true;
+                        select.game = 0;
+                        select.board = 0;
+                        for (size_t i = 0; i < games.size(); ++i) {
+                            if (games[i].id == engine.game().id) {
+                                select.game = static_cast<int>(i);
+                                break;
+                            }
+                        }
+                        const GameDef& cur = games[static_cast<size_t>(select.game)];
+                        for (int i = 0; i < cur.board_count(); ++i) {
+                            if (engine.board_name() == cur.board(i)) {
+                                select.board = i;
+                                break;
+                            }
+                        }
+                        break;
+                    }
+                    case SDL_SCANCODE_F4:
+                        engine.set_debug_fly(!engine.debug_fly());
+                        std::printf("debug fly: %s\n",
+                                    engine.debug_fly() ? "on" : "off");
+                        break;
+                    case SDL_SCANCODE_F5:
+                        engine.set_invincible(!engine.invincible());
+                        std::printf("invincible: %s\n",
+                                    engine.invincible() ? "on" : "off");
+                        break;
+                    case SDL_SCANCODE_F8:
+                        std::printf("%s\n", engine.status().c_str());
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
+
+        const uint8_t* keys = SDL_GetKeyboardState(nullptr);
+        if (!engine.text_page_open()) {
+            page_axis_x = 0;
+            page_axis_y = 0;
+        }
+        const bool paused = splash_active || select.open || menu_open(menu) ||
+                            engine.text_page_open();
+        if (paused) {
+            engine.set_input(0, 0, false, false);
+        } else {
+            poll_input(keys, bindings, controller, joystick, engine);
+        }
+
+        uint64_t now = SDL_GetPerformanceCounter();
+        double dt = static_cast<double>(now - last) / freq;
+        last = now;
+        if (dt > 0.25) {
+            dt = 0.25;
+        }
+        accumulator += dt;
+        if (paused) {
+            accumulator = 0.0;  // pause the world while a menu is up
+        }
+        while (accumulator >= step) {
+            engine.tick();
+            accumulator -= step;
+        }
+        if (engine.take_ending()) {
+            // State-3 CHECKPT: the ending/castle sequence is finished.  The
+            // original sets DGROUP:0xBCAA = 2, fades (22AB:266F) and returns to
+            // the front end, so do the same here.
+            menu.screen = MenuScreen::Main;
+            menu.main_sel = 0;
+            game_started = false;
+        }
+
+        if (splash_active) {
+            const std::vector<uint8_t>& page = splash_image.pages[splash_page];
+            if (page.size() == fb.px.size()) {
+                fb.px = page;
+            } else {
+                fb.fill_rect(0, 0, Framebuffer::W, Framebuffer::H, 0);
+            }
+            if (SDL_GetTicks() - splash_page_start >= 1600) {
+                ++splash_page;
+                if (splash_page >= splash_image.pages.size()) {
+                    splash_active = false;
+                } else {
+                    splash_page_start = SDL_GetTicks();
+                }
+            }
+        } else {
+            const float alpha =
+                (!paused && video.interpolate && video.high_fps > 0)
+                    ? static_cast<float>(accumulator / step)
+                    : 1.0f;
+            engine.render(fb, true, alpha);
+            // Temporary debug indicators sit just below the HUD: under the
+            // modern top bar, or under the classic side panel.
+            const int overlay_y = engine.hud_classic() ? 86 : 14;
+            if (engine.debug_fly() && !paused) {
+                engine.draw_text(fb, Framebuffer::W - 26, overlay_y, 7, "FLY");
+            }
+            if (engine.invincible() && !paused) {
+                engine.draw_text(fb, Framebuffer::W - 46, overlay_y, 7, "INV");
+            }
+            if (select.open) {
+                draw_select(fb, engine, games, select);
+            }
+            if (menu_open(menu)) {
+                draw_menu(fb, engine, menu, game_started, video, bindings,
+                          theme_backdrop, games);
+            }
+        }
+        const uint8_t* out_pal =
+            (splash_active && splash_image.palette_ready) ? splash_image.palette
+                                                          : palette;
+        for (size_t i = 0; i < fb.px.size(); ++i) {
+            uint8_t c = fb.px[i];
+            uint32_t r = out_pal[c * 3 + 0];
+            uint32_t g = out_pal[c * 3 + 1];
+            uint32_t b = out_pal[c * 3 + 2];
+            argb[i] = 0xFF000000u | (r << 16) | (g << 8) | b;
+        }
+        SDL_UpdateTexture(texture, nullptr, argb.data(),
+                          Framebuffer::W * static_cast<int>(sizeof(uint32_t)));
+        SDL_RenderClear(renderer);
+        SDL_RenderCopy(renderer, texture, nullptr, nullptr);
+        SDL_RenderPresent(renderer);
+
+        if (SDL_GetTicks() - title_timer >= 500) {
+            title_timer = SDL_GetTicks();
+            char title[240];
+            std::snprintf(title, sizeof(title), "Jill  %s  %s  hp=%d  %.1f fps",
+                          engine.game().id.c_str(), engine.board_name().c_str(),
+                          engine.health(), 1.0 / step);
+            SDL_SetWindowTitle(window, title);
+        }
+        // Presentation pacing.  The world still advances at `step` (18.2065 Hz);
+        // HIGH FRAMERATE presents the current frame at up to 144 Hz.
+        const double present_hz =
+            video.high_fps > 0 ? static_cast<double>(video.high_fps) : 1.0 / step;
+        const double present_time = 1.0 / present_hz;
+        const double spent =
+            static_cast<double>(SDL_GetPerformanceCounter() - frame_start) / freq;
+        const double remain = present_time - spent;
+        if (remain >= 0.001) {
+            // Coarse sleep, then a short spin so SDL_Delay's millisecond
+            // quantisation does not drag the rate below the chosen value.
+            const double remain_ms = remain * 1000.0;
+            if (remain_ms > 1.0) {
+                SDL_Delay(static_cast<Uint32>(remain_ms - 0.5));
+            }
+            while (static_cast<double>(
+                       SDL_GetPerformanceCounter() - frame_start) /
+                       freq < present_time) {
+            }
+        }
+    }
+
+    if (opt.save_slot >= 0) {
+        std::string save_err;
+        if (!engine.save_game(opt.save_slot, save_err)) {
+            std::fprintf(stderr, "save slot %d: %s\n", opt.save_slot,
+                         save_err.c_str());
+        }
+    }
+
+    {
+        IniFile ini;
+        ini.set("paths", "games",
+                opt.games_dir.empty() ? "games" : opt.games_dir);
+        ini.set("paths", "profiles",
+                opt.profiles_dir.empty() ? "profiles" : opt.profiles_dir);
+        for (const GameDef& g : games) {
+            ini.set("paths", g.id,
+                    g.id == engine.game().id ? engine.game().data_dir
+                                             : g.data_dir);
+        }
+        ini.set("game", "id", engine.game().id);
+        ini.set_int("video", "window_mode", video.mode);
+        ini.set_int("video", "scale", video.scale);
+        ini.set_int("video", "resolution", video.resolution);
+        ini.set_int("video", "high_fps", video.high_fps);
+        ini.set_int("video", "splash", video.splash);
+        ini.set_bool("video", "interpolate", video.interpolate);
+        ini.set_bool("hud", "classic", engine.hud_classic());
+        std::string bg_name;
+        if (engine.hud_bg() == -2) {
+            bg_name = "suit";
+        } else if (engine.hud_bg() == -3) {
+            bg_name = "vibrant";
+        } else {
+            bg_name = std::to_string(engine.hud_bg());
+        }
+        ini.set("hud", "background", bg_name);
+        ini.set_int("hud", "text", engine.hud_text());
+        ini.set_bool("gameplay", "fire_crouched",
+                     engine.fire_while_crouched());
+        ini.set_int("gameplay", "max_knives", engine.max_knives());
+        ini.set_bool("gameplay", "retain_items", engine.retain_items());
+        ini.set_bool("gameplay", "fast_dialogs", engine.fast_dialogs());
+        ini.set_bool("gameplay", "message_box", engine.message_box());
+        ini.set_bool("gameplay", "air_jump_buffer", engine.air_jump_buffer());
+        ini.set_bool("gameplay", "minimap", engine.minimap());
+        ini.set_bool("gameplay", "center_fish_shot", engine.center_fish_shot());
+        ini.set_int("gameplay", "player_look", engine.player_look());
+        ini.set_int("gameplay", "player_suit", engine.player_suit());
+        ini.set_int("gameplay", "menu_theme", engine.menu_theme());
+        save_bindings_ini(ini, bindings);
+        ini.save("jill.ini");
+    }
+
+    close_pads();
+    SDL_DestroyTexture(texture);
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+    return 0;
+}
+
+#endif  // JILL_HAVE_SDL
+
+}  // namespace
+
+int run_app(const Options& opt) {
+    std::string err;
+    const std::string profiles_dir =
+        opt.profiles_dir.empty() ? std::string("profiles") : opt.profiles_dir;
+    const int profile_files = load_profile_dir(profiles_dir, err);
+    if (!err.empty()) {
+        std::fprintf(stderr, "%s\n", err.c_str());
+        err.clear();
+    }
+    if (profile_files > 0) {
+        std::printf("loaded %d runtime profile(s) from %s\n", profile_files,
+                    profiles_dir.c_str());
+    }
+    std::vector<GameDef> games = load_game_list(opt.games_dir, err);
+    if (!err.empty()) {
+        std::fprintf(stderr, "%s\n", err.c_str());
+    }
+    if (games.empty()) {
+        std::fprintf(stderr, "no games found\n");
+        return 2;
+    }
+    // jill.ini [paths] overrides the manifest's local default directory.  The
+    // keys are game ids (jill1, jill2, jill3, onesimus), so deleting the local
+    // copies only needs one line per game in jill.ini.
+    for (GameDef& g : games) {
+        const auto it = opt.data_paths.find(g.id);
+        if (it != opt.data_paths.end() && !it->second.empty() &&
+            it->first != "games" && it->first != "profiles") {
+            g.data_dir = it->second;
+        }
+    }
+
+    if (opt.list_games) {
+        for (const GameDef& g : games) {
+            std::printf("%-12s %-28s profile=%s data=%s boards=%d\n",
+                        g.id.c_str(), g.title.c_str(), g.profile_id.c_str(),
+                        g.data_dir.c_str(), g.board_count());
+        }
+        return 0;
+    }
+
+    if (!opt.dump_splash.empty()) {
+#ifdef JILL_HAVE_SDL
+        dump_splash_pages(games, opt.splash > 0 ? opt.splash : 1,
+                           opt.dump_splash);
+        return 0;
+#else
+        std::fprintf(stderr, "--dump-splash needs an SDL build\n");
+        return 2;
+#endif
+    }
+
+    const GameDef* chosen = nullptr;
+    if (!opt.game.empty()) {
+        chosen = game_by_id(games, opt.game);
+        if (!chosen) {
+            std::fprintf(stderr, "unknown game '%s' (--list-games shows the ids)\n",
+                         opt.game.c_str());
+            return 2;
+        }
+    } else if (opt.episode >= 1 && opt.episode <= static_cast<int>(games.size())) {
+        chosen = &games[static_cast<size_t>(opt.episode - 1)];
+    } else if (opt.episode > 0) {
+        std::fprintf(stderr, "unknown episode %d (%d installed); use --game ID\n",
+                     opt.episode, static_cast<int>(games.size()));
+        return 2;
+    } else {
+        chosen = &games.front();
+    }
+
+    GameDef game = *chosen;
+    Options run_opt = opt;
+    if (opt.data_dir.empty()) {
+        // jill.ini can relocate each installed game individually; a bare
+        // [paths] data key is the fallback for manifests without one.
+        IniFile ini;
+        std::string ini_err;
+        if (ini.load("jill.ini", ini_err)) {
+            std::string data = ini.get("paths", game.id);
+            if (data.empty()) {
+                data = ini.get("paths", "data");
+            }
+            if (!data.empty()) {
+                game.data_dir = data;
+            }
+        }
+    }
+    if (!opt.data_dir.empty()) {
+        game.data_dir = opt.data_dir;
+    }
+    if (!opt.palette.empty()) {
+        game.palette = opt.palette;
+    }
+    run_opt.data_dir = game.data_dir;
+    run_opt.palette = game.palette;
+    run_opt.menu_theme = std::min(opt.menu_theme, static_cast<int>(games.size()));
+    if (opt.resolution_w > 0) {
+        run_opt.resolution = match_resolution(opt.resolution_w, opt.resolution_h);
+    }
+
+    Engine engine;
+    if (!engine.init(game, err)) {
+        std::fprintf(stderr, "%s\n", err.c_str());
+        return 2;
+    }
+    // Display/dialog options first: load_board derives the caption timing from
+    // the dialog speed.
+    engine.set_hud_classic(opt.hud_classic);
+    engine.set_invincible(opt.invincible);
+    engine.set_super_jump(opt.super_jump);
+    engine.set_menu_theme(run_opt.menu_theme);
+    engine.set_fire_while_crouched(opt.fire_crouched);
+    engine.set_max_knives(opt.max_knives);
+    engine.set_retain_items(opt.retain_items);
+    engine.set_fast_dialogs(opt.fast_dialogs);
+    engine.set_message_box(opt.message_box);
+    engine.set_air_jump_buffer(opt.air_jump_buffer);
+    engine.set_minimap(opt.minimap);
+    engine.set_center_fish_shot(opt.center_fish_shot);
+    apply_player_look(engine, games, opt.player_look, opt.player_suit);
+    engine.set_hud_bg(opt.hud_bg);
+    engine.set_hud_text(opt.hud_text);
+    std::string board = opt.board.empty() ? game.first_board : opt.board;
+    if (!engine.load_board(board, err)) {
+        std::fprintf(stderr, "%s\n", err.c_str());
+        std::fprintf(stderr, "data dir: %s (use --data to point at the game files)\n",
+                     game.data_dir.c_str());
+        return 2;
+    }
+    for (int i = 0; i < opt.items; ++i) {
+        engine.add_item(2);  // debug: knives
+    }
+    if (opt.blade && opt.ticks == 0) {
+        engine.debug_spawn_blade();
+    }
+    if (opt.morph >= 0 && opt.ticks == 0) {
+        engine.debug_morph(opt.morph);
+    }
+    if (opt.face != 0 && opt.ticks == 0) {
+        engine.debug_face(opt.face);
+    }
+    if (opt.load_slot >= 0) {
+        std::string load_err;
+        if (!engine.load_game(opt.load_slot, load_err)) {
+            std::fprintf(stderr, "restore slot %d: %s\n", opt.load_slot,
+                         load_err.c_str());
+        }
+    }
+
+    if (opt.ticks > 0) {
+        return run_headless(engine, run_opt);
+    }
+
+#ifdef JILL_HAVE_SDL
+    return run_sdl(run_opt, engine, games);
+#else
+    std::fprintf(stderr,
+                 "built without SDL2; rebuild with SDL2 available, or use --ticks N\n");
+    return 3;
+#endif
+}
