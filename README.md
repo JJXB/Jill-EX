@@ -68,8 +68,11 @@ A standalone attempt at reverse engineering and recreating the Jill of the Jungl
 * Headless debugging/verification CLI (`--ticks`, `--board`, `--start`,
   `--dump`, `--dump-objects`, `--watch-tile`, `--morph`, `--face`, `--save`,
   `--load`, `--text-page`, `--dump-splash`, `--list-games`).
-* `jill_extractor.py` viewer/extractor[readme here](EXTRACTOR_README.md) and the reverse-engineering notes in
+* `jill_extractor.py` viewer/extractor [readme here](EXTRACTOR_README.md) and the reverse-engineering notes in
   `docs/`.
+
+## Adding Mods
+[See MODS](MODS.md)
 
 ## Building
 [See BUILDING](BUILDING.md)
