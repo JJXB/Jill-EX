@@ -1,8 +1,4 @@
-Here is a drop-in README section for adding mods with the Python tools.
-
-
-
-\## Adding Your Own Mods
+## Adding Your Own Mods
 
 
 
