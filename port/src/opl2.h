@@ -41,6 +41,7 @@ private:
         bool key = false;
         double prev = 0.0;  // previous output (feedback / modulation)
         bool rhythm = false;  // percussion voice: noise instead of sine
+        bool perc = false;    // rhythm-mode voice: no sustain level
     };
 
     struct Channel {

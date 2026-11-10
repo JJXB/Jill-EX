@@ -459,8 +459,8 @@ void Engine::player_draw(int i, Framebuffer& fb) {
     if (o.state == 0 && o.raise > 0) {
         // Pull-up after a climb: rise from behind the block below, then stand.
         const int step = kRaiseFrames - std::min(o.raise, kRaiseFrames);
-        const int px = o.x - cam_x_;
-        const int py = o.y - cam_y_ + kRaiseOffset[step];
+        const int px = o.x - cam_x_ + view_x();
+        const int py = o.y - cam_y_ + view_y() + kRaiseOffset[step];
         draw_player_shape(fb, 0x0800 | kRaisePose[step], px, py, true);
         // The ledge block is foreground while she is still behind it, so redraw
         // the solid cells that overlap the shifted sprite.  Climb tiles (class
@@ -477,8 +477,8 @@ void Engine::player_draw(int i, Framebuffer& fb) {
                 const int id = map_[c * Board::kRows + r] & 0x3FFF;
                 if (id < TileDefs::kCount &&
                     (tiles_.at(id).flags & 0x0007) == 0x0006) {
-                    draw_shape(fb, tiles_.at(id).shape, c * 16 - cam_x_,
-                               r * 16 - cam_y_, false);
+                    draw_shape(fb, tiles_.at(id).shape, c * 16 - cam_x_ + view_x(),
+                               r * 16 - cam_y_ + view_y(), false);
                 }
             }
         }
@@ -568,8 +568,8 @@ void Engine::player_draw(int i, Framebuffer& fb) {
             break;
     }
 
-    int px = o.x - cam_x_;
-    int py = o.y - cam_y_;
+    int px = o.x - cam_x_ + view_x();
+    int py = o.y - cam_y_ + view_y();
     if (o.state == 4) {
         // Level entrance / respawn: the original draws the sprite at
         // y + 0x21 - p11, so Jill rises one pixel per frame out of the floor
@@ -591,8 +591,8 @@ void Engine::player_draw(int i, Framebuffer& fb) {
                 const int id = map_[c * Board::kRows + r] & 0x3FFF;
                 if (id < TileDefs::kCount &&
                     (tiles_.at(id).flags & 0x0007) == 0x0006) {
-                    draw_shape(fb, tiles_.at(id).shape, c * 16 - cam_x_,
-                               r * 16 - cam_y_, false);
+                    draw_shape(fb, tiles_.at(id).shape, c * 16 - cam_x_ + view_x(),
+                               r * 16 - cam_y_ + view_y(), false);
                 }
             }
         }
@@ -760,8 +760,8 @@ void Engine::form_update(int i) {
 void Engine::form_draw(int i, Framebuffer& fb) {
     const BoardObject& o = objects_[static_cast<size_t>(i)];
     const int ts = profile_->kind(o.kind).tileset;
-    const int x = o.x - cam_x_;
-    const int y = o.y - cam_y_;
+    const int x = o.x - cam_x_ + view_x();
+    const int y = o.y - cam_y_ + view_y();
     switch (o.kind) {
         case 54: {  // fish: two facing sets, table 0x11F3 = {0,1,2,1}
             static const uint8_t kFishFrame[4] = {0, 1, 2, 1};

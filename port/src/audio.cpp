@@ -302,11 +302,17 @@ void MusicPlayer::mix(uint8_t* stream, int len) {
                     if (ext_pos_ >= static_cast<double>(total)) {
                         ext_pos_ = std::fmod(ext_pos_, static_cast<double>(total));
                     }
-                    const size_t f = static_cast<size_t>(ext_pos_);
+                    const size_t i0 = static_cast<size_t>(ext_pos_);
+                    const size_t i1 = (i0 + 1 < total) ? (i0 + 1) : 0;
+                    const float frac =
+                        static_cast<float>(ext_pos_ - static_cast<double>(i0));
                     float v = 0.0f;
                     for (int c = 0; c < ch; ++c) {
-                        v += a.samples[f * static_cast<size_t>(ch) +
-                                       static_cast<size_t>(c)];
+                        const float s0 = a.samples[i0 * static_cast<size_t>(ch) +
+                                                   static_cast<size_t>(c)];
+                        const float s1 = a.samples[i1 * static_cast<size_t>(ch) +
+                                                   static_cast<size_t>(c)];
+                        v += s0 * (1.0f - frac) + s1 * frac;
                     }
                     scratch_[static_cast<size_t>(i)] +=
                         v / static_cast<float>(ch);

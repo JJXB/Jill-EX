@@ -81,6 +81,9 @@ public:
     // the port keeps its minimal pip strip unless this is enabled.
     void set_hud_classic(bool on) { hud_classic_ = on; }
     bool hud_classic() const { return hud_classic_; }
+    // Draw the character portrait beside level-title dialogs (HUD option).
+    void set_hud_portrait(bool on) { hud_portrait_ = on; }
+    bool hud_portrait() const { return hud_portrait_; }
     // Debug fly: arrow keys reposition the player directly (no collision or
     // gravity) so level elements can be tested quickly.
     void set_debug_fly(bool on) { debug_fly_ = on; }
@@ -355,6 +358,12 @@ private:
     void render_hud_modern(Framebuffer& fb);   // single top-of-screen bar
     int suit_colour();                         // cached per-episode suit shade
     void follow_camera();
+    int view_x() const;
+    int view_y() const;
+    int view_w() const;
+    int view_h() const;
+    int view_center_x() const;
+    int view_center_y() const;
     void clear_frame_marks();
     int rnd(int mod);
 
@@ -378,6 +387,7 @@ private:
     int water_sound_ = -0x100;  // DGROUP:0x439E, last water-splash frame
     uint32_t rng_ = 0x2A3B1C4D;  // stands in for FUN_2ca6_0015
     bool hud_classic_ = false;
+    bool hud_portrait_ = true;
     bool hide_text_kinds_ = false;
     bool debug_fly_ = false;
     bool invincible_ = false;

@@ -55,6 +55,7 @@ struct Options {
     double music_seconds = 10.0;  // --music-seconds N
     bool fullscreen = false;    // legacy alias for window_mode = 1
     bool hud_classic = false;   // --hud: use the original HUD panel art
+    bool hud_portrait = true;   // --no-portrait: hide the dialog portrait
     bool invincible = false;    // --invincible: debug no-damage mode
     int super_jump = 0;         // --super-jump N: cheat, minimum feather count (0..15)
     int menu_theme = 0;         // --menu-theme N: 0 plain, N = games[N-1] intro board

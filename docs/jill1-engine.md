@@ -835,9 +835,18 @@ the linear addresses above rather than the symbol names.
     etc. passed to `FUN_1353_0b64` are negated colour indices (7, 5, 4, 2) and
     the third argument (8) is the panel fill colour; the damage flash switches
     the fill to 4.
-  * The port's HUD is an option (`--hud`, F2): it fills the panel with colour 8
-    and draws the labels/values in 7. The exact text ramp is **[inferred]** -
-    the original remaps glyph levels 1/2/3 through the palette pen.
+  * The port's CLASSIC style draws the original screen presentation from
+    shape entry 3: frame 0x0A is the noise fill, 0x00/0x03 the vertical
+    edges, 0x06/0x08 the horizontal edges and 0x04 the corners (a 9-slice).
+    The game title sits in a top strip, and a 64-px status column carries a
+    health bar, LEVEL/SCORE, a 3-column inventory and the INVENTORY caption.
+    The board renders into the framed viewport (x 74..312, y 20..186) and the
+    camera clamps to that viewport, so Jill stays visible at the board edges
+    while CLASSIC is active.  MODERN remains a separate top strip and keeps
+    the full 320x200 camera.  The layout is reconstructed from the original
+    menu/HUD screenshots **[inferred]**; the field positions follow the
+    documented draw calls above.  A pack `hud/classic.<ext>` still replaces
+    the panel using the legacy 64x84 layout.
   * `PRESS F1 FOR HELP` is the one-shot intro message from `FUN_22ab_05b4`, not
     part of the per-frame HUD.
 * **Menus** (`FUN_22ab_2aed`): `PICK A CHOICE  PLAY / RESTORE / ...`; the high-score

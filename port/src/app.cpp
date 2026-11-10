@@ -531,6 +531,7 @@ bool apply_selection(Engine& engine, const std::vector<GameDef>& games,
         return false;
     }
     const bool hud = engine.hud_classic();
+    const bool hud_portrait = engine.hud_portrait();
     const int hud_bg = engine.hud_bg();
     const int hud_text = engine.hud_text();
     const int hud_health = engine.hud_health();
@@ -559,12 +560,14 @@ bool apply_selection(Engine& engine, const std::vector<GameDef>& games,
     }
     engine.set_fast_dialogs(fast_dialogs);
     engine.set_message_box(message_box);
+    engine.set_hud_classic(hud);  // camera centre depends on the HUD style
     if (!engine.load_board(g.board(sel.board), err)) {
         std::fprintf(stderr, "load %s: %s\n", g.board(sel.board).c_str(),
                      err.c_str());
         return false;
     }
     engine.set_hud_classic(hud);
+    engine.set_hud_portrait(hud_portrait);
     engine.set_hud_bg(hud_bg);
     engine.set_hud_text(hud_text);
     engine.set_hud_health(hud_health);
@@ -955,6 +958,8 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                     std::string("TEXT: ") + hud_text_name(engine.hud_text()),
                     std::string("HEALTH: ") +
                         hud_health_name(engine.hud_health()),
+                    std::string("PORTRAIT: ") +
+                        (engine.hud_portrait() ? "ON" : "OFF"),
                     "BACK"};
         case MenuScreen::Menus:
             // SPLASH is temporarily disabled while the publisher screen is
@@ -1499,6 +1504,7 @@ bool start_game(Engine& engine, const std::vector<GameDef>& games, int index) {
     }
     const GameDef& g = games[static_cast<size_t>(index)];
     const bool hud = engine.hud_classic();
+    const bool hud_portrait = engine.hud_portrait();
     const int hud_bg = engine.hud_bg();
     const int hud_text = engine.hud_text();
     const int hud_health = engine.hud_health();
@@ -1527,12 +1533,14 @@ bool start_game(Engine& engine, const std::vector<GameDef>& games, int index) {
     }
     engine.set_fast_dialogs(fast_dialogs);
     engine.set_message_box(message_box);
+    engine.set_hud_classic(hud);  // camera centre depends on the HUD style
     if (!engine.load_board(g.first_board, err)) {
         std::fprintf(stderr, "load %s: %s\n", g.first_board.c_str(),
                      err.c_str());
         return false;
     }
     engine.set_hud_classic(hud);
+    engine.set_hud_portrait(hud_portrait);
     engine.set_hud_bg(hud_bg);
     engine.set_hud_text(hud_text);
     engine.set_hud_health(hud_health);
@@ -2015,6 +2023,8 @@ int run_sdl(const Options& opt, Engine& engine,
                 engine.set_hud_text(next_hud_text(engine.hud_text()));
             } else if (menu.screen == MenuScreen::Hud && sel == 3) {
                 engine.set_hud_health(next_hud_health(engine.hud_health()));
+            } else if (menu.screen == MenuScreen::Hud && sel == 4) {
+                engine.set_hud_portrait(!engine.hud_portrait());
             } else if (menu.screen == MenuScreen::Menus && sel == 0) {
                 engine.set_menu_theme(menu_theme_next(
                     engine.menu_theme(), 1, games,
@@ -2279,9 +2289,9 @@ int run_sdl(const Options& opt, Engine& engine,
                 }
                 break;
             case MenuScreen::Hud:
-                if (nav == 5 && sel == 4) {
+                if (nav == 5 && sel == 5) {
                     menu.screen = MenuScreen::Options;
-                } else if (sel >= 0 && sel <= 3) {
+                } else if (sel >= 0 && sel <= 4) {
                     toggle_option();
                 }
                 break;
@@ -2864,6 +2874,7 @@ int run_sdl(const Options& opt, Engine& engine,
         ini.set_int("audio", "sfx_volume", menu.sfx_volume);
         ini.set_bool("audio", "pc_speaker", menu.pc_speaker);
         ini.set_bool("hud", "classic", engine.hud_classic());
+        ini.set_bool("hud", "portrait", engine.hud_portrait());
         std::string bg_name;
         if (engine.hud_bg() == -2) {
             bg_name = "suit";
@@ -3039,6 +3050,7 @@ int run_app(const Options& opt) {
     // Display/dialog options first: load_board derives the caption timing from
     // the dialog speed.
     engine.set_hud_classic(opt.hud_classic);
+    engine.set_hud_portrait(opt.hud_portrait);
     engine.set_invincible(opt.invincible);
     engine.set_super_jump(opt.super_jump);
     engine.set_menu_theme(run_opt.menu_theme);

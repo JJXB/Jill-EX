@@ -1227,3 +1227,45 @@ offsets, board list, title table).
   extractor/importer tools, profiles/, games/, external/ and the user docs
   into `build/release/Jill-EX`, then writes `Jill-EX-release.zip`.
   Game data and extracted assets are deliberately excluded.
+* Fixed the level-start invisibility: a music CHECKPT (`*track.ddt`) was still
+  running the entrance/warp branch, so touching the spawn checkpoint reset the
+  player to state 4 every tick and the rise never completed.  Music commands now
+  only queue the track and leave the player alone.
+* HUD option PORTRAIT: ON/OFF (OPTIONS > HUD, `[hud] portrait`, `--no-portrait`)
+  controls the character portrait beside level-title dialogs.
+* Music static: OPL2 rhythm voices now ignore the instrument sustain level and
+  decay to silence like the chip, removing the constant hi-hat/snare/cymbal
+  wash.  External pack music now uses linear interpolation instead of nearest
+  resampling.
+* Classic HUD rebuilt: the CLASSIC style now draws the original screen frame
+  (per-game dithered border, title strip), a 64-px status column with a red
+  health bar, LEVEL/SCORE and the 3-column inventory, plus the INVENTORY
+  caption.  The camera centres the player in the visible viewport only while
+  CLASSIC is active.  MODERN is unchanged.  `hud/classic.<ext>` pack panels
+  keep the legacy 64x84 placement.
+* Classic HUD frame now uses shape entry 3 frame 0x0A, the original window
+  border noise texture, instead of a generated dither.  The frame therefore
+  picks up each episode's own palette (grey/blue/pink).
+* Classic HUD frame now composes the 9-slice pieces from shape entry 3
+  (0x00/0x03 vertical edges, 0x06/0x08 horizontal edges, 0x04 corners, 0x0A
+  fill).  The board renders into the framed viewport and the camera clamps to
+  that viewport, fixing Jill disappearing behind the panel at the left/right
+  board edges.  HEALTH text and the bar now share the same top row.
+* Extractor Shape Viewer: added a Grid toggle that renders every frame of the
+  selected entry with hex frame labels and click-to-select, plus explicit `-`
+  / `+` step buttons and fixed frame status updates.  Spinbox Up/Down now step
+  by one instead of re-running the current value.
+* Extractor GUI: the board viewer canvas now uses a grid layout so the
+  horizontal scrollbar sits along the bottom of the viewport.  Selecting a
+  left file-category tab (Boards/Shapes/Sounds/Config) switches the right
+  notebook to the matching viewer; shape and sound selections do the same.
+* jill_import: accepts the extractor's flat `sprites/shape_NNN_FFF.png`
+  layout, plus new `sha-font`, `sha-tile`, `board-image` and `pack` commands
+  for fonts, DMA tile art, full board renders and external pack folders.
+  Existing entries keep their bpp/flags/palette during folder import.
+* jill_import also gained `vcl-pages` for re-importing `text_pages/pages.json`
+  (colours preserved) or plain `page_NN.txt` files into a `.vcl`.
+* Documentation: added `COMMANDLINE.md` (port, build/packaging, extractor and
+  importer arguments), `HOTKEYS.md` (gameplay, menus, text pages, extractor
+  controls) and `IMPORT_README.md` (all jill_import commands, input sizes,
+  workflows and limits).

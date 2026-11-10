@@ -88,6 +88,7 @@ void usage() {
         "  --borderless   start in borderless fullscreen\n"
         "  --resolution WxH  window/display size, or 'desktop' (default)\n"
         "  --hud          draw the original HUD panel art (F2 toggles it)\n"
+        "  --no-portrait  hide the character portrait beside level-title dialogs\n"
         "  --invincible   debug: the player takes no damage (F5 toggles)\n"
         "  --super-jump N cheat: treat N feathers (item 9) as carried, 0..15\n"
         "  --menu-theme N front-end theme: 0 port, N = N-th game's intro board\n"
@@ -167,6 +168,7 @@ int main(int argc, char** argv) {
             }
         }
         opt.hud_classic = ini.get_bool("hud", "classic", opt.hud_classic);
+        opt.hud_portrait = ini.get_bool("hud", "portrait", opt.hud_portrait);
         const std::string bg = ini.get("hud", "background");
         if (!bg.empty()) {
             const std::string lb = ini_lower(bg);
@@ -304,6 +306,10 @@ int main(int argc, char** argv) {
             }
         } else if (a == "--hud") {
             opt.hud_classic = true;
+        } else if (a == "--no-portrait") {
+            opt.hud_portrait = false;
+        } else if (a == "--portrait") {
+            opt.hud_portrait = true;
         } else if (a == "--invincible") {
             opt.invincible = true;
         } else if (a == "--super-jump") {

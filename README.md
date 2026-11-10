@@ -42,6 +42,10 @@ No copyright assets shipped, provide your own.
   * BECOME JILL/FROG/BIRD/SPIDER/FISH (Spider Unused but logic present in files, generated temporary art).
   * Level/Board Select
 
+## Command Line Arguments and Keyboard Hotkeys
+[See COMMANDLINE](COMMANDLINE.md)
+[See HOTKEYS](HOTKEYS.md)
+
 ## TODO
 
 ### Remaining
@@ -65,8 +69,10 @@ No copyright assets shipped, provide your own.
 [See TOOLS_DATA](TOOLS_DATA.md)
 
 ## Adding Mods and External Enhanced Assets
-[See MODS](MODS.md)
-[See EXTASSETS](EXTASSETS.md)
+* [See MODS](MODS.md)
+* [See EXTASSETS](EXTASSETS.md)
+* [See IMPORT_README](IMPORT_README.md)
+* [See EXTRACTOR_README.md](EXTRACTOR_README.md)
 
 ## Building
 [See BUILDING](BUILDING.md)

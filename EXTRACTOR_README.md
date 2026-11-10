@@ -33,9 +33,11 @@ so mods/other data sets work without code changes.
 - **Board Viewer**: Renders real tiles (via `.dma` → `.sha` mapping) at 128×64 with
   zoom, grid, and object overlays
 - **Shape Viewer**: Decoded sprites with checkerboard transparency, synchronized
-  frame spinner, VGA/EGA/CGA modes, and **animation playback** (adjustable FPS).
-  The frame number and animation position are linked: editing the frame jumps the
-  animation, and playback updates the frame number / `n/N` status live.
+  frame spinner plus explicit `-` / `+` step buttons, VGA/EGA/CGA modes, and
+  **animation playback** (adjustable FPS).  A **Grid** toggle shows every frame
+  of the selected entry at once; click a cell to select it.  The frame number
+  and animation position are linked: editing the frame jumps the animation, and
+  playback updates the frame number / `n/N` status live.
 - **Sound Browser**: List, extract, save as WAV, and **play sounds in-app** (Windows)
 - **Hex Viewer**: Raw hex/ASCII view of any file
 - **Batch Extraction**: Export all boards, shapes, or sounds at once, plus
@@ -55,6 +57,12 @@ Two-way asset editing via the **Convert** menu or the `jill_import.py` CLI:
 | Build a `.sha` from a `shape_NNN/frame_NNN.png` tree | Convert → Build .sha from PNG Folder | `jill_import.py sha-folder <sha> <folder> -o out.sha` |
 | Replace one VCL sound slot with a WAV | Convert → Import WAV into Sound Slot | `jill_import.py vcl-sfx <vcl> <slot> <audio.wav> -o out.vcl` |
 | Build a `.vcl` from `sfx_NN.wav` / `music_NN.raw` | Convert → Build .vcl from WAV Folder | `jill_import.py vcl-folder <vcl> <folder> -o out.vcl` |
+| Build a `.sha` from `sprites/shape_NNN_FFF.png` | Convert → Build .sha from PNG Folder | `jill_import.py sha-folder <sha> <folder> -o out.sha` |
+| Replace the font from `fonts/main.png` | CLI only | `jill_import.py sha-font <sha> fonts/main.png -o out.sha [--entry 2]` |
+| Replace the art of one DMA tile | CLI only | `jill_import.py sha-tile <sha> <dma> <tile-id> tiles/158.png -o out.sha` |
+| Rebuild a board from a full 2048x1024 render | CLI only | `jill_import.py board-image <board> <sha> <dma> board_previews/1.png -o out.jn1` |
+| Copy an extractor/reference pack into `external/` | CLI only | `jill_import.py pack <out> external/MyPack --game jill1 --name "My Pack"` |
+| Rebuild VCL text pages from `text_pages/pages.json` | CLI only | `jill_import.py vcl-pages <vcl> text_pages -o out.vcl` |
 
 Imported images are quantized to the game palette (and to the target entry's
 palette when replacing a frame). WAV audio is mixed to mono, resampled to the
@@ -141,9 +149,10 @@ Asset directories come from `[paths]` in `jill.ini` (one key per game id); manif
   - Toggle Grid/Objects checkboxes
 - **Shape Viewer**:
   - Select a shape entry from the left panel
-  - Type a frame number (or use the arrows) to jump to a frame
+  - Type a frame number, use the arrows, or the `-` / `+` buttons to step
+  - Toggle **Grid** to show every frame of the entry; click a cell to select it
   - **Play** animates the entry; editing the frame while playing jumps the animation
-  - FPS spinner controls playback speed (1–60)
+  - FPS spinner controls playback speed (1-60)
   - Switch video mode (VGA/EGA/CGA)
 
 ## File Format Details

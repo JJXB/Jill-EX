@@ -1922,11 +1922,32 @@ class JillExtractorApp:
         # Hex viewer
         self.setup_hex_viewer()
         
+        # Keep the viewer tab in step with the file category chosen on the left.
+        self.left_notebook.bind("<<NotebookTabChanged>>",
+                                self.on_left_tab_changed)
+        
         # Status bar
         self.status_var = tk.StringVar(value="Ready")
         status_bar = ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
         status_bar.pack(fill=tk.X, side=tk.BOTTOM, padx=5, pady=5)
     
+    def on_left_tab_changed(self, event=None):
+        """Mirror the left file-category tab on the right viewer notebook."""
+        try:
+            idx = self.left_notebook.index("current")
+        except tk.TclError:
+            return
+        # Boards, Shapes, Sounds, Config/DMA -> Board, Shape, Sound, Hex.
+        mapping = {0: 0, 1: 1, 2: 2, 3: 3}
+        target = mapping.get(idx)
+        if target is None:
+            return
+        try:
+            if target < len(self.right_notebook.tabs()):
+                self.right_notebook.select(target)
+        except tk.TclError:
+            pass
+
     def setup_boards_tab(self):
         frame = ttk.Frame(self.left_notebook)
         self.left_notebook.add(frame, text="Boards")
@@ -2051,12 +2072,16 @@ class JillExtractorApp:
         canvas_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
         self.board_canvas = tk.Canvas(canvas_frame, bg='#202020', highlightthickness=0)
-        self.board_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        canvas_frame.rowconfigure(0, weight=1)
+        canvas_frame.columnconfigure(0, weight=1)
+        self.board_canvas.grid(row=0, column=0, sticky="nsew")
         
-        h_scroll = ttk.Scrollbar(canvas_frame, orient=tk.HORIZONTAL, command=self.board_canvas.xview)
-        h_scroll.pack(side=tk.BOTTOM, fill=tk.X)
-        v_scroll = ttk.Scrollbar(canvas_frame, orient=tk.VERTICAL, command=self.board_canvas.yview)
-        v_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        h_scroll = ttk.Scrollbar(canvas_frame, orient=tk.HORIZONTAL,
+                                 command=self.board_canvas.xview)
+        h_scroll.grid(row=1, column=0, sticky="ew")
+        v_scroll = ttk.Scrollbar(canvas_frame, orient=tk.VERTICAL,
+                                 command=self.board_canvas.yview)
+        v_scroll.grid(row=0, column=1, sticky="ns")
         
         self.board_canvas.config(xscrollcommand=h_scroll.set, yscrollcommand=v_scroll.set)
         self.board_canvas.bind('<Button-1>', self.on_board_canvas_click)
@@ -2094,10 +2119,22 @@ class JillExtractorApp:
         self.frame_spin.bind('<Return>', lambda e: self.on_frame_change())
         self.frame_spin.bind('<FocusOut>', lambda e: self.on_frame_change())
         self.frame_spin.bind('<KeyRelease>', lambda e: self.on_frame_change())
-        self.frame_spin.bind('<Up>', lambda e: self.on_frame_change())
-        self.frame_spin.bind('<Down>', lambda e: self.on_frame_change())
+        self.frame_spin.bind('<Up>', lambda e: self.step_frame(1))
+        self.frame_spin.bind('<Down>', lambda e: self.step_frame(-1))
         self.frame_status = ttk.Label(toolbar, text="0/0", width=8)
         self.frame_status.pack(side=tk.LEFT, padx=2)
+
+        # Step buttons make frame navigation independent of spinbox quirks.
+        ttk.Button(toolbar, text="-", width=2,
+                   command=lambda: self.step_frame(-1)).pack(side=tk.LEFT)
+        ttk.Button(toolbar, text="+", width=2,
+                   command=lambda: self.step_frame(1)).pack(side=tk.LEFT, padx=(0, 4))
+        self.grid_var = tk.IntVar(value=0)
+        self.grid_mode = False
+        self._grid_cells = []
+        self._grid_photos = []
+        ttk.Checkbutton(toolbar, text="Grid", variable=self.grid_var,
+                        command=self.on_grid_toggle).pack(side=tk.LEFT, padx=4)
         
         ttk.Label(toolbar, text="Mode:").pack(side=tk.LEFT, padx=5)
         self.mode_var = tk.IntVar(value=4)
@@ -2127,6 +2164,7 @@ class JillExtractorApp:
         self.shape_canvas = tk.Canvas(canvas_frame, highlightthickness=0)
         self.shape_canvas.pack(fill=tk.BOTH, expand=True)
         self.shape_canvas.bind('<Configure>', self.on_shape_canvas_resize)
+        self.shape_canvas.bind('<Button-1>', self.on_shape_canvas_click)
         
         # Draw checkerboard pattern for transparency visualization
         self.draw_checkerboard()
@@ -2177,6 +2215,9 @@ class JillExtractorApp:
     def toggle_animation(self):
         if not self.sha_file:
             return
+        if getattr(self, 'grid_mode', False):
+            self.grid_var.set(0)
+            self.on_grid_toggle()
         selection = self.shape_listbox.curselection()
         if not selection:
             return
@@ -2253,7 +2294,11 @@ class JillExtractorApp:
         try:
             if self.sha_file and self.anim_entry_idx < 128 and self.sha_file.entries[self.anim_entry_idx]:
                 n = self.sha_file.entries[self.anim_entry_idx].frame_count
-                self.frame_status.config(text=f"{self.anim_frame + 1}/{n}")
+                if getattr(self, 'anim_playing', False):
+                    frame = self.anim_frame
+                else:
+                    frame = int(self.frame_var.get())
+                self.frame_status.config(text=f"{frame + 1}/{n}")
         except Exception:
             pass
     
@@ -2266,6 +2311,14 @@ class JillExtractorApp:
             return
         
         mode = self.mode_var.get()
+        
+        # Grid mode: show every frame of this entry at once.
+        if getattr(self, 'grid_mode', False):
+            self.draw_frame_grid(entry_idx, frame_idx, update_detail)
+            return
+        self.shape_canvas.delete("grid")
+        self._grid_cells = []
+        self._grid_photos = []
         
         # Only ensure the checkerboard exists; never rebuild it per frame.
         self.draw_checkerboard()
@@ -2328,6 +2381,135 @@ class JillExtractorApp:
             self.shape_detail_text.delete(1.0, tk.END)
             self.shape_detail_text.insert(tk.END, "Could not decode frame (format not fully supported)")
     
+    def step_frame(self, delta: int):
+        """Move one frame forward/back without relying on Spinbox internals."""
+        idx = self._selected_shape_index()
+        if idx is None:
+            return "break"
+        try:
+            current = int(self.frame_var.get())
+        except (tk.TclError, ValueError):
+            try:
+                current = int(self.frame_spin.get())
+            except (tk.TclError, ValueError):
+                current = 0
+        frame = self._clamp_frame(idx, current + delta)
+        self.frame_var.set(frame)
+        if getattr(self, 'anim_playing', False):
+            self.anim_frame = frame
+            self._update_frame_status()
+            if self.anim_timer:
+                try:
+                    self.root.after_cancel(self.anim_timer)
+                except Exception:
+                    pass
+                self.anim_timer = None
+            self._draw_anim_frame()
+            self._schedule_animation()
+        else:
+            self._update_frame_status()
+            self.draw_shape(idx, frame)
+        return "break"
+
+    def on_grid_toggle(self):
+        self.grid_mode = bool(self.grid_var.get())
+        if self.grid_mode:
+            self.stop_animation()
+        idx = self._selected_shape_index()
+        if idx is None:
+            return
+        try:
+            frame = self._clamp_frame(idx, int(self.frame_spin.get()))
+        except (tk.TclError, ValueError):
+            frame = 0
+        self.frame_var.set(frame)
+        self.draw_shape(idx, frame)
+
+    def on_shape_canvas_click(self, event):
+        if not getattr(self, 'grid_mode', False):
+            return
+        idx = self._selected_shape_index()
+        if idx is None:
+            return
+        for x0, y0, cw, ch, fi in self._grid_cells:
+            if x0 <= event.x < x0 + cw and y0 <= event.y < y0 + ch:
+                self.frame_var.set(fi)
+                self.anim_frame = fi
+                self._update_frame_status()
+                self.draw_shape(idx, fi)
+                break
+
+    def draw_frame_grid(self, entry_idx: int, frame_idx: int,
+                        update_detail: bool = True):
+        entry = self.sha_file.entries[entry_idx]
+        frames = entry.frames
+        n = len(frames)
+        if n == 0:
+            return
+        mode = self.mode_var.get()
+        self.draw_checkerboard()
+        self.shape_canvas.delete("sprite")
+        self.shape_canvas.delete("grid")
+        cw = self.shape_canvas.winfo_width()
+        ch = self.shape_canvas.winfo_height()
+        if cw <= 2 or ch <= 2:
+            cw, ch = 640, 400
+        max_fw = max(1, max(f['width'] for f in frames))
+        max_fh = max(1, max(f['height'] for f in frames))
+        # Pick the column count that gives the largest per-frame scale.
+        best = None
+        for cols in range(1, min(n, 16) + 1):
+            rows = (n + cols - 1) // cols
+            cell_w = cw / cols
+            cell_h = ch / rows
+            scale = min((cell_w - 8) / max_fw, (cell_h - 18) / max_fh)
+            if best is None or scale > best[0] + 1e-6:
+                best = (scale, cols, rows)
+        _, cols, rows = best
+        cell_w = max(1, cw // cols)
+        cell_h = max(1, ch // rows)
+        label_h = 10
+        pad = 4
+        self._grid_cells = []
+        self._grid_photos = []
+        for i, f in enumerate(frames):
+            r, c = divmod(i, cols)
+            x0 = c * cell_w
+            y0 = r * cell_h
+            img = self.sha_file.decode_frame_to_image(entry_idx, i, mode)
+            if img is None:
+                continue
+            avail_w = max(1, cell_w - 2 * pad)
+            avail_h = max(1, cell_h - 2 * pad - label_h)
+            scale = min(avail_w / max(1, img.width),
+                        avail_h / max(1, img.height), 4.0)
+            scale = max(scale, 0.05)
+            nw = max(1, int(img.width * scale))
+            nh = max(1, int(img.height * scale))
+            img = img.resize((nw, nh), Image.NEAREST)
+            photo = ImageTk.PhotoImage(img)
+            self._grid_photos.append(photo)
+            self.shape_canvas.create_image(
+                x0 + cell_w // 2, y0 + pad + (cell_h - label_h) // 2,
+                image=photo, anchor=tk.CENTER, tags="grid")
+            self.shape_canvas.create_text(
+                x0 + 3, y0 + cell_h - label_h, text=f"0x{i:02X}",
+                anchor=tk.NW, fill="#dddddd", font=("Consolas", 7),
+                tags="grid")
+            self._grid_cells.append((x0, y0, cell_w, cell_h, i))
+            if i == frame_idx:
+                self.shape_canvas.create_rectangle(
+                    x0 + 1, y0 + 1, x0 + cell_w - 2, y0 + cell_h - 2,
+                    outline="#ffcc00", width=2, tags="grid")
+        if update_detail:
+            f = frames[min(frame_idx, n - 1)]
+            detail = [f"Grid view: {n} frame(s), {cols}x{rows}",
+                      f"Selected: {frame_idx}  {f['width']}x{f['height']}",
+                      "Click a cell to select that frame."]
+            self.shape_detail_text.delete(1.0, tk.END)
+            self.shape_detail_text.insert(tk.END, "\n".join(detail))
+        self._update_frame_status()
+
     def setup_sound_viewer(self):
         frame = ttk.Frame(self.right_notebook)
         self.right_notebook.add(frame, text="Sound Viewer")
@@ -3022,6 +3204,8 @@ class JillExtractorApp:
             return
         idx = selection[0]
         if self.sha_file and self.sha_file.entries[idx]:
+            if hasattr(self, 'right_notebook'):
+                self.right_notebook.select(1)  # Shape Viewer
             entry = self.sha_file.entries[idx]
             if getattr(self, 'anim_playing', False):
                 self.stop_animation()
@@ -3090,9 +3274,12 @@ class JillExtractorApp:
             return
         raw = None
         try:
-            raw = int(self.frame_var.get())
+            raw = int(self.frame_spin.get())
         except (tk.TclError, ValueError):
-            raw = None
+            try:
+                raw = int(self.frame_var.get())
+            except (tk.TclError, ValueError):
+                raw = None
         frame = self._clamp_frame(idx, raw if raw is not None else 0)
         if raw != frame:
             self.frame_var.set(frame)
@@ -3370,6 +3557,8 @@ class JillExtractorApp:
         selection = self.sound_listbox.curselection()
         if not selection:
             return
+        if hasattr(self, 'right_notebook'):
+            self.right_notebook.select(2)  # Sound Viewer
         idx = selection[0]
         text = self.sound_listbox.get(idx)
         

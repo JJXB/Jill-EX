@@ -179,9 +179,15 @@ every shipped release actually contains.
 * The PC-speaker mode is a 1-bit rendering of the sampled effects, not a
   cycle-accurate PIT channel-2 emulation.
 * The port does not emulate OPL3 or the chip's timers/status port.
-* Rhythm-mode noise is now gated on the rhythm flag; ordinary melodic channels
+* Rhythm-mode noise is gated on the rhythm flag; ordinary melodic channels
   7-9 were incorrectly using the LFSR and produced a hiss **[verified]**.
-* Some songs may send no note-off for percussion; the envelope then sustains
-  until the next retrigger.  The shipped Jill/Onesimus tracks do send them.
+* The five rhythm voices ignore their instrument sustain level and decay to
+  silence, as on the chip.  Before this, hi-hat/snare/cymbal notes settled at
+  a few dB and left a continuous static-like wash **[verified]**.
+* External pack music is resampled with linear interpolation, so 44.1 kHz
+  tracks no longer alias into a gritty hiss at 48 kHz **[verified]**.
+* Some songs may send no note-off for a melodic note; that voice's envelope
+  then sustains until the next retrigger.  The shipped Jill/Onesimus tracks do
+  send them.
 * Envelope and modulation depths are approximations, so A/B comparisons with
   DOSBox will differ in timbre even though notes, timing and rhythm match.

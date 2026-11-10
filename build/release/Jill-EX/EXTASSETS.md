@@ -210,7 +210,9 @@ hard-edged bitmap font gives the cleanest result.
 
 Images are scaled to those sizes.  Labels, inventory icons, health pips and
 the score are still drawn on top.  Use PNG alpha if you want the game visible
-through parts of the panel.
+through parts of the panel.  `hud\classic.<ext>` keeps the legacy 64x84
+top-left placement; without it the engine draws the full classic frame
+(dithered border, title strip, health bar, level/score and inventory).
 
 ### 5.7 Text-page art: `pages\`
 
@@ -235,6 +237,7 @@ The portrait is drawn next to boxes such as `JILL BOUNDS THROUGH THE
 BOULDERS`, at the same screen position the in-game inventory panel uses.
 The default is composed from the player's idle sprite (2x inside a frame);
 a pack image replaces it.  Manifest form: `[portrait] file = art/jill.png`.
+Turn it off with `OPTIONS > HUD > PORTRAIT` or `[hud] portrait = 0`.
 
 ### 5.9 Sound effects: `sfx\`
 

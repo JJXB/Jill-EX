@@ -3,6 +3,7 @@
 #include "palette.inc"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -10,6 +11,21 @@
 #include <utility>
 
 namespace {
+
+// Classic (original) HUD frame.  The board still fills the 320x200 buffer; the
+// patterned border, title strip and 64-px side panel cover it, matching the
+// original presentation.
+constexpr int kClassicBorder = 8;
+constexpr int kClassicTop = 20;
+constexpr int kClassicPanelX = kClassicBorder;
+constexpr int kClassicPanelY = kClassicTop;
+constexpr int kClassicPanelW = 64;
+constexpr int kClassicPanelH =
+    Framebuffer::H - kClassicTop - kClassicBorder;  // to the bottom border
+constexpr int kClassicViewX = kClassicPanelX + kClassicPanelW + 2;
+constexpr int kClassicViewY = kClassicTop;
+constexpr int kClassicViewW = Framebuffer::W - kClassicViewX - kClassicBorder;
+constexpr int kClassicViewH = Framebuffer::H - kClassicTop - 14;
 
 std::string join(const std::string& dir, const std::string& name) {
     if (dir.empty()) {
@@ -95,6 +111,20 @@ uint8_t page_colour(uint8_t code) {
     return code;
 }
 
+// The original window/HUD frame uses shape entry 3: frames 0-15 are the
+// noise-pattern edges/corners and fill, already in the episode's palette.
+
+void classic_box(Framebuffer& fb, int x, int y, int w, int h, uint8_t accent) {
+    fb.fill_rect(x, y, w, h, 0);
+    fb.fill_rect(x, y, w, 1, 8);
+    fb.fill_rect(x, y + h - 1, w, 1, 8);
+    fb.fill_rect(x, y, 1, h, 8);
+    fb.fill_rect(x + w - 1, y, 1, h, 8);
+    if (accent != 0) {
+        fb.fill_rect(x + 1, y + 1, w - 2, 1, accent);
+    }
+}
+
 // Body lines (everything after the title), word-wrapped at 48 characters so
 // long prose stays inside the frame.  The shipped pages already break at ~38.
 // A board's start music is the first `*name.ddt` / `*name.ark` CHECKPT string.
@@ -128,7 +158,8 @@ std::string first_board_music(const std::vector<BoardObject>& objects) {
     return std::string();
 }
 
-std::vector<TextPage::Line> page_body(const TextPage& page) {    std::vector<TextPage::Line> out;
+std::vector<TextPage::Line> page_body(const TextPage& page) {
+    std::vector<TextPage::Line> out;
     const size_t first = page.lines.empty() ? 0 : 1;
     for (size_t i = first; i < page.lines.size(); ++i) {
         TextPage::Line line = page.lines[i];
@@ -283,10 +314,10 @@ bool Engine::load_board(const std::string& name, std::string& err) {
 
     spawn_x_ = has_player_ ? objects_[0].x : 0;
     spawn_y_ = has_player_ ? objects_[0].y : 0;
-    cam_x_ = std::max(0, std::min(spawn_x_ + 8 - Framebuffer::W / 2,
-                                  Board::kCols * 16 - Framebuffer::W));
-    cam_y_ = std::max(0, std::min(spawn_y_ + 16 - Framebuffer::H / 2,
-                                  Board::kRows * 16 - Framebuffer::H));
+    cam_x_ = std::max(0, std::min(spawn_x_ + 8 - view_center_x(),
+                                  Board::kCols * 16 - view_w()));
+    cam_y_ = std::max(0, std::min(spawn_y_ + 16 - view_center_y(),
+                                  Board::kRows * 16 - view_h()));
     if (!has_player_) {
         cam_x_ = 0;
         cam_y_ = 0;
@@ -381,9 +412,9 @@ void Engine::tile_prepass() {
     // hook.  The only mode-2 effect is the 5-frame lava cycle, advanced once
     // every 4th frame (the hook tests `frame & 3 == 0`).
     int c0 = cam_x_ >> 4;
-    int c1 = std::min(Board::kCols - 1, (cam_x_ + Framebuffer::W) >> 4);
+    int c1 = std::min(Board::kCols - 1, (cam_x_ + view_w()) >> 4);
     int r0 = cam_y_ >> 4;
-    int r1 = std::min(Board::kRows - 1, (cam_y_ + Framebuffer::H) >> 4);
+    int r1 = std::min(Board::kRows - 1, (cam_y_ + view_h()) >> 4);
     bool advance = (frame_ & 3) == 0;
     for (int c = c0; c <= c1; ++c) {
         for (int r = r0; r <= r1; ++r) {
@@ -539,8 +570,8 @@ void Engine::update_pass() {
     for (int i = first; i < static_cast<int>(objects_.size()); ++i) {
         BoardObject& o = objects_[static_cast<size_t>(i)];
         bool visible =
-            o.x + o.w >= cam_x_ - 0x60 && o.x <= cam_x_ + Framebuffer::W + 0x60 &&
-            o.y + o.h >= cam_y_ - 0x30 && o.y <= cam_y_ + Framebuffer::H + 0x30;
+            o.x + o.w >= cam_x_ - 0x60 && o.x <= cam_x_ + view_w() + 0x60 &&
+            o.y + o.h >= cam_y_ - 0x30 && o.y <= cam_y_ + view_h() + 0x30;
         if (visible && active_.size() < static_cast<size_t>(kActiveLimit)) {
             active_.push_back(i);
             o.flags &= ~0xC000;
@@ -720,8 +751,8 @@ bool Engine::update_object(int i) {
             --o.p13;
             if (o.p13 >= 0) {
                 bool onscreen =
-                    o.x + o.w >= cam_x_ && o.x <= cam_x_ + Framebuffer::W &&
-                    o.y + o.h >= cam_y_ && o.y <= cam_y_ + Framebuffer::H;
+                    o.x + o.w >= cam_x_ && o.x <= cam_x_ + view_w() &&
+                    o.y + o.h >= cam_y_ && o.y <= cam_y_ + view_h();
                 if (onscreen) {
                     set_origin(i, o.x + o.dx, o.y + o.dy);
                     objects_[static_cast<size_t>(i)].dy -= 1;
@@ -738,8 +769,8 @@ bool Engine::update_object(int i) {
         case 36: {  // EXPL1 (1a41:0a3b): ballistic debris, no collision
             ++o.p13;
             bool onscreen =
-                o.x + o.w >= cam_x_ && o.x <= cam_x_ + Framebuffer::W &&
-                o.y + o.h >= cam_y_ && o.y <= cam_y_ + Framebuffer::H;
+                o.x + o.w >= cam_x_ && o.x <= cam_x_ + view_w() &&
+                o.y + o.h >= cam_y_ && o.y <= cam_y_ + view_h();
             if (o.p13 < 0x28 && onscreen) {
                 if (o.dy < 0x0C) {
                     ++o.dy;
@@ -1854,7 +1885,15 @@ bool Engine::on_hit(int a, int b) {
             // matches the current level: board entrances place Jill on the
             // checkpoint that carries the level's start track.
             const bool music_cmd = !o.text.empty() && o.text[0] == '*';
-            if (!music_cmd && o.p13 != 0 && o.p13 == level_id()) {
+            if (music_cmd) {
+                // A music checkpoint only changes the track.  Do NOT move or
+                // re-enter the player: the spawn checkpoint is touched every
+                // tick, and resetting state 4 there left Jill stuck in the
+                // entrance rise (and hidden under the floor) forever.
+                pending_warp_ = o.text;
+                return true;
+            }
+            if (o.p13 != 0 && o.p13 == level_id()) {
                 return false;
             }
             // Snapshot the fields before touching the player record.
@@ -2399,15 +2438,39 @@ int Engine::rnd(int mod) {
     return static_cast<int>(rng_ % static_cast<uint32_t>(mod));
 }
 
+int Engine::view_x() const {
+    return hud_classic_ ? kClassicViewX : 0;
+}
+
+int Engine::view_y() const {
+    return hud_classic_ ? kClassicViewY : 0;
+}
+
+int Engine::view_w() const {
+    return hud_classic_ ? kClassicViewW : Framebuffer::W;
+}
+
+int Engine::view_h() const {
+    return hud_classic_ ? kClassicViewH : Framebuffer::H;
+}
+
+int Engine::view_center_x() const {
+    return view_w() / 2;
+}
+
+int Engine::view_center_y() const {
+    return view_h() / 2;
+}
+
 void Engine::follow_camera() {
     if (!has_player_) {
         return;
     }
     const BoardObject& p = objects_[0];
-    int tx = p.x + 8 - Framebuffer::W / 2;
-    int ty = p.y + 16 - Framebuffer::H / 2;
-    tx = std::max(0, std::min(tx, Board::kCols * 16 - Framebuffer::W));
-    ty = std::max(0, std::min(ty, Board::kRows * 16 - Framebuffer::H));
+    int tx = p.x + 8 - view_center_x();
+    int ty = p.y + 16 - view_center_y();
+    tx = std::max(0, std::min(tx, Board::kCols * 16 - view_w()));
+    ty = std::max(0, std::min(ty, Board::kRows * 16 - view_h()));
     // Follow fast movement without the old +/-8 px/tick lag.  Horizontal
     // walking is 8 px/tick, but a fall reaches 16 px/tick and the speed cheat
     // can move faster, so the vertical step is larger.  A large jump (respawn,
@@ -2479,9 +2542,9 @@ void Engine::render(Framebuffer& fb, bool with_hud, float alpha) {
     }
 
     int c0 = cam_x_ >> 4;
-    int c1 = std::min(Board::kCols - 1, (cam_x_ + Framebuffer::W) >> 4);
+    int c1 = std::min(Board::kCols - 1, (cam_x_ + view_w()) >> 4);
     int r0 = cam_y_ >> 4;
-    int r1 = std::min(Board::kRows - 1, (cam_y_ + Framebuffer::H) >> 4);
+    int r1 = std::min(Board::kRows - 1, (cam_y_ + view_h()) >> 4);
     for (int c = c0; c <= c1; ++c) {
         for (int r = r0; r <= r1; ++r) {
             uint16_t id = map_[c * Board::kRows + r] & 0x3FFF;
@@ -2500,7 +2563,7 @@ void Engine::render(Framebuffer& fb, bool with_hud, float alpha) {
                     }
                 }
             }
-            draw_shape(fb, shape, c * 16 - cam_x_, r * 16 - cam_y_, bg_ok);
+            draw_shape(fb, shape, c * 16 - cam_x_ + view_x(), r * 16 - cam_y_ + view_y(), bg_ok);
         }
     }
 
@@ -2522,8 +2585,8 @@ void Engine::render(Framebuffer& fb, bool with_hud, float alpha) {
             } else {
                 frame = (o.dx < 0 ? 8 : 0) + (o.p11 & 3);
             }
-            draw_shape(fb, (entry << 8) | frame, o.x - cam_x_,
-                       o.y - cam_y_ + 2, true);
+            draw_shape(fb, (entry << 8) | frame, o.x - cam_x_ + view_x(),
+                       o.y - cam_y_ + view_y() + 2, true);
         } else {
             draw_object(i, fb);
         }
@@ -2572,78 +2635,215 @@ static void blit_external_picture(Framebuffer& fb, int x, int y,
     }
 }
 
-// Original HUD (22ab:05dd), the optional CLASSIC style: a 64x84 panel in the
-// top-left corner.  The panel is cleared to the configured background and
-// flashes red (4) when 0x83D0 is set; positions are the literal draw-call
-// arguments of the original routine.
+// Original HUD (22ab:05dd), the optional CLASSIC style.  The board still fills
+// the 320x200 buffer; this draws the original screen presentation over it: a
+// dithered border/title strip, a 64-px status column (health, level/score,
+// inventory) and the INVENTORY caption.  The MODERN style is separate.
 void Engine::render_hud_classic(Framebuffer& fb) {
-    const uint8_t kLabel = static_cast<uint8_t>(hud_text_);  // HEALTH / SCORE / LEVEL
-    constexpr int kPanelW = 64;
-    constexpr int kPanelH = 84;
+    const uint8_t label = static_cast<uint8_t>(hud_text_);
+    const int px = kClassicPanelX;
+    const int py = kClassicPanelY;
+    const int hp = std::max(0, std::min(8, health()));
 
     if (ext_visuals_) {
         if (const ExternalPicture* panel = ext_visuals_->hud_classic()) {
+            // A pack supplies the original 64x84 panel.  Keep the legacy
+            // placement so existing HUD packs still line up.
             blit_external_picture(fb, 0, 0, *panel);
-        } else {
-            fb.fill_rect(0, 0, kPanelW, kPanelH,
-                         static_cast<uint8_t>(hud_bg_colour()));
+            draw_text(fb, 2, 2, label, "HEALTH");
+            if (hp > 0) {
+                for (int i = 0; i < hp - 1; ++i) {
+                    draw_health_pip(fb, 0x2A, i * 3 + 0x2A, 2);
+                }
+                draw_health_pip(fb, 0x2B, (hp - 1) * 3 + 0x28, 2);
+            }
+            char buf[16];
+            int len = 0;
+            uint32_t s = score();
+            do {
+                buf[len++] = static_cast<char>('0' + (s % 10));
+                s /= 10;
+            } while (s != 0);
+            draw_text(fb, 0x21, 10, label, "SCORE");
+            int sx = 0x40 - (len * 6 + 1);
+            for (int i = 0; i < len; ++i) {
+                char ch[2] = {buf[len - 1 - i], 0};
+                draw_text(fb, sx + i * 6, 0x10, label, ch);
+            }
+            draw_text(fb, 1, 10, label, "LEVEL");
+            int level = level_id();
+            if (level != 0x7F) {
+                std::snprintf(buf, sizeof(buf), "%d", level);
+                draw_text(fb, 1, 0x10, label, buf);
+            }
+            const int n = header_[4] | (header_[5] << 8);
+            for (int i = 0; i < n && i < 15; ++i) {
+                const int id = header_[6 + i * 2] | (header_[7 + i * 2] << 8);
+                if (id < 0 || id >= 16) {
+                    continue;
+                }
+                const int frame = profile_->item_icons[id];
+                if (!frame) {
+                    continue;
+                }
+                draw_shape(fb, icon_shape(frame), (i / 3) * 0x0E + 1,
+                           (i % 3) * 0x0E + 0x1A, true);
+            }
+            return;
         }
-    } else {
-        fb.fill_rect(0, 0, kPanelW, kPanelH,
-                     static_cast<uint8_t>(hud_bg_colour()));
     }
 
-    int hp = std::max(0, std::min(8, health()));
-    draw_text(fb, 2, 2, kLabel, "HEALTH");
+    // Frame 0x0A is the 16x16 noise fill; 0x00/0x03 are the 8x16 vertical
+    // edges, 0x06/0x08 the 16x12 horizontal edges and 0x04 the corner.  All
+    // use the episode's own palette, so no recolouring is needed.
+    const ShapeFrame* fill = shape_frame(3, 0x0A);
+    const ShapeFrame* corner = shape_frame(3, 0x04);
+    const ShapeFrame* edge_top = shape_frame(3, 0x06);
+    const ShapeFrame* edge_bottom = shape_frame(3, 0x08);
+    const ShapeFrame* edge_left = shape_frame(3, 0x00);
+    const ShapeFrame* edge_right = shape_frame(3, 0x03);
+
+    // Patterned frame: outer ring, title strip and the whole left column.
+    for (int y = 0; y < Framebuffer::H; ++y) {
+        for (int x = 0; x < Framebuffer::W; ++x) {
+            const bool ring = x < kClassicBorder ||
+                              x >= Framebuffer::W - kClassicBorder ||
+                              y < kClassicBorder ||
+                              y >= Framebuffer::H - kClassicBorder;
+            const bool left = x < kClassicViewX;
+            const bool top = y < kClassicTop;
+            const bool bottom = y >= Framebuffer::H - 14;
+            if (!(ring || left || top || bottom)) {
+                continue;
+            }
+            const ShapeFrame* f = fill;
+            int sx = x;
+            int sy = y;
+            if (x < kClassicBorder && y < kClassicBorder) {
+                f = corner;
+            } else if (x >= Framebuffer::W - kClassicBorder &&
+                       y < kClassicBorder) {
+                f = corner;
+                sx = x - (Framebuffer::W - kClassicBorder);
+            } else if (x < kClassicBorder &&
+                       y >= Framebuffer::H - kClassicBorder) {
+                f = corner;
+                sy = y - (Framebuffer::H - kClassicBorder);
+            } else if (x >= Framebuffer::W - kClassicBorder &&
+                       y >= Framebuffer::H - kClassicBorder) {
+                f = corner;
+                sx = x - (Framebuffer::W - kClassicBorder);
+                sy = y - (Framebuffer::H - kClassicBorder);
+            } else if (y < kClassicBorder) {
+                f = edge_top;
+                sy = y;
+            } else if (y >= Framebuffer::H - kClassicBorder) {
+                f = edge_bottom;
+                sy = 4 + (y - (Framebuffer::H - kClassicBorder));
+            } else if (x < kClassicBorder) {
+                f = edge_left;
+                sy = y - kClassicBorder;
+            } else if (x >= Framebuffer::W - kClassicBorder) {
+                f = edge_right;
+                sx = x - (Framebuffer::W - kClassicBorder);
+                sy = y - kClassicBorder;
+            }
+            uint8_t colour;
+            if (f && f->w > 0 && f->h > 0) {
+                colour = f->px[(sy % f->h) * f->w + (sx % f->w)];
+            } else {
+                colour = (((x >> 1) + (y >> 1)) & 1) ? 7 : 8;
+            }
+            fb.put(x, y, colour);
+        }
+    }
+    // Dark edge around the playfield.
+    fb.fill_rect(kClassicViewX - 1, kClassicViewY, 1, kClassicViewH, 0);
+    fb.fill_rect(kClassicViewX, kClassicViewY - 1, kClassicViewW, 1, 0);
+    fb.fill_rect(kClassicViewX, kClassicViewY + kClassicViewH,
+                 kClassicViewW, 1, 0);
+    fb.fill_rect(kClassicViewX + kClassicViewW, kClassicViewY, 1,
+                 kClassicViewH, 0);
+
+    // Title strip (over the dither, like the original).
+    {
+        const std::string& title = game_.title;
+        int adv = 8;
+        int bank = 1;
+        if (static_cast<int>(title.size()) * adv > kClassicViewW - 10) {
+            adv = 6;
+            bank = 2;
+        }
+        const int tw = static_cast<int>(title.size()) * adv;
+        const int tx = kClassicViewX + (kClassicViewW - tw) / 2;
+        const int clean_x = std::max(kClassicViewX + 2, tx);
+        // 1-px shadow keeps the title readable over the noise frame.
+        draw_text_font(fb, clean_x + 1, 7, 0, bank, adv, title.c_str());
+        draw_text_font(fb, clean_x, 6, label, bank, adv, title.c_str());
+    }
+
+    // Status column.
+    classic_box(fb, px, py, kClassicPanelW, 30, 12);
+    classic_box(fb, px, py + 30, kClassicPanelW, 22, 8);
+    classic_box(fb, px, py + 52, kClassicPanelW, kClassicPanelH - 52 - 14, 8);
+
+    // HEALTH + bar.
+    draw_text(fb, px + 2, py + 5, label, "HEALTH");
+    const int barX = px + 40;
+    const int barY = py + 5;
+    constexpr int kBarW = 20;
+    constexpr int kBarH = 7;
+    fb.fill_rect(barX, barY, kBarW, kBarH, 0);
+    fb.fill_rect(barX, barY, kBarW, 1, 8);
+    fb.fill_rect(barX, barY + kBarH - 1, kBarW, 1, 8);
+    fb.fill_rect(barX, barY, 1, kBarH, 8);
+    fb.fill_rect(barX + kBarW - 1, barY, 1, kBarH, 8);
     if (hp > 0) {
-        for (int i = 0; i < hp - 1; ++i) {
-            draw_health_pip(fb, 0x2A, i * 3 + 0x2A, 2);
-        }
-        draw_health_pip(fb, 0x2B, (hp - 1) * 3 + 0x28, 2);
+        const int fillW = std::max(1, (kBarW - 2) * hp / 8);
+        const uint8_t barColour =
+            static_cast<uint8_t>(hud_health_ >= 0 ? hud_health_ : 4);
+        fb.fill_rect(barX + 1, barY + 1, fillW, kBarH - 2, barColour);
     }
 
-    char buf[16];
-    uint32_t s = score();
-    int len = 0;
-    do {
-        buf[len++] = static_cast<char>('0' + (s % 10));
-        s /= 10;
-    } while (s != 0);
-    draw_text(fb, 0x21, 10, kLabel, "SCORE");
-    int sx = 0x40 - (len * 6 + 1);
-    for (int i = 0; i < len; ++i) {
-        char ch[2] = {buf[len - 1 - i], 0};
-        draw_text(fb, sx + i * 6, 0x10, kLabel, ch);
+    // LEVEL / SCORE.
+    const int ry = py + 35;
+    draw_text(fb, px + 1, ry, label, "LEVEL");
+    draw_text(fb, px + 33, ry, label, "SCORE");
+    char buf[24];
+    const int level = level_id();
+    if (level == 0) {
+        std::snprintf(buf, sizeof(buf), "MAP");
+    } else if (level == 0x7F) {
+        buf[0] = '\0';
+    } else {
+        std::snprintf(buf, sizeof(buf), "%d", level);
     }
+    draw_text(fb, px + 2, ry + 8, label, buf);
+    std::snprintf(buf, sizeof(buf), "%u", static_cast<unsigned>(score()));
+    const int slen = static_cast<int>(std::strlen(buf));
+    draw_text(fb, px + kClassicPanelW - 2 - slen * 6, ry + 8, label, buf);
 
-    draw_text(fb, 1, 10, kLabel, "LEVEL");
-    int level = level_id();
-    if (level != 0x7F) {
-        len = 0;
-        do {
-            buf[len++] = static_cast<char>('0' + (level % 10));
-            level /= 10;
-        } while (level != 0);
-        for (int i = 0; i < len; ++i) {
-            char ch[2] = {buf[len - 1 - i], 0};
-            draw_text(fb, 1 + i * 6, 0x10, kLabel, ch);
-        }
-    }
-
-    int n = header_[4] | (header_[5] << 8);
+    // Inventory icons (3-column grid, as in the original).
+    const int invY = py + 58;
+    const int n = header_[4] | (header_[5] << 8);
     for (int i = 0; i < n && i < 15; ++i) {
-        int id = header_[6 + i * 2] | (header_[7 + i * 2] << 8);
+        const int id = header_[6 + i * 2] | (header_[7 + i * 2] << 8);
         if (id < 0 || id >= 16) {
             continue;
         }
-        int frame = profile_->item_icons[id];
+        const int frame = profile_->item_icons[id];
         if (!frame) {
             continue;
         }
-        // One icon per picked-up item (the original vertical 3-column grid).
-        draw_shape(fb, icon_shape(frame), (i / 3) * 0x0E + 1,
-                   (i % 3) * 0x0E + 0x1A, true);
+        draw_shape(fb, icon_shape(frame), px + 1 + (i / 3) * 16,
+                   invY + (i % 3) * 16, true);
     }
+
+    // INVENTORY caption in the bottom strip of the panel.
+    draw_text_font(fb, px + 3, py + kClassicPanelH - 9, 0, 2, 6,
+                   "INVENTORY");
+    draw_text_font(fb, px + 2, py + kClassicPanelH - 10, label, 2, 6,
+                   "INVENTORY");
 }
 
 // MODERN/MINIMAL HUD (the default): one horizontal strip across the top.
@@ -3141,7 +3341,7 @@ void Engine::draw_caption(Framebuffer& fb) {
     constexpr int kPortraitH = 84;
     constexpr int kPortraitGap = 6;
     int px = -1;
-    if (boxw + kPortraitGap + kPortraitW <= Framebuffer::W) {
+    if (hud_portrait_ && boxw + kPortraitGap + kPortraitW <= Framebuffer::W) {
         const int total = boxw + kPortraitGap + kPortraitW;
         const int start = (Framebuffer::W - total) / 2;
         px = start;
@@ -3426,8 +3626,8 @@ void Engine::draw_shape_mirrored(Framebuffer& fb, int shape, int x, int y,
 
 void Engine::draw_object(int i, Framebuffer& fb) {
     const BoardObject& o = objects_[static_cast<size_t>(i)];
-    int x = o.x - cam_x_;
-    int y = o.y - cam_y_;
+    int x = o.x - cam_x_ + view_x();
+    int y = o.y - cam_y_ + view_y();
 
     switch (o.kind) {
         case 1:  // APPLE: tileset 0x09, frames 0..3
@@ -4091,8 +4291,8 @@ bool Engine::fishdo(int i, int x, int y) {
 bool Engine::onscreen(int i) const {
     const BoardObject& o = objects_[static_cast<size_t>(i)];
     return !(o.x + o.w < cam_x_ || o.y + o.h < cam_y_ ||
-             cam_x_ + Framebuffer::W < o.x ||
-             cam_y_ + Framebuffer::H < o.y);
+             cam_x_ + view_w() < o.x ||
+             cam_y_ + view_h() < o.y);
 }
 
 // 26F4:06B4 _pointvect: sign of the direction from object i to the player.
@@ -4363,8 +4563,10 @@ void Engine::warp_player(int x, int y) {
     objects_[0].y = y;
     spawn_x_ = x;
     spawn_y_ = y;
-    cam_x_ = std::max(0, std::min(x + 8 - Framebuffer::W / 2, Board::kCols * 16 - Framebuffer::W));
-    cam_y_ = std::max(0, std::min(y + 16 - Framebuffer::H / 2, Board::kRows * 16 - Framebuffer::H));
+    cam_x_ = std::max(0, std::min(x + 8 - view_center_x(),
+                                  Board::kCols * 16 - view_w()));
+    cam_y_ = std::max(0, std::min(y + 16 - view_center_y(),
+                                  Board::kRows * 16 - view_h()));
     prev_cam_x_ = cam_x_;
     prev_cam_y_ = cam_y_;
     objects_[0].prev_x = x;
@@ -4401,10 +4603,10 @@ void Engine::respawn() {
     p.flags = 0;
     p.prev_x = p.x;
     p.prev_y = p.y;
-    cam_x_ = std::max(0, std::min(p.x + 8 - Framebuffer::W / 2,
-                                  Board::kCols * 16 - Framebuffer::W));
-    cam_y_ = std::max(0, std::min(p.y + 16 - Framebuffer::H / 2,
-                                  Board::kRows * 16 - Framebuffer::H));
+    cam_x_ = std::max(0, std::min(p.x + 8 - view_center_x(),
+                                  Board::kCols * 16 - view_w()));
+    cam_y_ = std::max(0, std::min(p.y + 16 - view_center_y(),
+                                  Board::kRows * 16 - view_h()));
     prev_cam_x_ = cam_x_;
     prev_cam_y_ = cam_y_;
     header_[2] = 6;
@@ -4643,10 +4845,10 @@ void Engine::process_pending_warp() {
         // music trigger, not an entrance, so running place_at_checkpoint(0)
         // here teleported Jill to (0,0) - the "glitchy map spawn".
         const BoardObject& p = objects_[0];
-        cam_x_ = std::max(0, std::min(p.x + 8 - Framebuffer::W / 2,
-                                     Board::kCols * 16 - Framebuffer::W));
-        cam_y_ = std::max(0, std::min(p.y + 16 - Framebuffer::H / 2,
-                                     Board::kRows * 16 - Framebuffer::H));
+        cam_x_ = std::max(0, std::min(p.x + 8 - view_center_x(),
+                                     Board::kCols * 16 - view_w()));
+        cam_y_ = std::max(0, std::min(p.y + 16 - view_center_y(),
+                                     Board::kRows * 16 - view_h()));
         prev_cam_x_ = cam_x_;
         prev_cam_y_ = cam_y_;
     }
@@ -4701,10 +4903,10 @@ void Engine::place_at_checkpoint(int level) {
     p.prev_y = p.y;
     spawn_x_ = x;
     spawn_y_ = y;
-    cam_x_ = std::max(0, std::min(x + 8 - Framebuffer::W / 2,
-                                  Board::kCols * 16 - Framebuffer::W));
-    cam_y_ = std::max(0, std::min(y + 16 - Framebuffer::H / 2,
-                                  Board::kRows * 16 - Framebuffer::H));
+    cam_x_ = std::max(0, std::min(x + 8 - view_center_x(),
+                                  Board::kCols * 16 - view_w()));
+    cam_y_ = std::max(0, std::min(y + 16 - view_center_y(),
+                                  Board::kRows * 16 - view_h()));
     prev_cam_x_ = cam_x_;
     prev_cam_y_ = cam_y_;
 }
@@ -4827,10 +5029,10 @@ bool Engine::load_game(int slot, std::string& err) {
     page_open_ = false;
     spawn_x_ = has_player_ ? objects_[0].x : 0;
     spawn_y_ = has_player_ ? objects_[0].y : 0;
-    cam_x_ = std::max(0, std::min(spawn_x_ + 8 - Framebuffer::W / 2,
-                                  Board::kCols * 16 - Framebuffer::W));
-    cam_y_ = std::max(0, std::min(spawn_y_ + 16 - Framebuffer::H / 2,
-                                  Board::kRows * 16 - Framebuffer::H));
+    cam_x_ = std::max(0, std::min(spawn_x_ + 8 - view_center_x(),
+                                  Board::kCols * 16 - view_w()));
+    cam_y_ = std::max(0, std::min(spawn_y_ + 16 - view_center_y(),
+                                  Board::kRows * 16 - view_h()));
     if (!has_player_) {
         cam_x_ = 0;
         cam_y_ = 0;

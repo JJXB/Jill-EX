@@ -54,6 +54,12 @@ void Opl2::reset() {
     ops_[13].rhythm = true;
     ops_[16].rhythm = true;
     ops_[17].rhythm = true;
+    // Rhythm-mode envelope: none of the five percussion voices sustain.  The
+    // chip decays them to silence even though the instrument's SL field is not
+    // 15; without this the hi-hat/cymbal sat at ~3 dB and hissed forever.
+    for (int slot = 12; slot <= 17; ++slot) {
+        ops_[slot].perc = true;
+    }
     rhythm_ = am_depth_ = vib_depth_ = false;
     lfo_ = vib_ = 0.0;
     noise_ = 1;
@@ -216,12 +222,15 @@ void Opl2::update_envelope(Operator& op, int block) {
         case 2: {  // decay to the sustain level
             const int r = std::min(15, op.dr + shift);
             op.eg_db += rate_db_per_sec(r) / rate_;
-            const double sustain = op.sl == 15
-                                       ? 93.0
-                                       : static_cast<double>(op.sl) * 3.0;
+            const bool perc = rhythm_ && op.perc;
+            const double sustain =
+                perc ? 96.0 : (op.sl == 15 ? 93.0
+                                           : static_cast<double>(op.sl) * 3.0);
             if (op.eg_db >= sustain) {
                 op.eg_db = sustain;
-                op.eg_state = op.egt ? 5 : 3;
+                // Percussion voices have no sustain phase: they decay to
+                // silence, then switch off.
+                op.eg_state = perc ? 0 : (op.egt ? 5 : 3);
             }
             break;
         }

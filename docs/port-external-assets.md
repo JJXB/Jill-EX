@@ -102,7 +102,9 @@ the same 50% checkerboard as the built-in intro-board themes [verified].
 
 ### hud/
 
-* `hud/classic.<ext>` replaces the 64x84 CLASSIC panel (top-left).
+* `hud/classic.<ext>` replaces the legacy 64x84 CLASSIC panel.  It keeps the
+  old top-left placement; the engine's new full-frame classic HUD is used when
+  no pack panel is present.
 * `hud/modern.<ext>` replaces the 320x12 MODERN bar (top).
 * The image is scaled to the panel size.  Labels, inventory icons, health
   pips and score are still drawn on top; transparent pixels let the game
@@ -120,7 +122,8 @@ Replaces the 64x84 character portrait drawn beside level-title/dialog boxes
 (`JILL BOUNDS THROUGH THE BOULDERS`).  Auto-discovered as
 `portrait.<ext>` or `portraits/portrait.<ext>`, or set with
 `[portrait] file = ...`.  Without a pack the engine composes a default from
-the player's idle sprite [verified].
+the player's idle sprite [verified].  The portrait can be hidden with
+`OPTIONS > HUD > PORTRAIT` or `[hud] portrait = 0` in `jill.ini`.
 
 ### music/
 

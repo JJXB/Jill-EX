@@ -16,13 +16,20 @@ The module also has a small CLI:
 
     python jill_import.py sha-frame  <sha> <entry> <frame> <image.png> [-o out.sha]
     python jill_import.py sha-folder <sha> <folder> [-o out.sha]
+    python jill_import.py sha-font   <sha> <fonts/main.png> [-o out.sha]
+    python jill_import.py sha-tile   <sha> <dma> <tile-id> <image.png> [-o out.sha]
+    python jill_import.py board-image <board> <sha> <dma> <board_render.png> [-o out.jn1]
     python jill_import.py vcl-sfx    <vcl> <slot> <audio.wav> [-o out.vcl]
     python jill_import.py vcl-folder <vcl> <folder> [-o out.vcl]
+    python jill_import.py vcl-pages  <vcl> <text_pages> [-o out.vcl]
+    python jill_import.py pack       <extractor-out> <external/pack> [--game ID] [--name NAME]
 """
 from __future__ import annotations
 
 import io
+import json
 import math
+import shutil
 import struct
 import sys
 import wave
@@ -250,11 +257,16 @@ def replace_sha_frame(sha_path: Path, entry_idx: int, frame_idx: int,
 
 def sha_from_folder(sha_path: Path, folder: Path,
                     out_path: Optional[Path] = None) -> Path:
-    """Build a .sha archive from <folder>/shape_NNN/frame_NNN.png trees.
+    """Build a .sha archive from extracted frames.
 
-    Any entry folder that exists replaces that entry; the rest are copied from
-    the reference .sha (when given and readable). New entries are written as
-    8bpp identity-mapped sprites.
+    Two layouts are accepted:
+
+      * ``shape_NNN/frame_NNN.png`` (plus optional ``trailing.png``), and
+      * the extractor's flat ``sprites/shape_NNN_FFF.png`` names.
+
+    Entries that exist keep their source bpp, flags and palette; new entries
+    are written as 8bpp identity-mapped sprites.  Entries not present in the
+    folder are copied from the reference .sha when one is supplied.
     """
     sha = jx.SHAFile.load(str(sha_path)) if Path(sha_path).is_file() else None
     blobs: List[Optional[bytes]] = _all_entry_blobs(sha) if sha else [None] * 128
@@ -266,7 +278,30 @@ def sha_from_folder(sha_path: Path, folder: Path,
         vga = [(i, i, i) for i in range(256)]
 
     folder = Path(folder)
+
+    def write_entry(entry_idx: int, images: Sequence[Image.Image],
+                    trailing: Optional[Image.Image] = None) -> None:
+        entry = sha.entries[entry_idx] if sha and sha.entries[entry_idx] else None
+        if entry is not None:
+            bpp = entry.src_bpp
+            flags = entry.flags
+            palette = entry.palette or None
+            colors = resolved_palette(sha, entry_idx)
+        else:
+            bpp, flags, palette, colors = 8, 1, None, vga
+        frames: List[Tuple[int, int, int, bytes]] = []
+        for im in images:
+            fw, fh, data = quantize(im, colors)
+            frames.append((fw, fh, 0, data))
+        trail = None
+        if trailing is not None:
+            tw, th, tdata = quantize(trailing, colors)
+            trail = (tw, th, 0, tdata)
+        blobs[entry_idx] = encode_entry(frames, bpp, flags, palette, trail)
+
     for entry_dir in sorted(folder.glob('shape_*')):
+        if not entry_dir.is_dir():
+            continue
         try:
             entry_idx = int(entry_dir.name.split('_', 1)[1])
         except (IndexError, ValueError):
@@ -278,23 +313,236 @@ def sha_from_folder(sha_path: Path, folder: Path,
             continue
         images = [_load_image(p) for p in pngs]
         w, h = images[0].size
-        frames = []
-        for im in images:
-            if im.size != (w, h):
-                im = im.resize((w, h), Image.NEAREST)
-            fw, fh, data = quantize(im, vga)
-            frames.append((fw, fh, 0, data))
+        images = [im if im.size == (w, h) else im.resize((w, h), Image.NEAREST)
+                  for im in images]
         trailing = None
         tpath = entry_dir / 'trailing.png'
         if tpath.is_file():
-            tim = _load_image(tpath)
-            tw, th, tdata = quantize(tim, vga)
-            trailing = (tw, th, 0, tdata)
-        blobs[entry_idx] = encode_entry(frames, 8, 1, None, trailing)
+            trailing = _load_image(tpath)
+        write_entry(entry_idx, images, trailing)
+
+    # Flat extractor layout: sprites/shape_NNN_FFF.png grouped by entry.
+    flat = folder / 'sprites'
+    if flat.is_dir():
+        groups: Dict[int, Dict[int, Path]] = {}
+        for png in flat.glob('shape_*_*.png'):
+            parts = png.stem.split('_')
+            if len(parts) != 3:
+                continue
+            try:
+                entry_idx = int(parts[1])
+                frame_idx = int(parts[2])
+            except ValueError:
+                continue
+            if 0 <= entry_idx < 128:
+                groups.setdefault(entry_idx, {})[frame_idx] = png
+        for entry_idx, frame_map in groups.items():
+            # The flat sprite dump contains the font as white masks; use the
+            # dedicated sha-font command so its foreground index is preserved.
+            if entry_idx == jx.FONT_ENTRY:
+                continue
+            images = [_load_image(frame_map[k]) for k in sorted(frame_map)]
+            write_entry(entry_idx, images)
 
     out = Path(out_path) if out_path else Path(sha_path)
     out.write_bytes(build_sha_bytes(blobs))
     return out
+
+
+# ---------------------------------------------------------------------------
+# Extracted asset importers (fonts, tiles, boards, packs)
+# ---------------------------------------------------------------------------
+
+def font_from_sheet(sha_path: Path, sheet_path: Path,
+                    out_path: Optional[Path] = None,
+                    entry_idx: int = 2, foreground: int = 1) -> Path:
+    """Replace a SHA font entry from `fonts/main.png` (128-cell strip).
+
+    Opaque pixels become `foreground`; transparent pixels become index 0.
+    Reads `font.json` beside the sheet for the cell/glyph sizes when present.
+    """
+    sha = jx.SHAFile.load(str(sha_path))
+    entry = sha.entries[entry_idx] if 0 <= entry_idx < 128 else None
+    if entry is None:
+        raise ValueError(f"shape entry {entry_idx} is empty")
+
+    sheet = Image.open(sheet_path).convert('RGBA')
+    meta: Dict = {}
+    meta_path = Path(sheet_path).parent / 'font.json'
+    if meta_path.is_file():
+        try:
+            meta = json.loads(meta_path.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            meta = {}
+    cell_w = int(meta.get('cell_width') or max(1, sheet.width // 128))
+    cell_h = int(meta.get('cell_height') or sheet.height)
+    glyphs = {int(g['code']): g for g in meta.get('glyphs', [])
+              if 'code' in g}
+    frames: List[Tuple[int, int, int, bytes]] = []
+    for code in range(128):
+        g = glyphs.get(code, {})
+        gw = int(g.get('width') or cell_w)
+        gh = int(g.get('height') or cell_h)
+        gw = max(1, min(gw, sheet.width - code * cell_w))
+        gh = max(1, min(gh, sheet.height))
+        cell = sheet.crop((code * cell_w, 0, code * cell_w + gw, gh))
+        px = cell.load()
+        data = bytearray(gw * gh)
+        for y in range(gh):
+            for x in range(gw):
+                _r, _g, _b, a = px[x, y]
+                data[y * gw + x] = foreground if a >= 128 else 0
+        frames.append((gw, gh, 0, bytes(data)))
+
+    blob = encode_entry(frames, entry.src_bpp, entry.flags,
+                        entry.palette or None, _entry_trailing(entry))
+    blobs = _all_entry_blobs(sha)
+    blobs[entry_idx] = blob
+    out = Path(out_path) if out_path else Path(sha_path)
+    out.write_bytes(build_sha_bytes(blobs))
+    return out
+
+
+def tile_from_png(sha_path: Path, dma_path: Path, tile_id: int,
+                  image_path: Path, out_path: Optional[Path] = None,
+                  resize: bool = True) -> Tuple[Path, int, int]:
+    """Replace the SHA frame used by DMA `tile_id` with a PNG."""
+    sha = jx.SHAFile.load(str(sha_path))
+    dma = jx.DMAFile.load(str(dma_path))
+    rec = next((r for r in dma.records if r.tile_id == tile_id), None)
+    if rec is None:
+        raise ValueError(f"tile id 0x{tile_id:02X} not in {dma_path.name}")
+    entry_idx = (rec.shape_id >> 8) & 0x3F
+    frame_idx = rec.shape_id & 0xFF
+    entry = sha.entries[entry_idx]
+    if entry is None or frame_idx >= entry.frame_count:
+        raise ValueError(f"tile 0x{tile_id:02X} points at missing shape "
+                         f"{entry_idx}:{frame_idx}")
+    img = _load_image(image_path)
+    old = entry.frames[frame_idx]
+    if resize and img.size != (old['width'], old['height']):
+        img = img.resize((old['width'], old['height']), Image.NEAREST)
+    colors = resolved_palette(sha, entry_idx)
+    w, h, data = quantize(img, colors)
+    frames = _entry_frames(entry)
+    frames[frame_idx] = (w, h, 0, data)
+    blob = encode_entry(frames, entry.src_bpp, entry.flags,
+                        entry.palette or None, _entry_trailing(entry))
+    blobs = _all_entry_blobs(sha)
+    blobs[entry_idx] = blob
+    out = Path(out_path) if out_path else Path(sha_path)
+    out.write_bytes(build_sha_bytes(blobs))
+    return out, entry_idx, frame_idx
+
+
+def board_from_image(board_path: Path, sha_path: Path, dma_path: Path,
+                     image_path: Path,
+                     out_path: Optional[Path] = None) -> Path:
+    """Rebuild a board's tile map from a full 2048x1024 board render."""
+    board = jx.BoardFile.load(str(board_path))
+    sha = jx.SHAFile.load(str(sha_path))
+    dma = jx.DMAFile.load(str(dma_path))
+    img = Image.open(image_path).convert('RGB')
+    if img.size != (2048, 1024):
+        raise ValueError("board image must be the full 2048x1024 render "
+                         "(use board_previews/<name>.png, not boards/)")
+
+    cache: Dict[Tuple[int, int], Optional[Image.Image]] = {}
+    exact: Dict[bytes, int] = {}
+    sigs: List[Tuple[bytes, int]] = []
+    for rec in dma.records:
+        tile = jx._tile_rgba(sha, rec, cache)
+        if tile is None:
+            continue
+        rgb = tile.convert('RGB')
+        exact.setdefault(rgb.tobytes(), rec.tile_id)
+        sigs.append((rgb.resize((4, 4), Image.NEAREST).tobytes(),
+                     rec.tile_id))
+
+    for c in range(128):
+        for r in range(64):
+            block = img.crop((c * 16, r * 16, c * 16 + 16, r * 16 + 16))
+            tid = exact.get(block.tobytes())
+            if tid is None:
+                # A uniform block is background showing through, not a tile.
+                block_colors = block.getcolors(2)
+                if block_colors is not None and len(block_colors) <= 1:
+                    tid = board.get_tile_at(c, r)
+                else:
+                    sig = block.resize((4, 4), Image.NEAREST).tobytes()
+                    best = 1 << 30
+                    for tsig, ttid in sigs:
+                        d = sum((a - b) * (a - b) for a, b in zip(sig, tsig))
+                        if d < best:
+                            best = d
+                            tid = ttid
+                    # A poor match is more likely background/alpha than a
+                    # genuinely new tile; keep the old cell in that case.
+                    if tid is None or best > 60000:
+                        tid = board.get_tile_at(c, r)
+            if tid is None:
+                tid = board.get_tile_at(c, r)
+            board.tile_map[c * 64 + r] = tid & 0x3FFF
+
+    out = Path(out_path) if out_path else Path(board_path)
+    board.save(str(out))
+    return out
+
+
+def install_pack(src_dir: Path, pack_dir: Path,
+                 game: Optional[str] = None,
+                 name: Optional[str] = None) -> Dict[str, int]:
+    """Copy an extractor/reference-pack tree into an external pack folder."""
+    src = Path(src_dir)
+    dst = Path(pack_dir)
+    dst.mkdir(parents=True, exist_ok=True)
+    stats: Dict[str, int] = {}
+    dirs = ['sprites', 'fonts', 'tiles', 'boards', 'themes', 'hud',
+            'pages', 'sfx', 'music']
+    for sub in dirs:
+        s = src / sub
+        if not s.is_dir():
+            continue
+        shutil.copytree(s, dst / sub, dirs_exist_ok=True)
+        stats[sub] = sum(1 for p in (dst / sub).rglob('*') if p.is_file())
+    for fname in ['portrait.png', 'palette.pal', 'palette_6bit.bin',
+                  'palette.json']:
+        s = src / fname
+        if s.is_file():
+            shutil.copy2(s, dst / fname)
+            stats[fname] = 1
+
+    warnings: List[str] = []
+    def check(path: Path, size: Tuple[int, int]) -> None:
+        if path.is_file():
+            try:
+                with Image.open(path) as im:
+                    if im.size != size:
+                        warnings.append(f"{path.name}: {im.size} (expected {size})")
+            except OSError:
+                warnings.append(f"{path.name}: not a readable image")
+
+    check(dst / 'portrait.png', (64, 84))
+    check(dst / 'hud' / 'classic.png', (64, 84))
+    check(dst / 'hud' / 'modern.png', (320, 12))
+    for p in (dst / 'boards').glob('*.png'):
+        check(p, (320, 200))
+    for p in (dst / 'pages').glob('*.png'):
+        check(p, (320, 200))
+    for p in (dst / 'tiles').glob('*.png'):
+        check(p, (16, 16))
+
+    ini = dst / 'pack.ini'
+    if not ini.exists():
+        label = name or dst.name
+        lines = ['[pack]', f'name = {label}']
+        if game:
+            lines.append(f'game = {game}')
+        ini.write_text('\n'.join(lines) + '\n', encoding='ascii')
+        stats['pack.ini'] = 1
+    for w in warnings:
+        print(f"warning: {w}")
+    return stats
 
 
 # ---------------------------------------------------------------------------
@@ -472,6 +720,52 @@ def vcl_from_folder(vcl_path: Path, folder: Path,
     return out
 
 
+def vcl_pages_from_folder(vcl_path: Path, folder: Path,
+                          out_path: Optional[Path] = None) -> Path:
+    """Replace the VCL text-page bank from `text_pages/`.
+
+    Uses `pages.json` when present so the per-line colours are preserved;
+    otherwise reads `page_NN.txt` with the default colour.
+    """
+    vcl = jx.VCLFile.load(str(vcl_path))
+    sfx, pages = _vcl_parts(vcl)
+    folder = Path(folder)
+    meta_path = folder / 'pages.json'
+    if meta_path.is_file():
+        entries = json.loads(meta_path.read_text(encoding='utf-8'))
+        for entry in entries:
+            try:
+                idx = int(entry['index'])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not (0 <= idx < 40):
+                continue
+            data = bytearray()
+            for line in entry.get('lines', []):
+                colour = int(line.get('colour', 7))
+                text = str(line.get('text', ''))
+                if colour != 7:
+                    data.extend(str(colour).encode('ascii', 'replace'))
+                data.extend(text.encode('ascii', 'replace'))
+                data.append(0x0D)
+            pages[idx] = bytes(data)
+    else:
+        for page_file in sorted(folder.glob('page_*.txt')):
+            try:
+                idx = int(page_file.stem.split('_', 1)[1])
+            except (IndexError, ValueError):
+                continue
+            if not (0 <= idx < 40):
+                continue
+            lines = page_file.read_text(encoding='ascii',
+                                        errors='replace').splitlines()
+            pages[idx] = b'\r'.join(line.encode('ascii', 'replace')
+                                    for line in lines) + b'\r'
+    out = Path(out_path) if out_path else Path(vcl_path)
+    out.write_bytes(build_vcl_bytes(sfx, pages))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -495,6 +789,27 @@ def _cli(argv: Sequence[str]) -> int:
     d = sub.add_parser('vcl-folder', help='build a .vcl from a WAV folder')
     d.add_argument('vcl'); d.add_argument('folder'); d.add_argument('-o', '--out')
 
+    e = sub.add_parser('sha-font', help='replace a .sha font entry from fonts/main.png')
+    e.add_argument('sha'); e.add_argument('sheet'); e.add_argument('-o', '--out')
+    e.add_argument('--entry', type=int, default=2)
+    e.add_argument('--fg', type=int, default=1,
+                   help='palette index for opaque pixels (default 1)')
+
+    f = sub.add_parser('sha-tile', help='replace the SHA frame used by a DMA tile')
+    f.add_argument('sha'); f.add_argument('dma'); f.add_argument('tile', type=lambda s: int(s, 0))
+    f.add_argument('image'); f.add_argument('-o', '--out')
+
+    g = sub.add_parser('board-image', help='rebuild a board from a 2048x1024 render')
+    g.add_argument('board'); g.add_argument('sha'); g.add_argument('dma')
+    g.add_argument('image'); g.add_argument('-o', '--out')
+
+    h = sub.add_parser('pack', help='copy extractor output into an external pack')
+    h.add_argument('src'); h.add_argument('pack')
+    h.add_argument('--game'); h.add_argument('--name')
+
+    i = sub.add_parser('vcl-pages', help='replace VCL text pages from text_pages/')
+    i.add_argument('vcl'); i.add_argument('folder'); i.add_argument('-o', '--out')
+
     args = p.parse_args(argv)
     if args.cmd == 'sha-frame':
         out = replace_sha_frame(Path(args.sha), args.entry, args.frame,
@@ -502,12 +817,34 @@ def _cli(argv: Sequence[str]) -> int:
     elif args.cmd == 'sha-folder':
         out = sha_from_folder(Path(args.sha), Path(args.folder),
                               Path(args.out) if args.out else None)
+    elif args.cmd == 'sha-font':
+        out = font_from_sheet(Path(args.sha), Path(args.sheet),
+                              Path(args.out) if args.out else None,
+                              args.entry, args.fg)
+    elif args.cmd == 'sha-tile':
+        out, entry, frame = tile_from_png(
+            Path(args.sha), Path(args.dma), args.tile, Path(args.image),
+            Path(args.out) if args.out else None)
+        print(f"tile -> shape {entry}:{frame}")
+    elif args.cmd == 'board-image':
+        out = board_from_image(Path(args.board), Path(args.sha), Path(args.dma),
+                               Path(args.image),
+                               Path(args.out) if args.out else None)
     elif args.cmd == 'vcl-sfx':
         out = replace_vcl_sfx(Path(args.vcl), args.slot, Path(args.wav),
                               Path(args.out) if args.out else None)
     elif args.cmd == 'vcl-folder':
         out = vcl_from_folder(Path(args.vcl), Path(args.folder),
                               Path(args.out) if args.out else None)
+    elif args.cmd == 'pack':
+        stats = install_pack(Path(args.src), Path(args.pack),
+                             args.game, args.name)
+        print(', '.join(f"{k}={v}" for k, v in stats.items()))
+        print(f"wrote {args.pack}")
+        return 0
+    elif args.cmd == 'vcl-pages':
+        out = vcl_pages_from_folder(Path(args.vcl), Path(args.folder),
+                                    Path(args.out) if args.out else None)
     else:
         return 2
     print(f"wrote {out}")
