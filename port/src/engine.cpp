@@ -2441,6 +2441,9 @@ void Engine::render(Framebuffer& fb, bool with_hud, float alpha) {
 
     for (int i : order_) {
         const BoardObject& o = objects_[static_cast<size_t>(i)];
+        if (hide_text_kinds_ && (o.kind == 20 || o.kind == 21)) {
+            continue;
+        }
         if (o.kind == 0) {
             player_draw(i, fb);
         } else if (o.kind >= 54 && o.kind <= 57) {

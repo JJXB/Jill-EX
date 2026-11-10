@@ -923,10 +923,10 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                         hud_health_name(engine.hud_health()),
                     "BACK"};
         case MenuScreen::Menus:
+            // SPLASH is temporarily disabled while the publisher screen is
+            // reworked; the row is hidden so the setting cannot be changed.
             return {std::string("THEME: ") +
                         menu_theme_name(engine.menu_theme(), games),
-                    std::string("SPLASH: ") +
-                        splash_name(video.splash, games),
                     "BACK"};
         case MenuScreen::Controls: {
             std::vector<std::string> v;
@@ -1198,8 +1198,21 @@ void ensure_theme_backdrop(ThemeBackdrop& tb, int theme,
         return;
     }
     tmp.finish_dialogs();  // the backdrop shows the whole intro page at once
+    // Intro-board picture panel: tiles (35,0) to (55,13) inclusive, i.e. a
+    // 21x14-cell (336x224 px) rectangle.  The TEXT6/TEXT8 objects inside it are
+    // the story/credits copy, so they are hidden; the tiles alone make the
+    // menu artwork.  Centre-crop the 336x224 panel to the 320x200 framebuffer.
+    constexpr int kPanelCol = 35;
+    constexpr int kPanelRow = 0;
+    constexpr int kPanelW = 21;
+    constexpr int kPanelH = 14;
+    const int panel_x = kPanelCol * 16;
+    const int panel_y = kPanelRow * 16;
+    const int cam_x = panel_x + (kPanelW * 16 - Framebuffer::W) / 2;
+    const int cam_y = panel_y + (kPanelH * 16 - Framebuffer::H) / 2;
+    tmp.set_hide_text_kinds(true);
     Framebuffer fb;
-    tmp.render_at(fb, 0, 0, false);
+    tmp.render_at(fb, cam_x, cam_y, false);
     tb.px = std::move(fb.px);
 
     tb.frame.ok = tmp.tile_pixels(tmp.theme_tile(true), tb.frame.px,
@@ -1555,8 +1568,14 @@ int run_sdl(const Options& opt, Engine& engine,
     bool running = true;
     int page_axis_x = 0;  // text-page stick edge latches
     int page_axis_y = 0;
+    // Splash screens are temporarily disabled while the publisher screen is
+    // reworked.  Keep --dump-splash available for inspecting the old pages,
+    // but never show a splash at start-up.
+    constexpr bool kSplashEnabled = false;
     const int splash_index =
-        std::max(0, std::min(video.splash, static_cast<int>(games.size())));
+        kSplashEnabled
+            ? std::max(0, std::min(video.splash, static_cast<int>(games.size())))
+            : 0;
     bool splash_active = false;
     size_t splash_page = 0;
     Uint32 splash_page_start = 0;
@@ -1939,7 +1958,7 @@ int run_sdl(const Options& opt, Engine& engine,
                 }
                 break;
             case MenuScreen::Menus:
-                if (nav == 5 && sel == 2) {
+                if (nav == 5 && sel == 1) {
                     menu.screen = MenuScreen::Options;
                 } else if (sel == 0) {
                     if (nav == 3) {
@@ -1948,12 +1967,6 @@ int run_sdl(const Options& opt, Engine& engine,
                     } else {
                         engine.set_menu_theme(
                             menu_theme_next(engine.menu_theme(), 1, games));
-                    }
-                } else if (sel == 1) {
-                    if (nav == 3) {
-                        video.splash = splash_next(video.splash, -1, games);
-                    } else {
-                        video.splash = splash_next(video.splash, 1, games);
                     }
                 }
                 break;

@@ -1129,3 +1129,17 @@ offsets, board list, title table).
   over `[controls]`; editing CONTROLS writes the active game's section and
   removes it when it matches the base.
 * Docs: `docs/game-manifests.md`; `MODS.md` example.
+
+## Splash temporarily disabled
+
+* Start-up splash and MENUS > SPLASH are hidden behind
+  kSplashEnabled = false; --dump-splash still renders the old pages.
+* Menu theme next step: use intro-board tiles (35,0)..(55,13) without the
+  TEXT6/TEXT8 objects, as requested.
+
+## Intro-board menu panel
+
+* Menu THEME backdrops now render only the intro-board picture panel
+  (35,0)..(55,13) (21x14 cells), centre-cropped to 320x200.
+* Engine::set_hide_text_kinds(true) skips TEXT6/TEXT8 objects so the story
+  and credits copy is not baked into the menu artwork.

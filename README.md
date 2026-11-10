@@ -2,7 +2,6 @@
 
 A standalone attempt at reverse engineering and recreating the Jill of the Jungle engine.
 
-
 ## AI
 This did use Deepseek 4.1 Flash to construct and make. Disclaimer Over.
 
@@ -54,29 +53,10 @@ No copyright assets shipped, provide your own.
 * Mac/Linux/console builds.
 
 ## Engine and gameplay Info
-* One executable, four games: Jill 1, Jill 2, Jill 3 and Onesimus.
-* Original 18.2 Hz logic with the full 69-kind object system, tile collision,
-  hazards, doors, elevators, switches, triggers and object compaction.
-* All shipped boards, level titles, checkpoint warps, hub/world-map flow and
-  ending sequences (`&end*.mac` playback, ending return to menu).
-* Save/restore: six slots, the pause-menu SAVE/RESTORE screens and the original
-  S/R hotkeys. Saves use the original board layout and per-game prefixes.
-* Text pages: `.vcl` help/news/Philemon pages, page apples, F1 help, one
-  screenful per box, page stepping and scrolling.
-* Morph forms: fish, bird, frog and the restored spider form, plus TINY map
-  avatar support.
+[See ENGINE](ENGINE.md)
 
 ## Tools and data
-* Data-driven runtime: `games/<id>.game` manifests plus
-  `profiles/<id>.profile` engine profiles. `tools/mkprofile.py` profiles
-  another Jill-engine EXE into that pair.
-* Asset paths live in `jill.ini` `[paths]` (per game id); manifests keep local
-  `jillt` / `ONESIM` defaults.
-* Headless debugging/verification CLI (`--ticks`, `--board`, `--start`,
-  `--dump`, `--dump-objects`, `--watch-tile`, `--morph`, `--face`, `--save`,
-  `--load`, `--text-page`, `--dump-splash`, `--list-games`).
-* `jill_extractor.py` viewer/extractor [readme here](EXTRACTOR_README.md) and the reverse-engineering notes in
-  `docs/`.
+[See TOOLS_DATA](TOOLS_DATA.md)
 
 ## Adding Mods
 [See MODS](MODS.md)

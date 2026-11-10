@@ -2,7 +2,9 @@
 
   * Fix Endings - DONE: state-3 CHECKPT returns to the main menu; `&end*.mac`
     input scripts are parsed and replayed (movement/jump/fire).
-  * Intro.jn2 Theme Background based on Tile(35,0) to Tile(55,13)? maybe (0,35) to (19,46)? (93, 51) to (112, 62)? without rendering any text?
+  * Intro.jn2 Theme Background based on Tile(35,0) to Tile(55,13) - DONE:
+    menu themes now bake the intro-board picture panel at tiles
+    `(35,0)`..`(55,13)` and hide the TEXT6/TEXT8 story text. - Shift Right 1 
   * Noisemaker
 * Sound?
 
@@ -14,13 +16,9 @@
     used on all modern systems).
   * Midi (external MIDI output)
   * External Soundtrack and Sample Replacement
-* Splash Screens (On/Off/Custom/Onesimus) - DONE: MENUS > SPLASH cycles
-  OFF/JILL1/JILL2/JILL3/ONESIMUS and shows two data-driven pages (publisher
-  logo cluster, then the title card) found from the intro board; saved as
-  `[video] splash` in `jill.ini` (`--splash N`, `--dump-splash P`).
+* Splash Screens - Temporarily Disabled in the code
 * Character Portraits
 * Xargon Support? - no. Separate Project
-
 * Classic/Modern Menu Layout
 * Enhancements
 

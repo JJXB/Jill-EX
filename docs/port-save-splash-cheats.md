@@ -90,6 +90,10 @@ Port option: `MENUS` > `SPLASH: OFF / JILL1 / JILL2 / JILL3 / ONESIMUS`
 The screen is shown once at start-up for about 2.5 s or until a key, mouse click
 or gamepad button, and is skipped in headless runs.  The port renders the
 selected game's intro page rather than shipping separate PCX/LBM art.
+
+**Temporarily disabled:** the start-up splash and the `MENUS > SPLASH` row are
+turned off in `app.cpp` (`kSplashEnabled = false`) while the publisher screen is
+reworked.  The renderer and `--dump-splash` remain for inspection.
 **[inferred]**
 
 ## 3. Transform cheats
@@ -214,8 +218,11 @@ to frames `0x5410..0x5413`, four ticks each.  Headless `--watch-tile 166` on
      as `P1.ppm`, `P2.ppm` for inspection.
 * **Menu/splash camera:** `Engine::render_at` builds the draw list for an
   arbitrary camera, so the menu backdrop and splash no longer depend on where
-  the intro board's demo player happens to stand.  The menu theme now uses the
-  real top-left intro page too.
+  the intro board's demo player happens to stand.  The menu theme uses the
+  intro-board picture panel at tiles `(35,0)`..`(55,13)` (21x14 cells,
+  336x224 px), centre-cropped to the 320x200 frame.  `Engine::set_hide_text_kinds`
+  suppresses the TEXT6/TEXT8 story/credits copy so only the tile artwork is
+  baked into the backdrop.
 
 ## 13. Endings, Onesimus start, map return, Jill Select
 

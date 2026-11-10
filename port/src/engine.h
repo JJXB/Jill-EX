@@ -60,6 +60,9 @@ public:
     // Build the draw list for an arbitrary camera and render once.  Used by the
     // menu/splash backdrops, which are not tied to the player's position.
     void render_at(Framebuffer& fb, int x, int y, bool with_hud = false);
+    // Menu backdrops can use a board as artwork only: hide the TEXT6/TEXT8
+    // objects so their captions do not end up baked into the backdrop.
+    void set_hide_text_kinds(bool on) { hide_text_kinds_ = on; }
     // The original HUD (pips, HEALTH/SCORE/LEVEL text, key icons) is optional:
     // the port keeps its minimal pip strip unless this is enabled.
     void set_hud_classic(bool on) { hud_classic_ = on; }
@@ -359,6 +362,7 @@ private:
     int water_sound_ = -0x100;  // DGROUP:0x439E, last water-splash frame
     uint32_t rng_ = 0x2A3B1C4D;  // stands in for FUN_2ca6_0015
     bool hud_classic_ = false;
+    bool hide_text_kinds_ = false;
     bool debug_fly_ = false;
     bool invincible_ = false;
     bool fire_while_crouched_ = false;
