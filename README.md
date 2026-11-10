@@ -39,7 +39,7 @@ No copyright assets shipped, provide your own.
   * Super Jump
   * Add Items
   * Refill Health 
-  * BECOME JILL/FROG/BIRD/SPIDER/FISH (Spider Unused but logic present in files, generated temporary art).
+  * BECOME JILL/FROG/BIRD/SPIDER/FISH (Spider Unused but logic present in files, uses shape entry 38).
   * Level/Board Select
 
 ## Command Line Arguments and Keyboard Hotkeys
@@ -48,16 +48,17 @@ No copyright assets shipped, provide your own.
 
 ## TODO
 
-### Remaining
+### Remaining Realistic Goals
 * Splash screens to be fixed.
-* Classic HUD and Menu work
-* Dedicated Demo record/playback
+* Classic Menu work
 * Work on Display Filters to be continued 
 * Character portraits.
 * Stereo Image Rendering (SBS, Interlaced)
-* Possibly Add Midi support (CMF to Midi?)
-* Mac/Linux/console builds
+* Mac/Linux/Console builds
 * 32 Bit Builds
+
+### Future Ideas
+* 
 
 ## License
 [See LICENSE](LICENSE.md)

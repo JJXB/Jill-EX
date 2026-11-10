@@ -16,34 +16,6 @@ const uint8_t kDeathFrame[21] = {0x48, 0x49, 0x48, 0x49, 0x48, 0x48, 0x49,
                                  0x49, 0x49, 0x4A, 0x4A, 0x4A, 0x4A, 0x4A};
 const uint16_t kStateFlags[6] = {1, 0, 1, 0, 2, 2};
 
-// JILLSPIDER has no art in the original (kind 55's tileset is the empty shape
-// entry 0), so the port draws a small procedural spider.  '#' body, '+' legs,
-// 'o' eyes; the two frames alternate while moving.
-const char* const kSpiderFrames[2][16] = {
-    {"................", "................", "................", "................",
-     "..+..+.....+..+.", "...++.......++..", "...++######.++..", "..+..#o##o#+..+.",
-     ".....######.....", ".....######.....", "..+..+.....+..+.", "...++.......++..",
-     "...++.......++..", "..+..+.....+..+.", "................", "................"},
-    {"................", "................", "................", "................",
-     ".....+.....+....", "..+.+.......+.+.", "...+.######..+..", "..+.+#o##o#.+.+.",
-     ".....######+....", ".....######.....", ".....+.....+....", "..+.+.......+.+.",
-     "...+.........+..", "..+.+.......+.+.", ".....+.....+....", "................"},
-};
-
-void draw_spider_sprite(Framebuffer& fb, int x, int y, int frame) {
-    const char* const* rows = kSpiderFrames[frame & 1];
-    for (int r = 0; r < 16; ++r) {
-        for (int c = 0; c < 16; ++c) {
-            const char ch = rows[r][c];
-            if (ch == '.') {
-                continue;
-            }
-            const uint8_t colour = ch == '#' ? 5 : (ch == 'o' ? 15 : 13);
-            fb.put(x + c, y + r, colour);
-        }
-    }
-}
-
 // Top-of-climb pull-up ("raise").  The documented state 3 ends the instant the
 // box leaves the climb tile, so Jill used to snap from a climb pose straight to
 // standing.  These eight frames finish the climb visually: she keeps rising the
@@ -769,8 +741,8 @@ void Engine::form_draw(int i, Framebuffer& fb) {
             draw_shape(fb, (ts << 8) | f, x, y, true);
             return;
         }
-        case 55:  // spider: procedural placeholder art
-            draw_spider_sprite(fb, x, y, (o.p13 >> 1) & 1);
+        case 55:  // spider: shape entry 38, four-frame crawl cycle
+            draw_shape(fb, (38 << 8) | (o.p13 & 3), x, y, true);
             return;
         case 56: {  // bird: table 0x11FB = {0,1,2,3}, +4 when facing left
             static const uint8_t kBirdFrame[4] = {0, 1, 2, 3};

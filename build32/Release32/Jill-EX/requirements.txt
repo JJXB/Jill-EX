@@ -1,0 +1,2 @@
+# Requirements for Jill of the Jungle Extractor
+pillow>=9.0.0

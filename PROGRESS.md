@@ -1269,3 +1269,19 @@ offsets, board list, title table).
   importer arguments), `HOTKEYS.md` (gameplay, menus, text pages, extractor
   controls) and `IMPORT_README.md` (all jill_import commands, input sizes,
   workflows and limits).
+* Classic menu style: `OPTIONS > MENUS > STYLE` (and `--classic-menu`) draws
+  the original frame/title with shape entry 3 and the menu window as a
+  shape-entry-7 9-slice (1/3/5/7 corners, 2/4/6/8 edges, 9 checker fill).
+  The existing menu items and navigation are unchanged; MODERN remains the
+  default.
+* Added `build32.cmd` / `run32.cmd`: Win32/x86 Release build through
+  `vcvars32.bat`, `-A Win32`, `sdl2:x86-windows`, writing to
+  `port/build32/Release32` (jill.exe + SDL2.dll).  The x64 build is unchanged.
+* Spider form now draws shape entry 38 (four-frame crawl cycle) instead of the
+  procedural placeholder.
+* World-map `MAPDEMO` label now draws only "MAP" at a fixed viewport corner;
+  the overlapping DEMO run no longer leaves a trailing O and the label does not
+  drift with the camera.
+* Classic HUD and menu frames can borrow another installed game's shape bank:
+  `OPTIONS > HUD > FRAME` / `OPTIONS > MENUS > BORDER`, `--hud-frame N`,
+  `--menu-frame N`, `[hud] frame` and `[menus] frame`.

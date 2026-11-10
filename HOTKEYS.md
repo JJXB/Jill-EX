@@ -18,6 +18,24 @@ system keys below are fixed.
 Movement is held; jump and throw are edge-triggered.  Bindings are stored in
 `[controls]` and `[controls.<game id>]`.
 
+## Front-end menus
+
+`OPTIONS > MENUS` has three rows:
+
+| Row | Meaning |
+| --- | --- |
+| STYLE | MODERN or CLASSIC; CLASSIC uses the original frame and shape-7 window |
+| BORDER | Classic frame source: CURRENT, or any installed game's shape entry 3/7 |
+| THEME | Backdrop artwork: port, a game intro board, or a pack theme |
+
+The style is stored as `[menus] classic = 0/1`, the border source as
+`[menus] frame = 0/1/2...`, and can be started with
+`--classic-menu` / `--modern-menu` / `--menu-frame N`.
+
+`OPTIONS > HUD > FRAME` selects the shape source used by the CLASSIC HUD
+(CURRENT, or another installed game).  It is stored as `[hud] frame` and can
+also be set with `--hud-frame N`.
+
 ## In-game system keys
 
 | Key | Action |

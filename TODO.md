@@ -1,14 +1,13 @@
 * IMPORTANT 
-  * Classic Menu Layout option (Uses Classic HUD commonalities and Viewport to display Intro.* map like the original menu) (Menu borders use shapes entry 7)
 * Fixes
   * Fix Endings - Input Scripts still not working correctly and not displaying cards
   * Splash Screens - Temporarily Disabled in the code
   * Character Portraits - Present on the main title screen of the original game where the inventory would be
   * Dialog portrait extraction/replacement - NOT DONE - Data not correct. also add toggle for it in HUD
-  * remove O from MAPO in MAP board. also make MAP stop moving around and stick in the same spot of the viewport.
+  * Neaten up Classic Menus/HUD
 * Near goals
   * Stereo Rendering - SBS, Interlaced
-  * Add Shapes entry 7 Menu themes per game too 
+  * Scoreboard (in classic and modern menu, store hiscores to individual game hiscore files)
 * Least Important Ideas
   * Xargon Support? - no. Separate Project. Use this and xargon's own source code as a base for it.
   * Vinyl Goddess? - no. Separate Project, Check compatibility.

@@ -6,14 +6,14 @@ rem games/*.game, external/ and the user documentation.
 rem Excluded: all original game data (jillt/, ONESIM/ and extracted assets).
 rem
 rem Usage: make_release.cmd [zip-name]
-rem Default zip name: Jill-EX-release.zip
+rem Default zip name: Jill-EX-release-x64.zip
 
 setlocal EnableExtensions
 cd /d "%~dp0"
 
 set "STAGE=build\release\Jill-EX"
 set "ZIP=%~1"
-if "%ZIP%"=="" set "ZIP=Jill-EX-release.zip"
+if "%ZIP%"=="" set "ZIP=Jill-EX-release-x64.zip"
 
 if not exist "port\build\Release\jill.exe" (
     echo error: port\build\Release\jill.exe not found.

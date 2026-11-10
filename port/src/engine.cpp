@@ -2635,75 +2635,22 @@ static void blit_external_picture(Framebuffer& fb, int x, int y,
     }
 }
 
-// Original HUD (22ab:05dd), the optional CLASSIC style.  The board still fills
-// the 320x200 buffer; this draws the original screen presentation over it: a
-// dithered border/title strip, a 64-px status column (health, level/score,
-// inventory) and the INVENTORY caption.  The MODERN style is separate.
-void Engine::render_hud_classic(Framebuffer& fb) {
+void Engine::draw_classic_backdrop(Framebuffer& fb, const std::string& title,
+                                   bool menu) {
     const uint8_t label = static_cast<uint8_t>(hud_text_);
-    const int px = kClassicPanelX;
-    const int py = kClassicPanelY;
-    const int hp = std::max(0, std::min(8, health()));
-
-    if (ext_visuals_) {
-        if (const ExternalPicture* panel = ext_visuals_->hud_classic()) {
-            // A pack supplies the original 64x84 panel.  Keep the legacy
-            // placement so existing HUD packs still line up.
-            blit_external_picture(fb, 0, 0, *panel);
-            draw_text(fb, 2, 2, label, "HEALTH");
-            if (hp > 0) {
-                for (int i = 0; i < hp - 1; ++i) {
-                    draw_health_pip(fb, 0x2A, i * 3 + 0x2A, 2);
-                }
-                draw_health_pip(fb, 0x2B, (hp - 1) * 3 + 0x28, 2);
-            }
-            char buf[16];
-            int len = 0;
-            uint32_t s = score();
-            do {
-                buf[len++] = static_cast<char>('0' + (s % 10));
-                s /= 10;
-            } while (s != 0);
-            draw_text(fb, 0x21, 10, label, "SCORE");
-            int sx = 0x40 - (len * 6 + 1);
-            for (int i = 0; i < len; ++i) {
-                char ch[2] = {buf[len - 1 - i], 0};
-                draw_text(fb, sx + i * 6, 0x10, label, ch);
-            }
-            draw_text(fb, 1, 10, label, "LEVEL");
-            int level = level_id();
-            if (level != 0x7F) {
-                std::snprintf(buf, sizeof(buf), "%d", level);
-                draw_text(fb, 1, 0x10, label, buf);
-            }
-            const int n = header_[4] | (header_[5] << 8);
-            for (int i = 0; i < n && i < 15; ++i) {
-                const int id = header_[6 + i * 2] | (header_[7 + i * 2] << 8);
-                if (id < 0 || id >= 16) {
-                    continue;
-                }
-                const int frame = profile_->item_icons[id];
-                if (!frame) {
-                    continue;
-                }
-                draw_shape(fb, icon_shape(frame), (i / 3) * 0x0E + 1,
-                           (i % 3) * 0x0E + 0x1A, true);
-            }
-            return;
-        }
-    }
-
     // Frame 0x0A is the 16x16 noise fill; 0x00/0x03 are the 8x16 vertical
-    // edges, 0x06/0x08 the 16x12 horizontal edges and 0x04 the corner.  All
-    // use the episode's own palette, so no recolouring is needed.
-    const ShapeFrame* fill = shape_frame(3, 0x0A);
-    const ShapeFrame* corner = shape_frame(3, 0x04);
-    const ShapeFrame* edge_top = shape_frame(3, 0x06);
-    const ShapeFrame* edge_bottom = shape_frame(3, 0x08);
-    const ShapeFrame* edge_left = shape_frame(3, 0x00);
-    const ShapeFrame* edge_right = shape_frame(3, 0x03);
+    // edges, 0x06/0x08 the 16x12 horizontal edges and 0x04 the corner.
+    auto frame = [&](int entry, int index) {
+        return menu ? classic_menu_shape(entry, index)
+                    : classic_hud_shape(entry, index);
+    };
+    const ShapeFrame* fill = frame(3, 0x0A);
+    const ShapeFrame* corner = frame(3, 0x04);
+    const ShapeFrame* edge_top = frame(3, 0x06);
+    const ShapeFrame* edge_bottom = frame(3, 0x08);
+    const ShapeFrame* edge_left = frame(3, 0x00);
+    const ShapeFrame* edge_right = frame(3, 0x03);
 
-    // Patterned frame: outer ring, title strip and the whole left column.
     for (int y = 0; y < Framebuffer::H; ++y) {
         for (int x = 0; x < Framebuffer::W; ++x) {
             const bool ring = x < kClassicBorder ||
@@ -2765,22 +2712,126 @@ void Engine::render_hud_classic(Framebuffer& fb) {
     fb.fill_rect(kClassicViewX + kClassicViewW, kClassicViewY, 1,
                  kClassicViewH, 0);
 
-    // Title strip (over the dither, like the original).
-    {
-        const std::string& title = game_.title;
-        int adv = 8;
-        int bank = 1;
-        if (static_cast<int>(title.size()) * adv > kClassicViewW - 10) {
-            adv = 6;
-            bank = 2;
-        }
-        const int tw = static_cast<int>(title.size()) * adv;
-        const int tx = kClassicViewX + (kClassicViewW - tw) / 2;
-        const int clean_x = std::max(kClassicViewX + 2, tx);
-        // 1-px shadow keeps the title readable over the noise frame.
-        draw_text_font(fb, clean_x + 1, 7, 0, bank, adv, title.c_str());
-        draw_text_font(fb, clean_x, 6, label, bank, adv, title.c_str());
+    int adv = 8;
+    int bank = 1;
+    if (static_cast<int>(title.size()) * adv > kClassicViewW - 10) {
+        adv = 6;
+        bank = 2;
     }
+    const int tw = static_cast<int>(title.size()) * adv;
+    const int tx = kClassicViewX + (kClassicViewW - tw) / 2;
+    const int clean_x = std::max(kClassicViewX + 2, tx);
+    draw_text_font(fb, clean_x + 1, 7, 0, bank, adv, title.c_str());
+    draw_text_font(fb, clean_x, 6, label, bank, adv, title.c_str());
+}
+
+void Engine::draw_menu_window(Framebuffer& fb, int x, int y, int w, int h) {
+    if (w < 16 || h < 16) {
+        return;
+    }
+    auto part = [&](int index, int px, int py) {
+        const ShapeFrame* f = classic_menu_shape(7, index);
+        if (!f) {
+            return;
+        }
+        for (int sy = 0; sy < f->h; ++sy) {
+            for (int sx = 0; sx < f->w; ++sx) {
+                fb.put(px + sx, py + sy,
+                       f->px[static_cast<size_t>(sy) * f->w + sx]);
+            }
+        }
+    };
+    // Interior: the checkerboard fill (frame 9), tiled in 8x8 cells.
+    const ShapeFrame* fill = classic_menu_shape(7, 9);
+    for (int yy = y + 8; yy < y + h - 8; yy += 8) {
+        for (int xx = x + 8; xx < x + w - 8; xx += 8) {
+            if (fill && fill->w > 0 && fill->h > 0) {
+                for (int sy = 0; sy < 8 && yy + sy < y + h - 8; ++sy) {
+                    for (int sx = 0; sx < 8 && xx + sx < x + w - 8; ++sx) {
+                        fb.put(xx + sx, yy + sy,
+                               fill->px[(sy % fill->h) * fill->w +
+                                        (sx % fill->w)]);
+                    }
+                }
+            } else {
+                fb.fill_rect(xx, yy, 8, 8, 0);
+            }
+        }
+    }
+    // Edges (2 top, 4 right, 6 bottom, 8 left) and corners (1/3/5/7).
+    for (int xx = x + 8; xx < x + w - 8; xx += 8) {
+        part(2, xx, y);
+        part(6, xx, y + h - 8);
+    }
+    for (int yy = y + 8; yy < y + h - 8; yy += 8) {
+        part(8, x, yy);
+        part(4, x + w - 8, yy);
+    }
+    part(1, x, y);
+    part(3, x + w - 8, y);
+    part(5, x + w - 8, y + h - 8);
+    part(7, x, y + h - 8);
+}
+
+// Original HUD (22ab:05dd), the optional CLASSIC style.  The board still fills
+// the 320x200 buffer; this draws the original screen presentation over it: a
+// dithered border/title strip, a 64-px status column (health, level/score,
+// inventory) and the INVENTORY caption.  The MODERN style is separate.
+void Engine::render_hud_classic(Framebuffer& fb) {
+    const uint8_t label = static_cast<uint8_t>(hud_text_);
+    const int px = kClassicPanelX;
+    const int py = kClassicPanelY;
+    const int hp = std::max(0, std::min(8, health()));
+
+    if (ext_visuals_) {
+        if (const ExternalPicture* panel = ext_visuals_->hud_classic()) {
+            // A pack supplies the original 64x84 panel.  Keep the legacy
+            // placement so existing HUD packs still line up.
+            blit_external_picture(fb, 0, 0, *panel);
+            draw_text(fb, 2, 2, label, "HEALTH");
+            if (hp > 0) {
+                for (int i = 0; i < hp - 1; ++i) {
+                    draw_health_pip(fb, 0x2A, i * 3 + 0x2A, 2);
+                }
+                draw_health_pip(fb, 0x2B, (hp - 1) * 3 + 0x28, 2);
+            }
+            char buf[16];
+            int len = 0;
+            uint32_t s = score();
+            do {
+                buf[len++] = static_cast<char>('0' + (s % 10));
+                s /= 10;
+            } while (s != 0);
+            draw_text(fb, 0x21, 10, label, "SCORE");
+            int sx = 0x40 - (len * 6 + 1);
+            for (int i = 0; i < len; ++i) {
+                char ch[2] = {buf[len - 1 - i], 0};
+                draw_text(fb, sx + i * 6, 0x10, label, ch);
+            }
+            draw_text(fb, 1, 10, label, "LEVEL");
+            int level = level_id();
+            if (level != 0x7F) {
+                std::snprintf(buf, sizeof(buf), "%d", level);
+                draw_text(fb, 1, 0x10, label, buf);
+            }
+            const int n = header_[4] | (header_[5] << 8);
+            for (int i = 0; i < n && i < 15; ++i) {
+                const int id = header_[6 + i * 2] | (header_[7 + i * 2] << 8);
+                if (id < 0 || id >= 16) {
+                    continue;
+                }
+                const int frame = profile_->item_icons[id];
+                if (!frame) {
+                    continue;
+                }
+                draw_shape(fb, icon_shape(frame), (i / 3) * 0x0E + 1,
+                           (i % 3) * 0x0E + 0x1A, true);
+            }
+            return;
+        }
+    }
+
+    draw_classic_backdrop(fb, game_.title);
 
     // Status column.
     classic_box(fb, px, py, kClassicPanelW, 30, 12);
@@ -3534,6 +3585,50 @@ const ShapeFrame* Engine::shape_frame(int entry, int index) {
     return shapes_.frame(entry, index);
 }
 
+bool Engine::set_hud_frame_game(const GameDef* game, std::string& err) {
+    hud_frame_custom_ = false;
+    hud_frame_shapes_ = ShapeBank{};
+    if (!game || game->id == game_.id) {
+        return true;  // current game: use the normal shape lookup
+    }
+    if (!hud_frame_shapes_.load(join(game->data_dir, game->shape_file), err)) {
+        return false;
+    }
+    hud_frame_custom_ = true;
+    return true;
+}
+
+bool Engine::set_menu_frame_game(const GameDef* game, std::string& err) {
+    menu_frame_custom_ = false;
+    menu_frame_shapes_ = ShapeBank{};
+    if (!game || game->id == game_.id) {
+        return true;
+    }
+    if (!menu_frame_shapes_.load(join(game->data_dir, game->shape_file), err)) {
+        return false;
+    }
+    menu_frame_custom_ = true;
+    return true;
+}
+
+const ShapeFrame* Engine::classic_hud_shape(int entry, int index) {
+    if (hud_frame_custom_) {
+        if (const ShapeFrame* f = hud_frame_shapes_.frame(entry, index)) {
+            return f;
+        }
+    }
+    return shape_frame(entry, index);
+}
+
+const ShapeFrame* Engine::classic_menu_shape(int entry, int index) {
+    if (menu_frame_custom_) {
+        if (const ShapeFrame* f = menu_frame_shapes_.frame(entry, index)) {
+            return f;
+        }
+    }
+    return shape_frame(entry, index);
+}
+
 void Engine::draw_player_shape(Framebuffer& fb, int shape, int x, int y,
                                bool transparent) {
     const int entry = (shape >> 8) & 0x3F;
@@ -3902,18 +3997,21 @@ void Engine::draw_object(int i, Framebuffer& fb) {
             return;
         }
 
-        case 67: {  // MAPDEMO (1a53:4df2): two 16-px runs
+        case 67: {  // MAPDEMO (1a53:4df2): the "MAP" label
             if (!map_mode_) {
                 return;  // hidden outside the hub / world-map board
             }
             int ts = profile_->kind(67).tileset;
-            static const int kBase[2] = {0x10, 0x14};
-            static const int kLen[2] = {4, 3};
-            for (int run = 0; run < 2; ++run) {
-                for (int k = 0; k < kLen[run]; ++k) {
-                    draw_shape(fb, (ts << 8) | ((kBase[run] + k) & 0xFF),
-                               x + k * 16, y, true);
-                }
+            // Frames 0x14..0x16 are M/A/P (0x10..0x13 spell DEMO and used to
+            // overlap here, leaving a stray trailing O).  Draw at a fixed
+            // viewport position so the label cannot drift with the camera.
+            static const int kBase = 0x14;
+            static const int kLen = 3;
+            const int sx = view_x() + 0x10;
+            const int sy = view_y() + 4;
+            for (int k = 0; k < kLen; ++k) {
+                draw_shape(fb, (ts << 8) | ((kBase + k) & 0xFF),
+                           sx + k * 16, sy, true);
             }
             return;
         }

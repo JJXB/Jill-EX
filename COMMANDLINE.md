@@ -52,6 +52,10 @@ run.cmd [options]
 | `--hud` | Start with the CLASSIC HUD (F2 toggles) |
 | `--no-portrait` | Hide the character portrait beside level-title dialogs |
 | `--portrait` | Show the portrait (default) |
+| `--classic-menu` | Draw menus with the original frame/window art |
+| `--modern-menu` | Use the default modern menu layout |
+| `--menu-frame N` | Classic menu border source: 0 = current game, N = installed game N |
+| `--hud-frame N` | Classic HUD frame source: 0 = current game, N = installed game N |
 | `--hud-bg N` | HUD background palette index, `suit` or `vibrant` |
 | `--hud-text N` | HUD label colour palette index (default 7) |
 | `--hud-health N` | Health colour 0..15, or `original` |
@@ -125,8 +129,11 @@ jill.exe --game jill2 --board 1 --ticks 40 --dump frame.ppm --dump-objects objec
 
 | Command | Meaning |
 | --- | --- |
-| `build.cmd` | Configure/build the Release executable |
+| `build.cmd` | Configure/build the 64-bit Release executable |
 | `build.cmd install` | Install `sdl2:x64-windows` through vcpkg first |
+| `build32.cmd` | Configure/build the 32-bit Release into `port\build32\Release32` |
+| `build32.cmd install` | Install `sdl2:x86-windows` through vcpkg first |
+| `run32.cmd` | Run the 32-bit build |
 | `make_release.cmd [zip]` | Stage a release folder and write a zip |
 | `copy.cmd` | Local developer copy to `D:\Games\JillEX` |
 

@@ -77,6 +77,18 @@ public:
     void set_external_palette(const uint8_t rgb[768]);
     // Rebuild `ext_visuals_` for a pack.  Returns false when nothing applied.
     bool apply_external(const ExternalAssets& assets, const uint8_t rgb[768]);
+    // Classic presentation can borrow another installed game's shape bank, so
+    // Jill 1's HUD frame or another episode's shape-7 menu window can be used
+    // over the running game's art.  Null (or the current game) restores the
+    // game's own bank.
+    bool set_hud_frame_game(const GameDef* game, std::string& err);
+    bool set_menu_frame_game(const GameDef* game, std::string& err);
+    // Draw the original screen frame/title strip.  Reused by the CLASSIC HUD
+    // and the CLASSIC menu style.  `menu` selects the menu frame source.
+    void draw_classic_backdrop(Framebuffer& fb, const std::string& title,
+                               bool menu = false);
+    // Draw the original window border from shape entry 7 (8x8 nine-slice).
+    void draw_menu_window(Framebuffer& fb, int x, int y, int w, int h);
     // The original HUD (pips, HEALTH/SCORE/LEVEL text, key icons) is optional:
     // the port keeps its minimal pip strip unless this is enabled.
     void set_hud_classic(bool on) { hud_classic_ = on; }
@@ -332,6 +344,9 @@ private:
     void build_player_remap();
     // Shape lookup: external pack override first, then the game's shape bank.
     const ShapeFrame* shape_frame(int entry, int index);
+    // Classic frame lookup: selected game bank when set, else the normal path.
+    const ShapeFrame* classic_hud_shape(int entry, int index);
+    const ShapeFrame* classic_menu_shape(int entry, int index);
     void draw_shape(Framebuffer& fb, int shape, int x, int y, bool transparent);
     // Draws the shape's set pixels in a single palette colour (health pips).
     void draw_shape_tint(Framebuffer& fb, int shape, int x, int y,
@@ -373,6 +388,11 @@ private:
     std::string board_name_;
     TileDefs tiles_;
     ShapeBank shapes_;
+    // Optional shape banks used only for the classic screen/menu frames.
+    ShapeBank hud_frame_shapes_;
+    ShapeBank menu_frame_shapes_;
+    bool hud_frame_custom_ = false;
+    bool menu_frame_custom_ = false;
     Board board_;
     std::array<uint16_t, Board::kCols * Board::kRows> map_{};
     std::array<uint8_t, Board::kHeaderSize> header_{};

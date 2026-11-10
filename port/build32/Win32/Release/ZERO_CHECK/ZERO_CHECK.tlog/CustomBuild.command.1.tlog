@@ -1,0 +1,10 @@
+^C:\USERS\JJXB_\GIT\JILL-EX\PORT\BUILD32\CMAKEFILES\26412ABE858F6DED6D1EED30A0A9FC1E\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SC:/Users/jjxb_/GIT/Jill-EX/port -BC:/Users/jjxb_/GIT/Jill-EX/port/build32 --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file C:/Users/jjxb_/GIT/Jill-EX/port/build32/jill_port.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

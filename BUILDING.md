@@ -90,6 +90,28 @@
 
 
 
+\### 32-bit build
+
+The 64-bit build stays the default.  A separate Win32/x86 build is available:
+
+1. Install the 32-bit SDL2 package once:
+
+&#x20;  ```
+&#x20;  cmd /c build32.cmd install
+&#x20;  ```
+
+2. Build:
+
+&#x20;  ```
+&#x20;  cmd /c build32.cmd
+&#x20;  ```
+
+The executable and `SDL2.dll` are written to
+`port\build32\Release32\`.  Run it with `run32.cmd` or
+`port\build32\Release32\jill.exe --game jill1`.  The 32-bit build uses
+`vcvars32.bat`, `-A Win32` and the `x86-windows` vcpkg triplet; it does not
+touch `port\build\Release`.
+
 If Visual Studio is not in the default location, edit the `VCVARS` path in
 
 `build.cmd`. If vcpkg is elsewhere, set `VCPKG\_ROOT`. To rebuild the generated

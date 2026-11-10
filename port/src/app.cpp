@@ -519,10 +519,16 @@ void draw_select(Framebuffer& fb, Engine& engine,
     engine.draw_text(fb, x + 6, y + boxh - 12, 7, "F3/ESC CLOSE");
 }
 
+bool apply_hud_frame(Engine& engine, const std::vector<GameDef>& games,
+                     int src);
+bool apply_menu_frame(Engine& engine, const std::vector<GameDef>& games,
+                      int src);
+
 // Apply the selected game/board.  A different game needs a fresh Engine (the
 // shape bank, tile table and kind tables can all differ).
 bool apply_selection(Engine& engine, const std::vector<GameDef>& games,
-                     const LevelSelect& sel) {
+                     const LevelSelect& sel, int hud_frame,
+                     int menu_frame) {
     if (sel.game < 0 || sel.game >= static_cast<int>(games.size())) {
         return false;
     }
@@ -584,6 +590,8 @@ bool apply_selection(Engine& engine, const std::vector<GameDef>& games,
     engine.set_minimap(minimap);
     engine.set_center_fish_shot(center_fish);
     apply_player_look(engine, games, player_look, player_suit);
+    apply_hud_frame(engine, games, hud_frame);
+    apply_menu_frame(engine, games, menu_frame);
     return true;
 }
 
@@ -608,6 +616,9 @@ enum class MenuScreen {
 
 struct Menu {
     MenuScreen screen = MenuScreen::Main;
+    bool classic = false;  // draw menus with the original frame/window art
+    int hud_frame = 0;     // classic HUD art source (0 = current game)
+    int menu_frame = 0;    // classic menu border source (0 = current game)
     int main_sel = 0;
     int ep_sel = 0;
     int opt_sel = 0;
@@ -882,6 +893,49 @@ int splash_next(int t, int step, const std::vector<GameDef>& games) {
     return menu_theme_next(t, step, games, 0);
 }
 
+// Classic HUD/menu frame sources: 0 = the running game's own shapes, N = the
+// N-th installed game's shape bank (shape entry 3 frame, entry 7 window).
+std::string frame_source_name(int src, const std::vector<GameDef>& games) {
+    if (src <= 0 || src > static_cast<int>(games.size())) {
+        return "CURRENT";
+    }
+    return upper_ascii(games[static_cast<size_t>(src - 1)].title.c_str());
+}
+
+int frame_source_next(int src, int step, int game_count) {
+    const int n = game_count + 1;
+    int v = (src + step) % n;
+    return (v < 0) ? v + n : v;
+}
+
+const GameDef* frame_source_game(int src,
+                                 const std::vector<GameDef>& games) {
+    if (src <= 0 || src > static_cast<int>(games.size())) {
+        return nullptr;
+    }
+    return &games[static_cast<size_t>(src - 1)];
+}
+
+bool apply_hud_frame(Engine& engine, const std::vector<GameDef>& games,
+                     int src) {
+    std::string err;
+    if (!engine.set_hud_frame_game(frame_source_game(src, games), err)) {
+        std::fprintf(stderr, "hud frame: %s\n", err.c_str());
+        return false;
+    }
+    return true;
+}
+
+bool apply_menu_frame(Engine& engine, const std::vector<GameDef>& games,
+                      int src) {
+    std::string err;
+    if (!engine.set_menu_frame_game(frame_source_game(src, games), err)) {
+        std::fprintf(stderr, "menu frame: %s\n", err.c_str());
+        return false;
+    }
+    return true;
+}
+
 std::vector<std::string> menu_items(const Menu& m, bool started,
                                     const VideoSettings& video,
                                     const Engine& engine,
@@ -960,11 +1014,17 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                         hud_health_name(engine.hud_health()),
                     std::string("PORTRAIT: ") +
                         (engine.hud_portrait() ? "ON" : "OFF"),
+                    std::string("FRAME: ") +
+                        frame_source_name(m.hud_frame, games),
                     "BACK"};
         case MenuScreen::Menus:
             // SPLASH is temporarily disabled while the publisher screen is
             // reworked; the row is hidden so the setting cannot be changed.
-            return {std::string("THEME: ") +
+            return {std::string("STYLE: ") +
+                        (m.classic ? "CLASSIC" : "MODERN"),
+                    std::string("BORDER: ") +
+                        frame_source_name(m.menu_frame, games),
+                    std::string("THEME: ") +
                         menu_theme_name(engine.menu_theme(), games,
                                         engine.external_visuals()),
                     "BACK"};
@@ -1321,6 +1381,64 @@ void menu_title(Framebuffer& fb, Engine& engine, int y, const char* s) {
     engine.draw_text(fb, (Framebuffer::W - w) / 2, y, 7, s);
 }
 
+void draw_classic_menu(Framebuffer& fb, Engine& engine, const Menu& m,
+                       const char* sub,
+                       const std::vector<std::string>& items, int sel) {
+    engine.draw_classic_backdrop(fb, engine.game().title, true);
+
+    int maxlen = 0;
+    for (const std::string& item : items) {
+        maxlen = std::max(maxlen, static_cast<int>(item.size()));
+    }
+    const int line_h = items.size() > 12 ? 9 : 10;
+    int boxw = 32 + (maxlen + 2) * 6;
+    boxw = std::max(168, std::min(boxw, 232));
+    boxw = ((boxw + 7) / 8) * 8;
+    int boxh = 20 + static_cast<int>(items.size()) * line_h + 8;
+    boxh = std::min(boxh, 162);
+    boxh = ((boxh + 7) / 8) * 8;
+
+    int bx = std::max(76, std::min(80, 312 - boxw));
+    int by = (Framebuffer::H - boxh) / 2;
+    by = std::max(28, std::min(by, 190 - boxh));
+    engine.draw_menu_window(fb, bx, by, boxw, boxh);
+
+    const char* header =
+        (m.screen == MenuScreen::Main) ? "PICK A CHOICE:" : sub;
+    engine.draw_text(fb, bx + 12, by + 10, 15, header);
+
+    int y = by + 20;
+    for (int i = 0; i < static_cast<int>(items.size()); ++i) {
+        char line[96];
+        std::snprintf(line, sizeof(line), "%c %s",
+                      i == sel ? '>' : ' ',
+                      items[static_cast<size_t>(i)].c_str());
+        uint8_t colour = 10;  // classic green
+        if (i == sel) {
+            colour = 15;
+        } else if (items[static_cast<size_t>(i)].find("QUIT") !=
+                       std::string::npos ||
+                   items[static_cast<size_t>(i)].find("BACK") !=
+                       std::string::npos) {
+            colour = 12;
+        }
+        engine.draw_text(fb, bx + 10, y, colour, line);
+        y += line_h;
+    }
+
+    const char* hint = "UP/DOWN MOVE   ENTER SELECT   ESC BACK";
+    if (m.rebind_action >= 0) {
+        hint = "PRESS A KEY OR PAD BUTTON   ESC CANCEL";
+    } else if (m.screen == MenuScreen::Noisemaker) {
+        hint = "LEFT/RIGHT CHANGE   ENTER PLAY   ESC BACK";
+    } else if (m.screen == MenuScreen::Assets) {
+        hint = "UP/DOWN MOVE   ENTER MOUNT   ESC BACK";
+    }
+    const int w = static_cast<int>(std::strlen(hint)) * 6;
+    const int footer_y = (by + boxh + 2 <= 188) ? 188 : 192;
+    engine.draw_text(fb, (Framebuffer::W - w) / 2, footer_y, 7, hint);
+}
+
 void draw_menu(Framebuffer& fb, Engine& engine, Menu& m, bool started,
                const VideoSettings& video, const Bindings& bindings,
                ThemeBackdrop& backdrop, const std::vector<GameDef>& games,
@@ -1343,8 +1461,6 @@ void draw_menu(Framebuffer& fb, Engine& engine, Menu& m, bool started,
             }
         }
     }
-    menu_title(fb, engine, 16,
-               upper_ascii(engine.game().title.c_str()).c_str());
     const char* sub = "MAIN MENU";
     switch (m.screen) {
         case MenuScreen::Episodes: sub = "SELECT EPISODE"; break;
@@ -1352,7 +1468,7 @@ void draw_menu(Framebuffer& fb, Engine& engine, Menu& m, bool started,
         case MenuScreen::Hud: sub = "HUD"; break;
         case MenuScreen::Video: sub = "VIDEO"; break;
         case MenuScreen::Audio: sub = "SOUND"; break;
-        case MenuScreen::Menus: sub = "MENU THEMES"; break;
+        case MenuScreen::Menus: sub = "MENUS"; break;
         case MenuScreen::Controls: sub = "CONTROLS"; break;
         case MenuScreen::Cheats: sub = "CHEATS"; break;
         case MenuScreen::Enhancements: sub = "GAMEPLAY"; break;
@@ -1362,7 +1478,6 @@ void draw_menu(Framebuffer& fb, Engine& engine, Menu& m, bool started,
         case MenuScreen::Assets: sub = "EXTERNAL ASSETS"; break;
         default: break;
     }
-    menu_title(fb, engine, 28, sub);
 
     std::vector<std::string> items =
         menu_items(m, started, video, engine, bindings, games, audio, assets);
@@ -1370,6 +1485,13 @@ void draw_menu(Framebuffer& fb, Engine& engine, Menu& m, bool started,
     if (sel < 0 || sel >= static_cast<int>(items.size())) {
         sel = 0;
     }
+    if (m.classic) {
+        draw_classic_menu(fb, engine, m, sub, items, sel);
+        return;
+    }
+    menu_title(fb, engine, 16,
+               upper_ascii(engine.game().title.c_str()).c_str());
+    menu_title(fb, engine, 28, sub);
     int maxlen = 0;
     for (const std::string& item : items) {
         maxlen = std::max(maxlen, static_cast<int>(item.size()));
@@ -1498,7 +1620,8 @@ void apply_player_look(Engine& engine, const std::vector<GameDef>& games,
 
 // Start a fresh game on a game's first board, keeping the current
 // display/engine options.
-bool start_game(Engine& engine, const std::vector<GameDef>& games, int index) {
+bool start_game(Engine& engine, const std::vector<GameDef>& games, int index,
+                int hud_frame, int menu_frame) {
     if (index < 0 || index >= static_cast<int>(games.size())) {
         return false;
     }
@@ -1557,6 +1680,8 @@ bool start_game(Engine& engine, const std::vector<GameDef>& games, int index) {
     engine.set_minimap(minimap);
     engine.set_center_fish_shot(center_fish);
     apply_player_look(engine, games, player_look, player_suit);
+    apply_hud_frame(engine, games, hud_frame);
+    apply_menu_frame(engine, games, menu_frame);
     return true;
 }
 
@@ -1631,6 +1756,9 @@ int run_sdl(const Options& opt, Engine& engine,
     SplashImage splash_image;
     LevelSelect select;
     Menu menu;
+    menu.classic = opt.classic_menu;
+    menu.hud_frame = opt.hud_frame;
+    menu.menu_frame = opt.menu_frame;
     menu.music_on = opt.music;
     menu.music_volume = std::max(0, std::min(100, opt.music_volume));
     menu.sfx_on = opt.sfx;
@@ -1993,7 +2121,8 @@ int run_sdl(const Options& opt, Engine& engine,
                     break;
                 }
                 case 5:
-                    if (apply_selection(engine, games, select)) {
+                    if (apply_selection(engine, games, select, menu.hud_frame,
+                                        menu.menu_frame)) {
                         select.open = false;
                         game_started = true;
                     }
@@ -2025,7 +2154,17 @@ int run_sdl(const Options& opt, Engine& engine,
                 engine.set_hud_health(next_hud_health(engine.hud_health()));
             } else if (menu.screen == MenuScreen::Hud && sel == 4) {
                 engine.set_hud_portrait(!engine.hud_portrait());
+            } else if (menu.screen == MenuScreen::Hud && sel == 5) {
+                menu.hud_frame = frame_source_next(
+                    menu.hud_frame, 1, static_cast<int>(games.size()));
+                apply_hud_frame(engine, games, menu.hud_frame);
             } else if (menu.screen == MenuScreen::Menus && sel == 0) {
+                menu.classic = !menu.classic;
+            } else if (menu.screen == MenuScreen::Menus && sel == 1) {
+                menu.menu_frame = frame_source_next(
+                    menu.menu_frame, 1, static_cast<int>(games.size()));
+                apply_menu_frame(engine, games, menu.menu_frame);
+            } else if (menu.screen == MenuScreen::Menus && sel == 2) {
                 engine.set_menu_theme(menu_theme_next(
                     engine.menu_theme(), 1, games,
                     external_theme_count(engine)));
@@ -2167,7 +2306,8 @@ int run_sdl(const Options& opt, Engine& engine,
                     menu.ep_sel =
                         (menu.ep_sel + (nav == 3 ? count - 1 : 1)) % count;
                 } else if (sel < count) {
-                    if (start_game(engine, games, sel)) {
+                    if (start_game(engine, games, sel, menu.hud_frame,
+                                   menu.menu_frame)) {
                         game_started = true;
                         menu.screen = MenuScreen::Closed;
                     }
@@ -2289,25 +2429,27 @@ int run_sdl(const Options& opt, Engine& engine,
                 }
                 break;
             case MenuScreen::Hud:
-                if (nav == 5 && sel == 5) {
+                if (nav == 5 && sel == 6) {
                     menu.screen = MenuScreen::Options;
-                } else if (sel >= 0 && sel <= 4) {
+                } else if (sel >= 0 && sel <= 5) {
                     toggle_option();
                 }
                 break;
             case MenuScreen::Menus:
-                if (nav == 5 && sel == 1) {
+                if (nav == 5 && sel == 3) {
                     menu.screen = MenuScreen::Options;
-                } else if (sel == 0) {
-                    if (nav == 3) {
-                        engine.set_menu_theme(
-                            menu_theme_next(engine.menu_theme(), -1, games,
-                                            external_theme_count(engine)));
-                    } else {
-                        engine.set_menu_theme(
-                            menu_theme_next(engine.menu_theme(), 1, games,
-                                            external_theme_count(engine)));
-                    }
+                } else if (sel == 0 && (nav == 5 || nav == 3 || nav == 4)) {
+                    menu.classic = !menu.classic;
+                } else if (sel == 1 && (nav == 3 || nav == 4)) {
+                    menu.menu_frame = frame_source_next(
+                        menu.menu_frame, nav == 3 ? -1 : 1,
+                        static_cast<int>(games.size()));
+                    apply_menu_frame(engine, games, menu.menu_frame);
+                } else if (sel == 2 && (nav == 3 || nav == 4)) {
+                    engine.set_menu_theme(
+                        menu_theme_next(engine.menu_theme(),
+                                        nav == 3 ? -1 : 1, games,
+                                        external_theme_count(engine)));
                 }
                 break;
             case MenuScreen::Controls:
@@ -2875,6 +3017,7 @@ int run_sdl(const Options& opt, Engine& engine,
         ini.set_bool("audio", "pc_speaker", menu.pc_speaker);
         ini.set_bool("hud", "classic", engine.hud_classic());
         ini.set_bool("hud", "portrait", engine.hud_portrait());
+        ini.set_int("hud", "frame", menu.hud_frame);
         std::string bg_name;
         if (engine.hud_bg() == -2) {
             bg_name = "suit";
@@ -2902,6 +3045,8 @@ int run_sdl(const Options& opt, Engine& engine,
         ini.set_int("gameplay", "player_look", engine.player_look());
         ini.set_int("gameplay", "player_suit", engine.player_suit());
         ini.set_int("gameplay", "menu_theme", engine.menu_theme());
+        ini.set_bool("menus", "classic", menu.classic);
+        ini.set_int("menus", "frame", menu.menu_frame);
         game_bindings[bindings_game] = bindings;
         save_bindings_ini(ini, base_bindings);
         for (const auto& kv : game_bindings) {
@@ -3038,6 +3183,10 @@ int run_app(const Options& opt) {
     run_opt.data_dir = game.data_dir;
     run_opt.palette = game.palette;
     run_opt.menu_theme = std::min(opt.menu_theme, static_cast<int>(games.size()));
+    run_opt.hud_frame =
+        std::min(opt.hud_frame, static_cast<int>(games.size()));
+    run_opt.menu_frame =
+        std::min(opt.menu_frame, static_cast<int>(games.size()));
     if (opt.resolution_w > 0) {
         run_opt.resolution = match_resolution(opt.resolution_w, opt.resolution_h);
     }
@@ -3066,6 +3215,8 @@ int run_app(const Options& opt) {
     engine.set_hud_bg(opt.hud_bg);
     engine.set_hud_text(opt.hud_text);
     engine.set_hud_health(opt.hud_health);
+    apply_hud_frame(engine, games, run_opt.hud_frame);
+    apply_menu_frame(engine, games, run_opt.menu_frame);
     std::string board = opt.board.empty() ? game.first_board : opt.board;
     if (!engine.load_board(board, err)) {
         std::fprintf(stderr, "%s\n", err.c_str());
