@@ -8,6 +8,9 @@
 class IniFile {
 public:
     bool load(const std::string& path, std::string& err);
+    // Parse `text` directly (used for `pack.ini` inside zip packs).
+    bool parse(const std::string& text, const std::string& name,
+               std::string& err);
     bool save(const std::string& path) const;
 
     std::string get(const std::string& section, const std::string& key,

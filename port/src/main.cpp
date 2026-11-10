@@ -66,6 +66,9 @@ void usage() {
         "  --games DIR    directory of *.game manifests (default games)\n"
         "  --profiles DIR directory of *.profile engine data (default profiles)\n"
         "  --list-games   print the installed games and exit\n"
+        "  --external DIR external asset directory (default external)\n"
+        "  --pack ID      mount an external pack folder or .zip at start-up\n"
+        "  --list-packs   print the external packs and exit\n"
         "  --episode N    N-th installed game, 1-based (default: the first)\n"
         "  --data DIR     override the manifest's asset directory\n"
         "  --board NAME   board name without extension (default: episode start)\n"
@@ -115,6 +118,7 @@ void usage() {
         "  --music-volume N  music volume 0-100 (default 80)\n"
         "  --no-sfx       disable sampled sound effects\n"
         "  --sfx-volume N  effect volume 0-100 (default 80)\n"
+        "  --pc-speaker   play effects as 1-bit PC-speaker square waves\n"
         "  --music-file NAME track for --dump-music (default: the game title track)\n"
         "  --music-seconds N seconds to render with --dump-music (default 10)\n"
         "  --dump-music FILE  render the current title track to a WAV and exit\n"
@@ -140,6 +144,8 @@ int main(int argc, char** argv) {
         opt.games_dir = ini.get("paths", "games", opt.games_dir);
         opt.profiles_dir = ini.get("paths", "profiles", opt.profiles_dir);
         opt.game = ini.get("game", "id", opt.game);
+        opt.external_dir = ini.get("external", "dir", opt.external_dir);
+        opt.pack = ini.get("external", "pack", opt.pack);
         opt.window_mode = ini.get_int("video", "window_mode", opt.window_mode);
         opt.scale = ini.get_int("video", "scale", opt.scale);
         opt.resolution = ini.get_int("video", "resolution", opt.resolution);
@@ -185,6 +191,7 @@ int main(int argc, char** argv) {
         opt.music_volume = ini.get_int("audio", "volume", opt.music_volume);
         opt.sfx = ini.get_bool("audio", "sfx", opt.sfx);
         opt.sfx_volume = ini.get_int("audio", "sfx_volume", opt.sfx_volume);
+        opt.pc_speaker = ini.get_bool("audio", "pc_speaker", opt.pc_speaker);
         opt.fire_crouched = ini.get_bool("gameplay", "fire_crouched",
                                          opt.fire_crouched);
         opt.max_knives = ini.get_int("gameplay", "max_knives", opt.max_knives);
@@ -221,6 +228,12 @@ int main(int argc, char** argv) {
             opt.profiles_dir = value("--profiles");
         } else if (a == "--list-games") {
             opt.list_games = true;
+        } else if (a == "--external") {
+            opt.external_dir = value("--external");
+        } else if (a == "--pack") {
+            opt.pack = value("--pack");
+        } else if (a == "--list-packs") {
+            opt.list_packs = true;
         } else if (a == "--episode") {
             opt.episode = std::atoi(value("--episode"));
             opt.game.clear();  // explicit episode overrides jill.ini's game id
@@ -369,6 +382,8 @@ int main(int argc, char** argv) {
             opt.sfx = false;
         } else if (a == "--sfx-volume") {
             opt.sfx_volume = std::atoi(value("--sfx-volume"));
+        } else if (a == "--pc-speaker") {
+            opt.pc_speaker = true;
         } else if (a == "--music-file") {
             opt.music_file = value("--music-file");
         } else if (a == "--music-seconds") {

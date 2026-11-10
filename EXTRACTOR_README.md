@@ -11,8 +11,8 @@ A comprehensive Python GUI utility for viewing and extracting game assets from t
 | **Board Files** | `.jn1`, `.jn2`, `.jn3`, `.dem` | Level maps with tile data, objects, headers, and strings |
 | **Shape Archives** | `.sha` | Sprite/shape data with multiple frames and video modes |
 | **Tile Definitions** | `jill.dma` | Maps tile IDs to shape IDs and attributes |
-| **Sound Banks** | `.vcl` | Sampled sound effects and music patterns |
-| **Music Files** | `.ddt` | Creative Music Format (CMF/CTMF) for AdLib/OPL2 |
+| **Sound Banks** | `.vcl` | Sampled sound effects, text pages, and level-help copy |
+| **Music Files** | `.ddt`, `.ARK` | Creative Music Format (CMF/CTMF) for AdLib/OPL2; Onesimus uses `SONG*.ARK` |
 | **Config Files** | `.cfg` | High scores, save slots, and game options |
 | **Input Macros** | `.mac` | Recorded input demos/macros |
 
@@ -38,7 +38,11 @@ so mods/other data sets work without code changes.
   animation, and playback updates the frame number / `n/N` status live.
 - **Sound Browser**: List, extract, save as WAV, and **play sounds in-app** (Windows)
 - **Hex Viewer**: Raw hex/ASCII view of any file
-- **Batch Extraction**: Export all boards, shapes, or sounds at once
+- **Batch Extraction**: Export all boards, shapes, or sounds at once, plus
+  enhanced pack assets: fonts, text pages, tile images, HUD panels, menu
+  themes, palettes and full board previews
+- **Reference Pack Export**: Write an editable `external/` asset pack tree
+  (shape frames, tiles, boards, fonts, HUD, pages, SFX WAVs, palette)
 - **JSON Export**: Structured export of board data for analysis
 
 ### Converters (PNG/WAV → Jill)
@@ -58,6 +62,46 @@ slot's rate (normally 6000 Hz), and stored as unsigned 8-bit PCM. Other entries
 in the archive are preserved. Exporting shapes via **Export All Frames** writes
 the exact folder layout the `.sha` builder expects.
 
+## Enhanced asset exporters
+
+The **Tools** menu and `extract_all.py` can export everything the external
+asset-pack system understands, not just the original archive formats:
+
+| Output | Files | Use |
+|--------|-------|-----|
+| Fonts | `fonts/main.png` (128-cell strip) + `fonts/glyphs/glyph_NNN.png` + `fonts/font.json` | Edit the in-game text font |
+| Text pages | `text_pages/page_NN.txt`, `text_pages/pages.json`, `text_pages/preview/page_NN.png` | Read/redraw F1 help and menu pages |
+| Tile images | `tiles/<tile id>.png` + `tiles/tiles.json` | Tile art with attributes and names |
+| HUD | `hud/classic.png`, `hud/modern.png`, previews and `hud/icons/` | Editable HUD panels and item icons |
+| Portrait | `portrait.png` | 64x84 dialog portrait (default is the player idle sprite) |
+| Theme | `themes/intro.png` | The intro-board menu backdrop (320x200) |
+| Music | `music/<track>.wav` | OPL2-rendered `.ddt` tracks (uses the built port) |
+| Palette | `palette.pal`, `palette_6bit.bin`, `palette.json` | Exact game DAC palette |
+| Board previews | `boards/<name>.png` (320x200) + `board_previews/<name>.png` (2048x1024) | Reference art / pack backdrops (tile layer) |
+| Reference pack | all of the above in pack layout + `pack.ini` + `sfx/<slot>.wav` + `music/<track>.wav` | Starting point for a custom pack |
+
+`Export Reference Asset Pack` writes a complete tree that can be copied to
+`external/<name>` and mounted with `--pack <name>` or `OPTIONS > ASSETS`.
+Board previews are large and are never written by `--all`; request them
+explicitly.
+
+CLI equivalents:
+
+```bash
+python extract_all.py out --game jill1 --fonts --pages --tiles --hud --palette
+python extract_all.py out --game jill1 --previews          # 2048x1024 boards
+python extract_all.py out --game jill1 --music-wavs        # render .ddt -> WAV
+python extract_all.py out --game jill1 --pack              # reference pack
+```
+
+Music rendering uses the built port executable
+(`port/build/Release/jill.exe --dump-music`), which contains the OPL2/CMF
+synthesiser.  If the port has not been built, raw `.ddt` files are still
+copied by `--music`/`--all`, but no WAV is produced.
+
+In the Sound tab, selecting a `Title music: *.ddt` or `Music: *.ddt` row now
+uses **Play Selected** and **Save as WAV** through the same port renderer.
+
 ## Requirements
 
 - Python 3.8+
@@ -74,6 +118,9 @@ python jill_extractor.py            # GUI
 python extract_all.py --list        # list discovered games
 python extract_all.py out --all     # extract everything into ./out
 python extract_all.py out --game jill1 --boards --shapes
+python extract_all.py out --game jill1 --fonts --pages --tiles --hud
+python extract_all.py out --game jill1 --music-wavs --music-seconds 30
+python extract_all.py out --game jill1 --pack    # editable external pack
 python test_parsers.py              # validate every parser
 
 # Converters
@@ -156,11 +203,15 @@ Offset  Size    Description
 0x0000  0xC8    50 × u32 SFX offsets
 0x00C8  0x64    50 × u16 SFX sizes
 0x012C  0x64    50 × u16 SFX sample rates
-0x0190  0xA0    40 × u32 Music offsets
-0x0230  0x50    40 × u16 Music sizes
+0x0190  0xA0    40 × u32 Text-page offsets
+0x0230  0x50    40 × u16 Text-page sizes
 ```
 
-### DDT Files (`.ddt`)
+The second table is the text-page archive used by the F1/help screens, not
+music. Each page is a CR-separated block whose first line is the title and
+whose lines may begin with a `0`-`7` colour digit.
+
+### DDT/ARK Files (`.ddt`, `.ARK`)
 
 Standard Creative Music Format (CMF) with CTMF header for OPL2/AdLib playback.
 
@@ -186,4 +237,7 @@ This tool is based on extensive reverse-engineering documentation:
 
 ## License
 
-This is a reverse-engineering tool for educational purposes. Jill of the Jungle is copyright Epic MegaGames.
+The extractor code is covered by `LICENSE.md` (PolyForm Noncommercial 1.0.0).
+It is a reverse-engineering tool for educational purposes. Jill of the Jungle
+and the other supported games are copyright their respective owners; no game
+data is licensed or distributed.

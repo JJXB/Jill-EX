@@ -3,6 +3,7 @@
 #include "palette.inc"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -96,8 +97,38 @@ uint8_t page_colour(uint8_t code) {
 
 // Body lines (everything after the title), word-wrapped at 48 characters so
 // long prose stays inside the frame.  The shipped pages already break at ~38.
-std::vector<TextPage::Line> page_body(const TextPage& page) {
-    std::vector<TextPage::Line> out;
+// A board's start music is the first `*name.ddt` / `*name.ark` CHECKPT string.
+// Later music CHECKPTs are section changes and are still handled when touched.
+bool is_music_name(const std::string& name) {
+    if (name.size() < 5) {
+        return false;
+    }
+    std::string ext;
+    for (size_t i = name.size() - 4; i < name.size(); ++i) {
+        ext.push_back(static_cast<char>(
+            std::tolower(static_cast<unsigned char>(name[i]))));
+    }
+    return ext == ".ddt" || ext == ".ark";
+}
+
+std::string first_board_music(const std::vector<BoardObject>& objects) {
+    for (const BoardObject& o : objects) {
+        if (o.kind != 12 || o.text.empty() || o.text[0] != '*') {
+            continue;
+        }
+        std::string name = o.text.substr(1);
+        while (!name.empty() &&
+               (name.back() == ' ' || name.back() == '\r')) {
+            name.pop_back();
+        }
+        if (is_music_name(name)) {
+            return name;
+        }
+    }
+    return std::string();
+}
+
+std::vector<TextPage::Line> page_body(const TextPage& page) {    std::vector<TextPage::Line> out;
     const size_t first = page.lines.empty() ? 0 : 1;
     for (size_t i = first; i < page.lines.size(); ++i) {
         TextPage::Line line = page.lines[i];
@@ -204,6 +235,11 @@ bool Engine::load_board(const std::string& name, std::string& err) {
     }
     header_ = board_.header;
     objects_ = board_.objects;
+    // Start the level on the track its first music CHECKPT names.  The
+    // original does not wait for the player to walk onto that trigger: board 1
+    // begins on zeppelin.ddt, the hub on funky.ddt, and so on.
+    music_request_ = first_board_music(objects_);
+    last_music_ = music_request_;
 
     // Level id: derive it from a numeric board name first (Jill 2/3 store 0 in
     // most headers), otherwise trust the header (map/intro boards).
@@ -1814,7 +1850,11 @@ bool Engine::on_hit(int a, int b) {
             }
             // p13 == 0 is the map music trigger, not a level entrance; it
             // always fires even when the hub's stored level id is also 0.
-            if (o.p13 != 0 && o.p13 == level_id()) {
+            // Music triggers (`*track.ddt`) must also fire when their p13
+            // matches the current level: board entrances place Jill on the
+            // checkpoint that carries the level's start track.
+            const bool music_cmd = !o.text.empty() && o.text[0] == '*';
+            if (!music_cmd && o.p13 != 0 && o.p13 == level_id()) {
                 return false;
             }
             // Snapshot the fields before touching the player record.
@@ -2426,6 +2466,17 @@ void Engine::render(Framebuffer& fb, bool with_hud, float alpha) {
     }
 
     fb.clear(0);
+    // An external pack can supply a whole-board backdrop.  Tiles are then
+    // drawn with colour 0 treated as transparent so the picture shows through
+    // the open areas of the art.
+    const std::vector<uint8_t>* bg = nullptr;
+    if (ext_visuals_) {
+        bg = ext_visuals_->board(board_name_);
+    }
+    const bool bg_ok = bg && bg->size() == fb.px.size();
+    if (bg_ok) {
+        fb.px = *bg;
+    }
 
     int c0 = cam_x_ >> 4;
     int c1 = std::min(Board::kCols - 1, (cam_x_ + Framebuffer::W) >> 4);
@@ -2434,8 +2485,22 @@ void Engine::render(Framebuffer& fb, bool with_hud, float alpha) {
     for (int c = c0; c <= c1; ++c) {
         for (int r = r0; r <= r1; ++r) {
             uint16_t id = map_[c * Board::kRows + r] & 0x3FFF;
-            draw_shape(fb, tiles_.at(id).shape, c * 16 - cam_x_,
-                       r * 16 - cam_y_, false);
+            uint16_t shape = tiles_.at(id).shape;
+            if (ext_visuals_) {
+                // Tile animation rewrites the live record's shape, so fall
+                // back to the pack override of the tile's original shape.
+                const int entry = (shape >> 8) & 0x3F;
+                const int index = shape & 0xFF;
+                if (!ext_visuals_->shape((entry << 8) | index)) {
+                    const uint16_t base = tiles_.base_shape(id);
+                    const int bentry = (base >> 8) & 0x3F;
+                    const int bindex = base & 0xFF;
+                    if (ext_visuals_->shape((bentry << 8) | bindex)) {
+                        shape = base;
+                    }
+                }
+            }
+            draw_shape(fb, shape, c * 16 - cam_x_, r * 16 - cam_y_, bg_ok);
         }
     }
 
@@ -2493,6 +2558,20 @@ void Engine::render(Framebuffer& fb, bool with_hud, float alpha) {
     }
 }
 
+// Palette-indexed external overlays (HUD panels, text-page art).  Transparent
+// pixels in the source leave the framebuffer untouched.
+static void blit_external_picture(Framebuffer& fb, int x, int y,
+                                  const ExternalPicture& pic) {
+    for (int sy = 0; sy < pic.h; ++sy) {
+        for (int sx = 0; sx < pic.w; ++sx) {
+            const size_t i = static_cast<size_t>(sy) * pic.w + sx;
+            if (i < pic.mask.size() && pic.mask[i]) {
+                fb.put(x + sx, y + sy, pic.px[i]);
+            }
+        }
+    }
+}
+
 // Original HUD (22ab:05dd), the optional CLASSIC style: a 64x84 panel in the
 // top-left corner.  The panel is cleared to the configured background and
 // flashes red (4) when 0x83D0 is set; positions are the literal draw-call
@@ -2502,8 +2581,17 @@ void Engine::render_hud_classic(Framebuffer& fb) {
     constexpr int kPanelW = 64;
     constexpr int kPanelH = 84;
 
-    fb.fill_rect(0, 0, kPanelW, kPanelH,
-                 static_cast<uint8_t>(hud_bg_colour()));
+    if (ext_visuals_) {
+        if (const ExternalPicture* panel = ext_visuals_->hud_classic()) {
+            blit_external_picture(fb, 0, 0, *panel);
+        } else {
+            fb.fill_rect(0, 0, kPanelW, kPanelH,
+                         static_cast<uint8_t>(hud_bg_colour()));
+        }
+    } else {
+        fb.fill_rect(0, 0, kPanelW, kPanelH,
+                     static_cast<uint8_t>(hud_bg_colour()));
+    }
 
     int hp = std::max(0, std::min(8, health()));
     draw_text(fb, 2, 2, kLabel, "HEALTH");
@@ -2564,8 +2652,17 @@ void Engine::render_hud_modern(Framebuffer& fb) {
     const uint8_t kLabel = static_cast<uint8_t>(hud_text_);
     constexpr int kBarH = 12;
 
-    fb.fill_rect(0, 0, Framebuffer::W, kBarH,
-                 static_cast<uint8_t>(hud_bg_colour()));
+    if (ext_visuals_) {
+        if (const ExternalPicture* panel = ext_visuals_->hud_modern()) {
+            blit_external_picture(fb, 0, 0, *panel);
+        } else {
+            fb.fill_rect(0, 0, Framebuffer::W, kBarH,
+                         static_cast<uint8_t>(hud_bg_colour()));
+        }
+    } else {
+        fb.fill_rect(0, 0, Framebuffer::W, kBarH,
+                     static_cast<uint8_t>(hud_bg_colour()));
+    }
 
     char buf[32];
 
@@ -2665,6 +2762,27 @@ int Engine::hud_bg_colour() {
     return hud_bg_ & 0xFF;
 }
 
+void Engine::set_external_palette(const uint8_t rgb[768]) {
+    std::memcpy(ext_palette_, rgb, 768);
+}
+
+bool Engine::apply_external(const ExternalAssets& assets, const uint8_t rgb[768]) {
+    set_external_palette(rgb);
+    if (!assets.mounted()) {
+        ext_visuals_.reset();
+        return false;
+    }
+    auto visuals = std::make_shared<ExternalVisuals>();
+    visuals->build(assets, shapes_, tiles_, *profile_, ext_palette_,
+                   Framebuffer::W, Framebuffer::H);
+    if (visuals->empty() && visuals->themes().empty()) {
+        ext_visuals_.reset();
+        return false;
+    }
+    ext_visuals_ = std::move(visuals);
+    return true;
+}
+
 // The front end frames its menu with the theme board's own tiles: the most
 // common blocking tile becomes the frame and the most common walkable tile the
 // panel background.  Counting the loaded map keeps it data-driven (no per-game
@@ -2733,7 +2851,7 @@ bool Engine::tile_pixels(int tile_id, std::vector<uint8_t>& px, int& w,
         return false;
     }
     const int shape = tiles_.at(tile_id).shape;
-    const ShapeFrame* f = shapes_.frame(shape >> 8, shape & 0xFF);
+    const ShapeFrame* f = shape_frame((shape >> 8) & 0x3F, shape & 0xFF);
     if (!f || f->w <= 0 || f->h <= 0) {
         return false;
     }
@@ -2916,7 +3034,7 @@ void Engine::draw_shape_text(Framebuffer& fb, int shape, int x, int y,
     // separate frames - so the entry alone selects the art.
     int entry = (shape >> 8) & 0x3F;
     int index = shape & 0xFF;
-    const ShapeFrame* f = shapes_.frame(entry, index);
+    const ShapeFrame* f = shape_frame(entry, index);
     if (!f) {
         return;
     }
@@ -3012,8 +3130,50 @@ void Engine::draw_caption(Framebuffer& fb) {
     maxlen = std::min(maxlen, 46);
     const int boxw = maxlen * 6 + 16;
     const int boxh = static_cast<int>(lines.size()) * 10 + 12;
-    const int bx = (Framebuffer::W - boxw) / 2;
+    int bx = (Framebuffer::W - boxw) / 2;
     const int by = (Framebuffer::H - boxh) / 2;
+
+    // Dialog portrait: the original title screen shows the character where the
+    // in-game inventory panel sits.  Draw the same portrait beside the caption
+    // box; pack `portrait.<ext>` overrides it, otherwise use the player's idle
+    // sprite scaled 2x inside a small frame.
+    constexpr int kPortraitW = 64;
+    constexpr int kPortraitH = 84;
+    constexpr int kPortraitGap = 6;
+    int px = -1;
+    if (boxw + kPortraitGap + kPortraitW <= Framebuffer::W) {
+        const int total = boxw + kPortraitGap + kPortraitW;
+        const int start = (Framebuffer::W - total) / 2;
+        px = start;
+        bx = start + kPortraitW + kPortraitGap;
+    }
+    if (px >= 0) {
+        const int py = std::max(
+            0, std::min(by + (boxh - kPortraitH) / 2,
+                        Framebuffer::H - kPortraitH));
+        const ExternalPicture* ext_portrait =
+            ext_visuals_ ? ext_visuals_->portrait() : nullptr;
+        if (ext_portrait) {
+            blit_external_picture(fb, px, py, *ext_portrait);
+        } else {
+            draw_frame(fb, px, py, kPortraitW, kPortraitH);
+            const ShapeFrame* pf = shape_frame(8, 0x10);
+            if (pf) {
+                const int ox = px + (kPortraitW - pf->w * 2) / 2;
+                const int oy = py + (kPortraitH - pf->h * 2) / 2;
+                for (int sy = 0; sy < pf->h; ++sy) {
+                    for (int sx = 0; sx < pf->w; ++sx) {
+                        const uint8_t c =
+                            pf->px[static_cast<size_t>(sy) * pf->w + sx];
+                        if (c == 0) {
+                            continue;
+                        }
+                        fb.fill_rect(ox + sx * 2, oy + sy * 2, 2, 2, c);
+                    }
+                }
+            }
+        }
+    }
     draw_frame(fb, bx, by, boxw, boxh);
 
     size_t budget = caption_shown_;
@@ -3041,7 +3201,15 @@ void Engine::draw_text_page(Framebuffer& fb) {
     const std::vector<TextPage::Line> body = page_body(*page);
 
     fb.fill_rect(0, 0, Framebuffer::W, Framebuffer::H, 0);
-    draw_frame(fb, 6, 4, Framebuffer::W - 12, Framebuffer::H - 8);
+    if (ext_visuals_) {
+        if (const ExternalPicture* art = ext_visuals_->text_page(page_number_)) {
+            blit_external_picture(fb, 0, 0, *art);
+        } else {
+            draw_frame(fb, 6, 4, Framebuffer::W - 12, Framebuffer::H - 8);
+        }
+    } else {
+        draw_frame(fb, 6, 4, Framebuffer::W - 12, Framebuffer::H - 8);
+    }
 
     // Title (the page's first line); its colour digit follows the same 0-7
     // rule as the body but colour 1 is remapped so it stays readable.
@@ -3157,21 +3325,31 @@ void Engine::cycle_text_page(int dir) {
     }
 }
 
+const ShapeFrame* Engine::shape_frame(int entry, int index) {
+    if (ext_visuals_) {
+        if (const ShapeFrame* f = ext_visuals_->shape((entry << 8) | index)) {
+            return f;
+        }
+    }
+    return shapes_.frame(entry, index);
+}
+
 void Engine::draw_player_shape(Framebuffer& fb, int shape, int x, int y,
                                bool transparent) {
     const int entry = (shape >> 8) & 0x3F;
     const int index = shape & 0xFF;
-    const ShapeFrame* f = shapes_.frame(entry, index);
+    const ShapeFrame* f = shape_frame(entry, index);
     if (!f) {
         return;
     }
+    const bool external = ext_visuals_ && ext_visuals_->shape((entry << 8) | index);
     for (int sy = 0; sy < f->h; ++sy) {
         for (int sx = 0; sx < f->w; ++sx) {
             uint8_t c = f->px[static_cast<size_t>(sy) * f->w + sx];
             if (transparent && c == 0) {
                 continue;
             }
-            if (player_remap_active_ && c != 0) {
+            if (!external && player_remap_active_ && c != 0) {
                 c = player_remap_[c];
             }
             fb.put(x + sx, y + sy, c);
@@ -3184,7 +3362,7 @@ void Engine::draw_shape(Framebuffer& fb, int shape, int x, int y,
     // See draw_shape_text: 0x4000 selects the shape entry, it is not a flip.
     int entry = (shape >> 8) & 0x3F;
     int index = shape & 0xFF;
-    const ShapeFrame* f = shapes_.frame(entry, index);
+    const ShapeFrame* f = shape_frame(entry, index);
     if (!f) {
         return;
     }
@@ -3203,7 +3381,7 @@ void Engine::draw_shape_tint(Framebuffer& fb, int shape, int x, int y,
                              uint8_t colour) {
     int entry = (shape >> 8) & 0x3F;
     int index = shape & 0xFF;
-    const ShapeFrame* f = shapes_.frame(entry, index);
+    const ShapeFrame* f = shape_frame(entry, index);
     if (!f) {
         return;
     }
@@ -3231,7 +3409,7 @@ void Engine::draw_shape_mirrored(Framebuffer& fb, int shape, int x, int y,
                                  bool transparent) {
     int entry = (shape >> 8) & 0x3F;
     int index = shape & 0xFF;
-    const ShapeFrame* f = shapes_.frame(entry, index);
+    const ShapeFrame* f = shape_frame(entry, index);
     if (!f) {
         return;
     }

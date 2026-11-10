@@ -94,8 +94,8 @@ def test_games():
             try:
                 vcl = VCLFile.load(str(vcl_path))
                 sfx = sum(1 for s in vcl.sfx_sizes if s > 0)
-                mus = sum(1 for s in vcl.music_sizes if s > 0)
-                print(f"  {g['vcl']}: OK - {sfx} SFX, {mus} music")
+                pages = len(vcl.text_page_indexes())
+                print(f"  {g['vcl']}: OK - {sfx} SFX, {pages} text pages")
             except Exception as e:
                 print(f"  {g['vcl']}: ERROR - {e}")
         else:

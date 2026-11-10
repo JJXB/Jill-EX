@@ -219,8 +219,8 @@ to frames `0x5410..0x5413`, four ticks each.  Headless `--watch-tile 166` on
 * **Menu/splash camera:** `Engine::render_at` builds the draw list for an
   arbitrary camera, so the menu backdrop and splash no longer depend on where
   the intro board's demo player happens to stand.  The menu theme uses the
-  intro-board picture panel at tiles `(35,0)`..`(55,13)` (21x14 cells,
-  336x224 px), centre-cropped to the 320x200 frame.  `Engine::set_hide_text_kinds`
+  intro-board picture panel at tiles `(36,0)`..`(55,13)` (20x14 cells,
+  320x224 px), centre-cropped to the 320x200 frame.  `Engine::set_hide_text_kinds`
   suppresses the TEXT6/TEXT8 story/credits copy so only the tile artwork is
   baked into the backdrop.
 

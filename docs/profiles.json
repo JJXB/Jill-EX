@@ -1,5 +1,16 @@
 {
   "schema": 1,
+  "sound_names": [
+    "SILENT", "EXTRA 01", "EXTRA 02", "JUMP", "EXTRA 04", "CHECKPOINT",
+    "KEY", "EXTRA 07", "LAND", "EXTRA 09", "IMPACT", "APPLE", "DOOR",
+    "EXTRA 0D", "EXTRA 0E", "FLY", "GEM / SWITCH", "SILENT", "HOP",
+    "EXTRA 13", "EXTRA 14", "EXTRA 15", "EXTRA 16", "THROW", "CLUNK",
+    "PICKUP", "EXTRA 1A", "EXTRA 1B", "FALL", "EXTRA 1D", "EXTRA 1E",
+    "EXTRA 1F", "EXTRA 20", "SKULL", "EXTRA 22", "SPIN", "EXTRA 24",
+    "SILENT", "EXTRA 26", "EXTRA 27", "EXTRA 28", "EXTRA 29", "EXTRA 2A",
+    "EXTRA 2B", "EXTRA 2C", "EXTRA 2D", "EXTRA 2E", "EXTRA 2F", "FANFARE",
+    "EXTRA 31"
+  ],
   "handler_tables": {
     "base_episode": 1,
     "fly_frame": 3114,

@@ -103,20 +103,52 @@ void SfxVoice::set_bank(std::shared_ptr<const SfxBank> bank) {
     stop();
 }
 
+void SfxVoice::set_overrides(std::shared_ptr<const SfxOverrides> overrides) {
+    overrides_ = std::move(overrides);
+    stop();
+}
+
 void SfxVoice::play(int priority, int logical_id) {
+    play_sample(priority, SfxBank::remap(logical_id));
+}
+
+void SfxVoice::play_sample(int priority, int sample_id) {
+    if (overrides_ && sample_id >= 0 &&
+        sample_id < static_cast<int>(overrides_->size())) {
+        const auto& o = (*overrides_)[static_cast<size_t>(sample_id)];
+        if (o && o->valid()) {
+            start_external(priority, o);
+            return;
+        }
+    }
     if (!bank_ || !bank_->loaded()) {
         return;
     }
     if (active_ && priority < priority_) {
         return;  // a strictly higher-priority effect is still playing
     }
-    const int id = SfxBank::remap(logical_id);
-    if (!bank_->has(id)) {
+    if (!bank_->has(sample_id)) {
         return;  // intentionally absent sample (0x11 / 0x25 in the episodes)
     }
-    id_ = id;
+    ext_.reset();
+    id_ = sample_id;
     priority_ = std::max(1, priority);
     pos_ = 0.0;
+    active_ = true;
+}
+
+void SfxVoice::start_external(int priority,
+                              std::shared_ptr<const DecodedAudio> audio) {
+    if (!audio || !audio->valid()) {
+        return;
+    }
+    if (active_ && priority < priority_) {
+        return;
+    }
+    ext_ = std::move(audio);
+    ext_pos_ = 0.0;
+    id_ = -1;
+    priority_ = std::max(1, priority);
     active_ = true;
 }
 
@@ -125,10 +157,46 @@ void SfxVoice::stop() {
     priority_ = 0;
     id_ = -1;
     pos_ = 0.0;
+    ext_.reset();
+    ext_pos_ = 0.0;
+}
+
+void SfxVoice::mix_external(float* out, int frames, int device_rate) {
+    const DecodedAudio& a = *ext_;
+    const int ch = a.channels > 0 ? a.channels : 1;
+    const size_t total = a.frames();
+    const double step = static_cast<double>(a.rate) /
+                        (device_rate > 0 ? device_rate : 48000);
+    for (int i = 0; i < frames; ++i) {
+        const size_t f = static_cast<size_t>(ext_pos_);
+        if (f >= total) {
+            stop();
+            break;
+        }
+        float v = 0.0f;
+        for (int c = 0; c < ch; ++c) {
+            v += a.samples[f * static_cast<size_t>(ch) + static_cast<size_t>(c)];
+        }
+        v /= static_cast<float>(ch);
+        if (pc_speaker_) {
+            v = (v >= 0.0f ? 1.0f : -1.0f) * 0.5f;
+        }
+        v *= volume_;
+        out[i] += v;
+        peak_ = std::max(peak_, std::fabs(v));
+        ext_pos_ += step;
+    }
 }
 
 void SfxVoice::mix(float* out, int frames, int device_rate) {
-    if (!active_ || !bank_ || !bank_->has(id_)) {
+    if (!active_) {
+        return;
+    }
+    if (ext_) {
+        mix_external(out, frames, device_rate);
+        return;
+    }
+    if (!bank_ || !bank_->has(id_)) {
         return;
     }
     const std::vector<uint8_t>& s = bank_->sample(id_);
@@ -147,7 +215,11 @@ void SfxVoice::mix(float* out, int frames, int device_rate) {
         const float frac = static_cast<float>(pos_ - static_cast<double>(a));
         const float s0 = (static_cast<float>(s[a]) - 128.0f) / 128.0f;
         const float s1 = (static_cast<float>(s[a + 1]) - 128.0f) / 128.0f;
-        const float v = (s0 * (1.0f - frac) + s1 * frac) * volume_;
+        float v = s0 * (1.0f - frac) + s1 * frac;
+        if (pc_speaker_) {
+            v = (v >= 0.0f ? 1.0f : -1.0f) * 0.5f;
+        }
+        v *= volume_;
         out[i] += v;
         peak_ = std::max(peak_, std::fabs(v));
         pos_ += step;

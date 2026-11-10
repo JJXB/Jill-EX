@@ -101,6 +101,10 @@ const ProfileDef* profile_by_id(const char* id);
 int profile_count();
 const ProfileDef& profile_at(int index);
 
+// Shared label for one of the 50 sampled-effect slots (docs/profiles.json
+// `sound_names`, emitted by re/gen_port_data.py).
+const char* sfx_sample_name(int index);
+
 // --- runtime profiles (profiles/<id>.profile) -----------------------------
 // Load every *.profile in `dir`.  Files may inherit another profile with
 // `base = <id>`, so a total conversion usually needs only a handful of lines.

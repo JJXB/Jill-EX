@@ -1,5 +1,20 @@
 # Progress
 
+## 2026-11-10 (menu theme shift and NOISEMAKER)
+
+* Menu THEME backdrops now bake the intro-board picture panel at tiles
+  `(36,0)`..`(55,13)` (20x14 cells, 320x224 px), one screen wide, so only the
+  vertical centre crop remains.  TEXT6/TEXT8 story and credits copy stay
+  hidden.
+* NOISEMAKER is a new front end screen under `OPTIONS > SOUND`: it lists every
+  installed game under `SET`, steps through the 50 raw `.vcl` slots, and plays
+  the selected sample through `MusicPlayer::play_sfx_sample()` (raw index, no
+  logical-id remap).  Labels come from `docs/profiles.json` `sound_names`,
+  emitted as `kSfxNames` by `re/gen_port_data.py`.  Music is muted while the
+  screen is open and the game's own bank is restored on exit.
+* `SfxVoice::play()` now delegates to `play_sample()`, so the runtime path and
+  the sound test share the same voice/priority logic.
+
 ## 2026-11-09 (score table and gem carry-over)
 
 * Scores follow the design table: Big Ant (kind 4) is 6, and the Epic Logo
@@ -1143,3 +1158,72 @@ offsets, board list, title table).
   (35,0)..(55,13) (21x14 cells), centre-cropped to 320x200.
 * Engine::set_hide_text_kinds(true) skips TEXT6/TEXT8 objects so the story
   and credits copy is not baked into the menu artwork.
+
+## External enhanced assets
+
+* New pack backend: `port/src/external.*` (scan/mount, zip via miniz,
+  `pack.ini`, image decode + palette quantise, ExternalVisuals) and
+  `port/src/extaudio.*` (OGG/MP3/M4A/WAV). Vendored `stb_image`,
+  `stb_vorbis`, `dr_mp3` and miniz under `port/src/third_party`.
+* Packs live in `<base>\external` as folders or `.zip`; one mounted at a
+  time.  Select from `OPTIONS > ASSETS`, or `--pack ID` /
+  `[external] pack`; `--external DIR`, `--list-packs`.
+* Overrides: kind strips and single shapes, tile ids, whole-board
+  backgrounds, extra menu themes, raw SFX slots and music tracks.
+* Engine draws pack art through the 8-bit framebuffer; board backgrounds
+  make tile colour 0 transparent so the picture shows through.  See
+  `docs/port-external-assets.md`.
+* Pack art now also covers the text font (`fonts/main.png` glyph strip or
+  per-glyph files), HUD panels (`hud/classic`, `hud/modern`) and text-page
+  backdrops (`pages/page_<n>`).  Overlays honour PNG alpha and keep the
+  normal labels/icons/text drawn on top.
+* Pack authoring: `EXTASSETS.md` (naming, manifest, transparency, zip
+  packaging, testing) plus a working `external/ExamplePack/` covering every
+  asset folder.
+* Extractor: `jill_extractor.py` now exports the remaining data-driven
+  assets - fonts (`fonts/main.png` glyph strip + per-glyph PNGs), VCL text
+  pages (`.txt`, JSON, font-rendered previews), tile images from `.dma`,
+  HUD panels/icons, intro menu theme, 8-bit palettes and full board previews.
+  `Tools > Export Reference Asset Pack` and `extract_all.py --pack` write an
+  editable external pack skeleton.
+* Color fix: reference-pack boards/themes were mapped straight through the
+  global palette instead of each shape entry's 4/8/16-colour translation
+  table, and the engine colour-keyed opaque board/theme pictures on their
+  top-left pixel.  Both paths are fixed; 320x200 board exports now use
+  nearest sampling so every pixel remains an exact palette entry.
+* Extractor music: reference packs now render every CMF track (`.ddt` and
+  Onesimus `SONG*.ARK`) to `music/<stem>.wav` via the port's `--dump-music`.
+  The Sound tab's Play Selected / Save as WAV now work for music rows;
+  previously `.ddt` rows fell through and did nothing.  Added
+  `--music-wavs` and `--music-seconds` to `extract_all.py`.
+* Music routing: every board starts the first `*track.ddt`/`*track.ark`
+  CHECKPT on load, and music CHECKPTs fire even when their p13 matches the
+  current level id.  Added `docs/music-catalog.md` with the per-board start
+  and section tracks for all four games.
+* Audio: fixed OPL2 hiss by only using the LFSR for rhythm voices while
+  rhythm mode is enabled (channels 7-9 were noisy otherwise).  Added
+  PC SPEAKER mode (`[audio] pc_speaker`, `--pc-speaker`, SOUND menu), a
+  1-bit square-wave rendition of sampled effects.
+* Dialog portrait: level-title/dialog boxes now draw a 64x84 character
+  portrait beside them.  The default is composed from the player idle sprite;
+  packs override it with `portrait.<ext>` / `[portrait] file`.  The extractor
+  writes `portrait.png` into the HUD/reference-pack output.
+* Licensing: added `LICENSE.md` (PolyForm Noncommercial 1.0.0) and
+  `THIRD_PARTY_NOTICES.md` (SDL2 zlib, stb/dr_mp3/miniz public-domain or MIT,
+  Python tool packages, game-content/trademark disclaimer).  Assessment in
+  `docs/licensing.md`.
+* Portrait work paused.  Analysis of the reference shot: its colours are not
+  kDefaultPalette entries (each is within a few counts of a 6-bit triple), and
+  no 32x35 / 64x84 match exists in the board tile renders or the SHA frames.
+  The title-screen art therefore looks like a separate palette/image source,
+  not board or shape data.  Current port default still uses the player idle
+  sprite until the real source is identified.
+* Verified the original games have no external MIDI support: no MIDI/MPU-401/
+  Roland/General MIDI strings (the only "mpu" hits are inside "computer"), no
+  MPU port setup, and the setup text/manual only offer Sound Blaster music.
+  Music is CMF (MIDI-style events) played on OPL2 FM via `_sbfm_*`.  Noted in
+  `docs/jill23-sounds.md`.
+* Added `make_release.cmd`: stages the Release exe + SDL2.dll, the
+  extractor/importer tools, profiles/, games/, external/ and the user docs
+  into `build/release/Jill-EX`, then writes `Jill-EX-release.zip`.
+  Game data and extracted assets are deliberately excluded.

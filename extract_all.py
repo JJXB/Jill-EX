@@ -22,7 +22,10 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(__file__))
 from jill_extractor import (
     BoardFile, DMAFile, SHAFile, VCLFile, DDTFile, CFGFile, MACFile,
-    discover_games,
+    discover_games, export_font_assets, export_hud_assets,
+    export_palette_assets, export_reference_pack, export_text_page_assets,
+    export_theme_assets, export_tile_assets, export_board_previews,
+    export_music_wavs,
 )
 
 BASE = Path(__file__).resolve().parent
@@ -134,20 +137,120 @@ def extract_sounds(game, out_dir: Path):
     vcl = VCLFile.load(str(vcl_path))
     count = 0
     sfx_dir = out_dir / "sfx"
-    music_dir = out_dir / "music"
     for i in range(50):
         data = vcl.extract_sfx(i)
         if data:
             sfx_dir.mkdir(exist_ok=True)
             (sfx_dir / f"sfx_{i:02d}.raw").write_bytes(data)
-            count += 1
-    for i in range(40):
-        data = vcl.extract_music(i)
-        if data:
-            music_dir.mkdir(exist_ok=True)
-            (music_dir / f"music_{i:02d}.raw").write_bytes(data)
+            wav = vcl.create_wav(i, "sfx")
+            if wav:
+                (sfx_dir / f"sfx_{i:02d}.wav").write_bytes(wav)
             count += 1
     print(f"Extracted {count} sound files to {out_dir}")
+
+
+def extract_fonts(game, out_dir: Path):
+    data_dir = Path(game['data_dir'])
+    sha_path = data_dir / game['sha']
+    if not sha_path.exists():
+        print(f"SHA file not found: {sha_path}")
+        return
+    sha = _load_sha(game, sha_path)
+    count = export_font_assets(sha, out_dir)
+    print(f"Extracted {count} font glyphs to {out_dir / 'fonts'}")
+
+
+def extract_pages(game, out_dir: Path):
+    data_dir = Path(game['data_dir'])
+    vcl_path = data_dir / game['vcl']
+    if not vcl_path.exists():
+        print(f"VCL file not found: {vcl_path}")
+        return
+    vcl = VCLFile.load(str(vcl_path))
+    sha = None
+    sha_path = data_dir / game['sha']
+    if sha_path.exists():
+        sha = _load_sha(game, sha_path)
+    count = export_text_page_assets(vcl, sha, out_dir)
+    print(f"Extracted {count} text pages to {out_dir / 'text_pages'}")
+
+
+def extract_tiles(game, out_dir: Path):
+    data_dir = Path(game['data_dir'])
+    sha_path = data_dir / game['sha']
+    dma_path = data_dir / game['dma']
+    if not sha_path.exists() or not dma_path.exists():
+        print("Shape archive or jill.dma missing")
+        return
+    sha = _load_sha(game, sha_path)
+    dma = DMAFile.load(str(dma_path))
+    count = export_tile_assets(sha, dma, out_dir)
+    print(f"Extracted {count} tile images to {out_dir / 'tiles'}")
+
+
+def extract_hud(game, out_dir: Path):
+    data_dir = Path(game['data_dir'])
+    sha_path = data_dir / game['sha']
+    dma_path = data_dir / game['dma']
+    if not sha_path.exists() or not dma_path.exists():
+        print("Shape archive or jill.dma missing")
+        return
+    sha = _load_sha(game, sha_path)
+    dma = DMAFile.load(str(dma_path))
+    count = export_hud_assets(sha, out_dir)
+    portrait = export_portrait_asset(sha, out_dir)
+    theme = export_theme_assets(game, sha, dma, out_dir)
+    print(f"Extracted HUD panels + {count} icons"
+          + (" + portrait.png" if portrait else "")
+          + (" + themes/intro.png" if theme else ""))
+
+
+def extract_palette(game, out_dir: Path):
+    data_dir = Path(game['data_dir'])
+    sha_path = data_dir / game['sha']
+    if not sha_path.exists():
+        print(f"SHA file not found: {sha_path}")
+        return
+    sha = _load_sha(game, sha_path)
+    export_palette_assets(sha, out_dir)
+    print(f"Wrote palette.pal / palette.json to {out_dir}")
+
+
+def extract_previews(game, out_dir: Path):
+    data_dir = Path(game['data_dir'])
+    sha_path = data_dir / game['sha']
+    dma_path = data_dir / game['dma']
+    if not sha_path.exists() or not dma_path.exists():
+        print("Shape archive or jill.dma missing")
+        return
+    sha = _load_sha(game, sha_path)
+    dma = DMAFile.load(str(dma_path))
+    count = export_board_previews(game, sha, dma, out_dir)
+    print(f"Rendered {count} board previews to {out_dir}")
+
+
+def extract_pack(game, out_dir: Path, seconds: float = 60.0):
+    data_dir = Path(game['data_dir'])
+    sha_path = data_dir / game['sha']
+    vcl_path = data_dir / game['vcl']
+    dma_path = data_dir / game['dma']
+    if not sha_path.exists() or not vcl_path.exists() or not dma_path.exists():
+        print("Shape archive, .vcl or jill.dma missing")
+        return
+    sha = _load_sha(game, sha_path)
+    vcl = VCLFile.load(str(vcl_path))
+    dma = DMAFile.load(str(dma_path))
+    stats = export_reference_pack(game, sha, vcl, dma, out_dir, seconds)
+    print("Reference pack: " + ", ".join(f"{k}={v}" for k, v in stats.items()))
+
+
+def _load_sha(game, sha_path: Path) -> SHAFile:
+    sha = SHAFile.load(str(sha_path))
+    pal = game.get('palette')
+    if pal and Path(pal).is_file():
+        data = Path(pal).read_bytes()
+        sha.set_palette_rgb(data, from_6bit=(max(data) <= 63))
+    return sha
 
 
 def extract_config(game, out_dir: Path):
@@ -215,6 +318,11 @@ def extract_ddt(game, out_dir: Path):
     print(f"Copied {count} DDT files to {out_dir}")
 
 
+def extract_music_wavs(game, out_dir: Path, seconds: float = 60.0):
+    count = export_music_wavs(game, out_dir, seconds)
+    print(f"Rendered {count} music tracks to {out_dir / 'music'}")
+
+
 def extract_macs(game, out_dir: Path):
     data_dir = Path(game['data_dir'])
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -242,9 +350,27 @@ def main():
     parser.add_argument("--shapes", action="store_true")
     parser.add_argument("--sounds", action="store_true")
     parser.add_argument("--music", action="store_true")
+    parser.add_argument("--music-wavs", action="store_true",
+                        help="Render .ddt music to WAV via the built port")
+    parser.add_argument("--music-seconds", type=float, default=60.0,
+                        help="Seconds to render per music track (default 60)")
     parser.add_argument("--demos", action="store_true")
     parser.add_argument("--config", action="store_true")
     parser.add_argument("--dma", action="store_true")
+    parser.add_argument("--fonts", action="store_true",
+                        help="Export fonts/main.png and per-glyph PNGs")
+    parser.add_argument("--pages", action="store_true",
+                        help="Export VCL text pages (.txt + previews)")
+    parser.add_argument("--tiles", action="store_true",
+                        help="Export tiles/<id>.png and tiles.json")
+    parser.add_argument("--hud", action="store_true",
+                        help="Export HUD panels, icons and intro menu theme")
+    parser.add_argument("--palette", action="store_true",
+                        help="Export palette.pal / palette.json")
+    parser.add_argument("--previews", action="store_true",
+                        help="Render full board previews (large)")
+    parser.add_argument("--pack", action="store_true",
+                        help="Export a ready-to-edit external asset pack")
     parser.add_argument("--all", action="store_true", help="Extract everything")
     args = parser.parse_args()
 
@@ -263,7 +389,10 @@ def main():
 
     out_base = Path(args.output_dir)
     do_all = args.all or not (args.boards or args.shapes or args.sounds or
-                              args.music or args.demos or args.config or args.dma)
+                              args.music or args.demos or args.config or
+                              args.dma or args.fonts or args.pages or
+                              args.tiles or args.hud or args.palette or
+                              args.music_wavs or args.previews or args.pack)
 
     for g in games:
         print(f"\n=== {g['id']} ({g['title']}) ===")
@@ -290,9 +419,33 @@ def main():
         if do_all or args.music:
             print("Music:")
             extract_ddt(g, ep_out / "music")
+        if do_all or args.music_wavs:
+            print("Music WAVs:")
+            extract_music_wavs(g, ep_out, args.music_seconds)
         if do_all or args.demos:
             print("Demos:")
             extract_macs(g, ep_out / "demos")
+        if do_all or args.fonts:
+            print("Fonts:")
+            extract_fonts(g, ep_out)
+        if do_all or args.pages:
+            print("Text pages:")
+            extract_pages(g, ep_out)
+        if do_all or args.tiles:
+            print("Tiles:")
+            extract_tiles(g, ep_out)
+        if do_all or args.hud:
+            print("HUD + theme:")
+            extract_hud(g, ep_out)
+        if do_all or args.palette:
+            print("Palette:")
+            extract_palette(g, ep_out)
+        if args.previews:
+            print("Board previews:")
+            extract_previews(g, ep_out)
+        if args.pack:
+            print("Reference pack:")
+            extract_pack(g, ep_out / "reference_pack", args.music_seconds)
 
     print("\nDone!")
     return 0

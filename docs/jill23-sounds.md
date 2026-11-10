@@ -169,7 +169,14 @@ Sample `0x29` is 7,551 bytes in Jill 1/2 and 3,340 in Jill 3. **[verified]**
 Level and title music is separate from `_sound`: CHECKPT strings beginning with
 `*` load a CMF `.ddt` and hand it to the `_sbfm_*` / OPL2 driver
 (`jill1-engine.md` section 11). Title tracks are `funky.ddt` (Jill 1),
-`peaks.ddt` (Jill 2) and `wild.ddt` (Jill 3).  The 40-entry table is not sound
+`peaks.ddt` (Jill 2) and `wild.ddt` (Jill 3).
+
+**No external MIDI.** None of the four executables contains MPU-401,
+General MIDI or Roland strings, and none sets up the MPU-401 ports
+(`mov dx,0330h` / `0331h` does not occur). The setup text only offers the
+Sound Blaster "musical sound track"; the manual lists "Sound Blaster &
+compatible music cards". CMF is a MIDI-style event format, but playback is
+OPL2 FM only, not MIDI output. **[verified]**  The 40-entry table is not sound
 at all: it is the text-page table (`jill1-engine.md` #10.1).  Jill 1 ships 14
 pages (instructions, hints, five news bulletins, mega hint); Jill 2 has only
 page 1 and Jill 3 pages 1-3. **[verified]**

@@ -14,6 +14,8 @@
 
 #include "audio.h"
 #include "engine.h"
+#include "extaudio.h"
+#include "external.h"
 #include "framebuffer.h"
 #include "game.h"
 #include "profile.h"
@@ -596,7 +598,9 @@ enum class MenuScreen {
     Cheats,
     Enhancements,
     SaveGame,
-    LoadGame
+    LoadGame,
+    Noisemaker,
+    Assets
 };
 
 struct Menu {
@@ -612,11 +616,17 @@ struct Menu {
     int cheat_sel = 0;
     int enh_sel = 0;
     int save_sel = 0;
+    int noise_sel = 0;       // front-end sound-test row
+    int assets_sel = 0;      // external pack row
+    int noise_set = 0;       // installed game whose .vcl is auditioned
+    int noise_sound = 1;     // raw sample slot 0..49
+    bool noise_loaded = false;  // bank matches noise_set
     int rebind_action = -1;  // >= 0: waiting for the next key/button
     bool music_on = true;    // mirrored from the player for the SOUND screen
     int music_volume = 80;
     bool sfx_on = true;
     int sfx_volume = 80;
+    bool pc_speaker = false;  // 1-bit square-wave effect mode
 };
 
 bool menu_open(const Menu& m) { return m.screen != MenuScreen::Closed; }
@@ -644,6 +654,10 @@ int& menu_sel(Menu& m) {
         case MenuScreen::SaveGame:
         case MenuScreen::LoadGame:
             return m.save_sel;
+        case MenuScreen::Noisemaker:
+            return m.noise_sel;
+        case MenuScreen::Assets:
+            return m.assets_sel;
         default:
             return m.main_sel;
     }
@@ -824,9 +838,22 @@ std::string super_jump_name(int n) {
     return std::to_string(n) + " FEATHERS";
 }
 
-std::string menu_theme_name(int t, const std::vector<GameDef>& games) {
-    if (t <= 0 || t > static_cast<int>(games.size())) {
+int external_theme_count(const Engine& engine) {
+    const ExternalVisuals* ext = engine.external_visuals();
+    return ext ? static_cast<int>(ext->themes().size()) : 0;
+}
+
+std::string menu_theme_name(int t, const std::vector<GameDef>& games,
+                            const ExternalVisuals* ext) {
+    const int game_count = static_cast<int>(games.size());
+    const int ext_count =
+        ext ? static_cast<int>(ext->theme_names().size()) : 0;
+    if (t <= 0 || t > game_count + ext_count) {
         return "PORT";
+    }
+    if (t > game_count) {
+        return upper_ascii(
+            ext->theme_names()[static_cast<size_t>(t - game_count - 1)].c_str());
     }
     return upper_ascii(games[static_cast<size_t>(t - 1)].title.c_str());
 }
@@ -839,22 +866,26 @@ std::string splash_name(int t, const std::vector<GameDef>& games) {
 }
 
 // Theme 0 is the plain port backdrop, 1..N are the installed games' intro
-// boards, so the cycle length follows the game list instead of a fixed 3.
-int menu_theme_next(int t, int step, const std::vector<GameDef>& games) {
-    const int n = static_cast<int>(games.size()) + 1;
+// boards and N+1.. are the mounted pack's `themes/` images, so the cycle
+// length follows the game list plus the pack instead of a fixed 3.
+int menu_theme_next(int t, int step, const std::vector<GameDef>& games,
+                    int ext_themes) {
+    const int n = static_cast<int>(games.size()) + 1 + ext_themes;
     int v = (t + step) % n;
     return (v < 0) ? v + n : v;
 }
 
 int splash_next(int t, int step, const std::vector<GameDef>& games) {
-    return menu_theme_next(t, step, games);
+    return menu_theme_next(t, step, games, 0);
 }
 
 std::vector<std::string> menu_items(const Menu& m, bool started,
                                     const VideoSettings& video,
                                     const Engine& engine,
                                     const Bindings& bindings,
-                                    const std::vector<GameDef>& games) {
+                                    const std::vector<GameDef>& games,
+                                    const MusicPlayer& audio,
+                                    const ExternalAssets& assets) {
     switch (m.screen) {
         case MenuScreen::Main: {
             std::vector<std::string> v;
@@ -878,7 +909,7 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
         }
         case MenuScreen::Options:
             return {"HUD", "VIDEO", "SOUND", "CHEATS", "CONTROLS", "MENUS",
-                    "GAMEPLAY", "BACK"};
+                    "GAMEPLAY", "ASSETS", "BACK"};
         case MenuScreen::Video: {
             char size[64];
             if (video.resolution) {
@@ -912,6 +943,9 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                     std::string("SFX: ") + (m.sfx_on ? "ON" : "OFF"),
                     std::string("SFX VOLUME: ") +
                         std::to_string(m.sfx_volume) + "%",
+                    std::string("PC SPEAKER: ") +
+                        (m.pc_speaker ? "ON" : "OFF"),
+                    "NOISEMAKER",
                     "BACK"};
         case MenuScreen::Hud:
             return {std::string("STYLE: ") +
@@ -926,7 +960,8 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
             // SPLASH is temporarily disabled while the publisher screen is
             // reworked; the row is hidden so the setting cannot be changed.
             return {std::string("THEME: ") +
-                        menu_theme_name(engine.menu_theme(), games),
+                        menu_theme_name(engine.menu_theme(), games,
+                                        engine.external_visuals()),
                     "BACK"};
         case MenuScreen::Controls: {
             std::vector<std::string> v;
@@ -982,7 +1017,50 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                         player_look_name(games, engine.player_look()),
                     std::string("JILL COLOUR: ") +
                         player_suit_name(engine.player_suit()),
-                    "BACK"};        default:
+                    "BACK"};
+        case MenuScreen::Noisemaker: {
+            std::string set = "SET: ";
+            if (!games.empty()) {
+                const size_t i = static_cast<size_t>(
+                    std::max(0, std::min(m.noise_set,
+                                         static_cast<int>(games.size()) - 1)));
+                set += upper_ascii(games[i].title.c_str());
+            } else {
+                set += "NO GAMES";
+            }
+            if (!m.noise_loaded) {
+                set += "  (NO BANK)";
+            }
+            char line[96];
+            const int slot = m.noise_sound & 0x3F;
+            if (audio.sfx_has_sample(slot)) {
+                std::snprintf(line, sizeof(line), "SOUND %02X: %s  %.2fS",
+                              slot, sfx_sample_name(slot),
+                              audio.sfx_sample_seconds(slot));
+            } else {
+                std::snprintf(line, sizeof(line), "SOUND %02X: %s  SILENT",
+                              slot, sfx_sample_name(slot));
+            }
+            return {set, line, "PLAY", "BACK"};
+        }
+        case MenuScreen::Assets: {
+            std::vector<std::string> v;
+            v.push_back(std::string("PACK: ") +
+                        (assets.mounted()
+                             ? upper_ascii(assets.active()->name.c_str())
+                             : "ORIGINAL ART"));
+            for (const PackInfo& p : assets.packs()) {
+                const bool active =
+                    assets.active() && assets.active()->id == p.id;
+                v.push_back(std::string(active ? "* " : "  ") +
+                            upper_ascii(p.name.c_str()) +
+                            (p.is_zip ? " [ZIP]" : ""));
+            }
+            v.push_back("RESCAN FOLDER");
+            v.push_back("BACK");
+            return v;
+        }
+        default:
             return {};
     }
 }
@@ -1177,7 +1255,8 @@ void dump_splash_pages(const std::vector<GameDef>& games, int index,
 }
 
 void ensure_theme_backdrop(ThemeBackdrop& tb, int theme,
-                           const std::vector<GameDef>& games) {
+                           const std::vector<GameDef>& games,
+                           const ExternalVisuals* ext) {
     if (tb.built == theme) {
         return;
     }
@@ -1185,7 +1264,14 @@ void ensure_theme_backdrop(ThemeBackdrop& tb, int theme,
     tb.px.clear();
     tb.frame = ThemeTile{};
     tb.fill = ThemeTile{};
-    if (theme < 1 || theme > static_cast<int>(games.size())) {
+    const int game_count = static_cast<int>(games.size());
+    if (theme < 1 || theme > game_count) {
+        // Pack themes are plain 320x200 pictures; no board frame tiles.
+        const int ext_count =
+            ext ? static_cast<int>(ext->themes().size()) : 0;
+        if (theme > game_count && theme <= game_count + ext_count) {
+            tb.px = ext->themes()[static_cast<size_t>(theme - game_count - 1)];
+        }
         return;
     }
     const GameDef& g = games[static_cast<size_t>(theme - 1)];
@@ -1198,13 +1284,14 @@ void ensure_theme_backdrop(ThemeBackdrop& tb, int theme,
         return;
     }
     tmp.finish_dialogs();  // the backdrop shows the whole intro page at once
-    // Intro-board picture panel: tiles (35,0) to (55,13) inclusive, i.e. a
-    // 21x14-cell (336x224 px) rectangle.  The TEXT6/TEXT8 objects inside it are
+    // Intro-board picture panel: tiles (36,0) to (55,13) inclusive, i.e. a
+    // 20x14-cell (320x224 px) rectangle.  The TEXT6/TEXT8 objects inside it are
     // the story/credits copy, so they are hidden; the tiles alone make the
-    // menu artwork.  Centre-crop the 336x224 panel to the 320x200 framebuffer.
-    constexpr int kPanelCol = 35;
+    // menu artwork.  The panel is exactly one screen wide, so only the vertical
+    // centre crop is needed.
+    constexpr int kPanelCol = 36;
     constexpr int kPanelRow = 0;
-    constexpr int kPanelW = 21;
+    constexpr int kPanelW = 20;
     constexpr int kPanelH = 14;
     const int panel_x = kPanelCol * 16;
     const int panel_y = kPanelRow * 16;
@@ -1231,8 +1318,10 @@ void menu_title(Framebuffer& fb, Engine& engine, int y, const char* s) {
 
 void draw_menu(Framebuffer& fb, Engine& engine, Menu& m, bool started,
                const VideoSettings& video, const Bindings& bindings,
-               ThemeBackdrop& backdrop, const std::vector<GameDef>& games) {
-    ensure_theme_backdrop(backdrop, engine.menu_theme(), games);
+               ThemeBackdrop& backdrop, const std::vector<GameDef>& games,
+               const MusicPlayer& audio, const ExternalAssets& assets) {
+    ensure_theme_backdrop(backdrop, engine.menu_theme(), games,
+                          engine.external_visuals());
     if (backdrop.px.empty()) {
         fb.fill_rect(0, 0, Framebuffer::W, Framebuffer::H, 0);
     } else {
@@ -1264,12 +1353,14 @@ void draw_menu(Framebuffer& fb, Engine& engine, Menu& m, bool started,
         case MenuScreen::Enhancements: sub = "GAMEPLAY"; break;
         case MenuScreen::SaveGame: sub = "SAVE GAME"; break;
         case MenuScreen::LoadGame: sub = "RESTORE GAME"; break;
+        case MenuScreen::Noisemaker: sub = "NOISEMAKER"; break;
+        case MenuScreen::Assets: sub = "EXTERNAL ASSETS"; break;
         default: break;
     }
     menu_title(fb, engine, 28, sub);
 
     std::vector<std::string> items =
-        menu_items(m, started, video, engine, bindings, games);
+        menu_items(m, started, video, engine, bindings, games, audio, assets);
     int sel = menu_sel(m);
     if (sel < 0 || sel >= static_cast<int>(items.size())) {
         sel = 0;
@@ -1349,6 +1440,12 @@ void draw_menu(Framebuffer& fb, Engine& engine, Menu& m, bool started,
     if (m.rebind_action >= 0) {
         menu_title(fb, engine, footer_y, "PRESS A KEY OR PAD BUTTON");
         menu_title(fb, engine, footer_y + 9, "ESC CANCELS");
+    } else if (m.screen == MenuScreen::Noisemaker) {
+        menu_title(fb, engine, footer_y,
+                   "LEFT/RIGHT CHANGE   ENTER PLAY   ESC BACK");
+    } else if (m.screen == MenuScreen::Assets) {
+        menu_title(fb, engine, footer_y,
+                   "UP/DOWN MOVE   ENTER MOUNT   ESC BACK");
     } else {
         menu_title(fb, engine, footer_y, "UP/DOWN MOVE   ENTER SELECT   ESC BACK");
     }
@@ -1511,6 +1608,16 @@ int run_sdl(const Options& opt, Engine& engine,
     }
     std::vector<uint32_t> argb(static_cast<size_t>(Framebuffer::W) * Framebuffer::H);
 
+    // External pack root (`<base>/external` by default).  Missing folders are
+    // created so pack authors have somewhere to drop files.
+    ExternalAssets ext_assets;
+    {
+        std::string ext_err;
+        if (!ext_assets.scan(opt.external_dir, ext_err)) {
+            std::fprintf(stderr, "%s\n", ext_err.c_str());
+        }
+    }
+
     Framebuffer fb;
     ThemeBackdrop theme_backdrop;
     SplashImage splash_image;
@@ -1520,10 +1627,12 @@ int run_sdl(const Options& opt, Engine& engine,
     menu.music_volume = std::max(0, std::min(100, opt.music_volume));
     menu.sfx_on = opt.sfx;
     menu.sfx_volume = std::max(0, std::min(100, opt.sfx_volume));
+    menu.pc_speaker = opt.pc_speaker;
     MusicPlayer music_player;
     music_player.set_enabled(menu.music_on);
     music_player.set_volume(menu.music_volume / 100.0f);
     music_player.set_sfx_volume(menu.sfx_on ? menu.sfx_volume / 100.0f : 0.0f);
+    music_player.set_pc_speaker(menu.pc_speaker);
     {
         std::string audio_err;
         if (!music_player.open(audio_err)) {
@@ -1539,27 +1648,50 @@ int run_sdl(const Options& opt, Engine& engine,
         }
     }
     std::string music_game = engine.game().id;
-    if (!engine.game().title_music.empty()) {
+    // External pack audio: a `music/<name>.<ext>` file replaces the matching
+    // CMF track, and `sfx/<slot>.<ext>` replaces an individual effect.
+    auto decode_pack_audio = [&](const std::string& rel,
+                                 std::shared_ptr<const DecodedAudio>& out) {
+        std::vector<uint8_t> data;
+        if (!ext_assets.read(rel, data)) {
+            return false;
+        }
+        const size_t dot = rel.find_last_of('.');
+        const std::string ext =
+            dot == std::string::npos ? std::string() : rel.substr(dot + 1);
+        auto audio = std::make_shared<DecodedAudio>();
+        std::string derr;
+        if (!decode_audio_memory(data.data(), data.size(), ext, *audio, derr)) {
+            std::fprintf(stderr, "external: %s: %s\n", rel.c_str(), derr.c_str());
+            return false;
+        }
+        out = std::move(audio);
+        return true;
+    };
+    auto play_music = [&](const std::string& name) {
+        if (!name.empty()) {
+            std::string rel;
+            std::shared_ptr<const DecodedAudio> audio;
+            if (ext_assets.mounted() && ext_assets.find_music(name, rel) &&
+                decode_pack_audio(rel, audio)) {
+                music_player.play_pcm(audio);
+                return;
+            }
+        }
+        if (name.empty()) {
+            music_player.stop();
+            return;
+        }
         std::string merr;
-        auto song = load_track(engine.game(), engine.game().title_music, merr);
+        auto song = load_track(engine.game(), name, merr);
         if (song) {
             music_player.play(song);
         } else {
             std::fprintf(stderr, "%s\n", merr.c_str());
         }
-    }
-    if (opt.audio_check) {
-        SDL_Delay(1500);
-        std::printf("audio-check: device %s, %d Hz, %d ch, music '%s', "
-                    "frames %llu, peak %.3f\n",
-                    music_player.is_open() ? "open" : "FAILED",
-                    music_player.sample_rate(), music_player.channels(),
-                    music_player.title().c_str(),
-                    music_player.frames_mixed(), music_player.peak_level());
-        music_player.play_sfx(6, 0x19);  // APPLE pickup sound
-        SDL_Delay(400);
-        std::printf("audio-check: sfx peak %.3f\n", music_player.sfx_peak());
-        return music_player.is_open() ? 0 : 1;
+    };
+    if (!engine.game().title_music.empty()) {
+        play_music(engine.game().title_music);
     }
     if (!opt.board.empty()) {
         menu.screen = MenuScreen::Closed;  // explicit --board run: skip the menu
@@ -1686,6 +1818,146 @@ int run_sdl(const Options& opt, Engine& engine,
     };
     open_pads();
 
+    // Front-end sound test: switch the sampled bank to any installed game so
+    // the same screen can audition every episode/pack.  The game's own bank is
+    // restored when the screen closes (and whenever the episode changes).
+    auto load_game_sfx = [&](const GameDef& g) -> bool {
+        if (g.pages_file.empty()) {
+            std::fprintf(stderr, "%s has no sound bank\n", g.id.c_str());
+            return false;
+        }
+        std::string sfx_err;
+        if (!music_player.load_sfx(track_path(g, g.pages_file), sfx_err)) {
+            std::fprintf(stderr, "%s\n", sfx_err.c_str());
+            return false;
+        }
+        music_player.set_sfx_volume(menu.sfx_on ? menu.sfx_volume / 100.0f
+                                                : 0.0f);
+        return true;
+    };
+    auto select_noise_set = [&](int index) {
+        if (games.empty()) {
+            return;
+        }
+        const int n = static_cast<int>(games.size());
+        menu.noise_set = ((index % n) + n) % n;
+        menu.noise_loaded =
+            load_game_sfx(games[static_cast<size_t>(menu.noise_set)]);
+        if (menu.noise_loaded) {
+            // A sound test should be audible even when gameplay SFX are off.
+            music_player.set_sfx_volume(menu.sfx_volume / 100.0f);
+        }
+        if (menu.noise_loaded &&
+            !music_player.sfx_has_sample(menu.noise_sound)) {
+            for (int i = 1; i < 50; ++i) {
+                if (music_player.sfx_has_sample(i)) {
+                    menu.noise_sound = i;
+                    break;
+                }
+            }
+        }
+    };
+    auto restore_game_sfx = [&]() {
+        if (load_game_sfx(engine.game())) {
+            menu.noise_loaded = false;
+        }
+    };
+
+    // Build the pack's effect overrides (raw 0..49 slots).  Called whenever the
+    // pack changes; the bank itself stays the game's own `.vcl`.
+    auto build_sfx_overrides = [&]() {
+        auto overrides = std::make_shared<SfxOverrides>();
+        if (ext_assets.mounted()) {
+            int used = 0;
+            for (int slot = 0; slot < 50; ++slot) {
+                std::string rel;
+                if (!ext_assets.find_sfx(slot, rel)) {
+                    continue;
+                }
+                std::shared_ptr<const DecodedAudio> audio;
+                if (decode_pack_audio(rel, audio)) {
+                    (*overrides)[static_cast<size_t>(slot)] = std::move(audio);
+                    ++used;
+                }
+            }
+            if (used > 0) {
+                std::printf("external: %d effect override(s) from %s\n", used,
+                            ext_assets.active()->name.c_str());
+            }
+        }
+        music_player.set_sfx_overrides(overrides);
+    };
+    auto refresh_external_visuals = [&]() {
+        if (ext_assets.mounted()) {
+            if (!engine.apply_external(ext_assets, palette)) {
+                std::fprintf(stderr, "external: pack '%s' has no usable art\n",
+                             ext_assets.active()->name.c_str());
+            }
+        } else {
+            engine.apply_external(ext_assets, palette);  // clears overrides
+        }
+    };
+    auto apply_pack = [&](int index) {
+        if (index < 0 || index >= static_cast<int>(ext_assets.packs().size())) {
+            ext_assets.unmount();
+            refresh_external_visuals();
+            build_sfx_overrides();
+            if (!engine.game().title_music.empty()) {
+                play_music(engine.game().title_music);
+            } else {
+                music_player.stop();
+            }
+            return;
+        }
+        std::string mount_err;
+        if (!ext_assets.mount(index, mount_err)) {
+            std::fprintf(stderr, "external: %s\n", mount_err.c_str());
+            return;
+        }
+        std::printf("external: mounted %s\n", ext_assets.active()->name.c_str());
+        refresh_external_visuals();
+        build_sfx_overrides();
+        if (!engine.game().title_music.empty()) {
+            play_music(engine.game().title_music);
+        } else {
+            music_player.stop();
+        }
+    };
+    // Mount the initial pack from --pack / [external] pack.
+    if (!opt.pack.empty()) {
+        const int index = ext_assets.find(opt.pack);
+        if (index < 0) {
+            std::fprintf(stderr, "external: pack '%s' not found in %s\n",
+                         opt.pack.c_str(), opt.external_dir.c_str());
+        } else {
+            apply_pack(index);
+        }
+    } else {
+        refresh_external_visuals();
+        build_sfx_overrides();
+    }
+    std::string ext_game = engine.game().id;
+    if (opt.audio_check) {
+        SDL_Delay(1500);
+        std::printf("audio-check: device %s, %d Hz, %d ch, music '%s', "
+                    "frames %llu, peak %.3f\n",
+                    music_player.is_open() ? "open" : "FAILED",
+                    music_player.sample_rate(), music_player.channels(),
+                    music_player.title().c_str(),
+                    music_player.frames_mixed(), music_player.peak_level());
+        music_player.play_sfx(6, 0x19);  // APPLE pickup sound
+        SDL_Delay(400);
+        std::printf("audio-check: sfx peak %.3f\n", music_player.sfx_peak());
+        return music_player.is_open() ? 0 : 1;
+    }
+
+    for (size_t i = 0; i < games.size(); ++i) {
+        if (games[i].id == engine.game().id) {
+            menu.noise_set = static_cast<int>(i);
+            break;
+        }
+    }
+
     // Shared menu/level-select navigation.  Codes: 1 up, 2 down, 3 left,
     // 4 right, 5 confirm, 6 cancel/back.
     auto menu_nav = [&](int nav) {
@@ -1727,7 +1999,8 @@ int run_sdl(const Options& opt, Engine& engine,
             return;
         }
         std::vector<std::string> items =
-            menu_items(menu, game_started, video, engine, bindings, games);
+            menu_items(menu, game_started, video, engine, bindings, games,
+                       music_player, ext_assets);
         int& sel = menu_sel(menu);
         const int n = static_cast<int>(items.size());
         if (sel < 0 || sel >= n) {
@@ -1743,7 +2016,9 @@ int run_sdl(const Options& opt, Engine& engine,
             } else if (menu.screen == MenuScreen::Hud && sel == 3) {
                 engine.set_hud_health(next_hud_health(engine.hud_health()));
             } else if (menu.screen == MenuScreen::Menus && sel == 0) {
-                engine.set_menu_theme(menu_theme_next(engine.menu_theme(), 1, games));
+                engine.set_menu_theme(menu_theme_next(
+                    engine.menu_theme(), 1, games,
+                    external_theme_count(engine)));
             } else if (menu.screen == MenuScreen::Enhancements && sel == 0) {
                 engine.set_fire_while_crouched(!engine.fire_while_crouched());
             } else if (menu.screen == MenuScreen::Enhancements && sel == 1) {
@@ -1811,9 +2086,16 @@ int run_sdl(const Options& opt, Engine& engine,
                        menu.screen == MenuScreen::Controls ||
                        menu.screen == MenuScreen::Hud ||
                        menu.screen == MenuScreen::Video ||
+                       menu.screen == MenuScreen::Audio ||
                        menu.screen == MenuScreen::Menus ||
+                       menu.screen == MenuScreen::Assets ||
                        menu.screen == MenuScreen::Cheats) {
                 menu.screen = MenuScreen::Options;
+            } else if (menu.screen == MenuScreen::Noisemaker) {
+                restore_game_sfx();
+                music_player.set_enabled(menu.music_on);
+                menu.screen = MenuScreen::Audio;
+                menu.audio_sel = 4;
             } else {
                 menu.screen = MenuScreen::Main;
             }
@@ -1901,13 +2183,21 @@ int run_sdl(const Options& opt, Engine& engine,
                 } else if (nav == 5 && sel == 6) {
                     menu.screen = MenuScreen::Enhancements;
                 } else if (nav == 5 && sel == 7) {
+                    menu.assets_sel = 0;
+                    menu.screen = MenuScreen::Assets;
+                } else if (nav == 5 && sel == 8) {
                     menu.screen = MenuScreen::Main;
                 } else {
                     toggle_option();
                 }
                 break;
             case MenuScreen::Audio:
-                if (nav == 5 && sel == 4) {
+                if (nav == 5 && sel == 5) {
+                    select_noise_set(menu.noise_set);
+                    menu.noise_sel = 0;
+                    music_player.set_enabled(false);
+                    menu.screen = MenuScreen::Noisemaker;
+                } else if (nav == 5 && sel == 6) {
                     menu.screen = MenuScreen::Options;
                 } else if (sel == 0 && (nav == 5 || nav == 3 || nav == 4)) {
                     menu.music_on = !menu.music_on;
@@ -1927,8 +2217,46 @@ int run_sdl(const Options& opt, Engine& engine,
                                                       (nav == 3 ? -10 : 10)));
                     music_player.set_sfx_volume(
                         menu.sfx_on ? menu.sfx_volume / 100.0f : 0.0f);
+                } else if (sel == 4 && (nav == 5 || nav == 3 || nav == 4)) {
+                    menu.pc_speaker = !menu.pc_speaker;
+                    music_player.set_pc_speaker(menu.pc_speaker);
                 }
                 break;
+            case MenuScreen::Noisemaker:
+                if (nav == 5 && sel == 3) {
+                    restore_game_sfx();
+                    music_player.set_enabled(menu.music_on);
+                    menu.screen = MenuScreen::Audio;
+                    menu.audio_sel = 5;
+                } else if (sel == 0 && (nav == 3 || nav == 4)) {
+                    select_noise_set(menu.noise_set + (nav == 3 ? -1 : 1));
+                } else if (sel == 1 && (nav == 3 || nav == 4)) {
+                    menu.noise_sound =
+                        (menu.noise_sound + (nav == 3 ? 49 : 1)) % 50;
+                } else if (nav == 5 && (sel == 1 || sel == 2)) {
+                    music_player.play_sfx_sample(6, menu.noise_sound);
+                }
+                break;
+            case MenuScreen::Assets: {
+                if (nav != 5) {
+                    break;
+                }
+                const int packs = static_cast<int>(ext_assets.packs().size());
+                if (sel == 0) {
+                    apply_pack(-1);
+                } else if (sel >= 1 && sel <= packs) {
+                    apply_pack(sel - 1);
+                } else if (sel == packs + 1) {
+                    std::string e;
+                    if (!ext_assets.scan(opt.external_dir, e)) {
+                        std::fprintf(stderr, "%s\n", e.c_str());
+                    }
+                    menu.assets_sel = 0;
+                } else {
+                    menu.screen = MenuScreen::Options;
+                }
+                break;
+            }
             case MenuScreen::Video:
                 if (nav == 5 && sel == 7) {
                     menu.screen = MenuScreen::Options;
@@ -1963,10 +2291,12 @@ int run_sdl(const Options& opt, Engine& engine,
                 } else if (sel == 0) {
                     if (nav == 3) {
                         engine.set_menu_theme(
-                            menu_theme_next(engine.menu_theme(), -1, games));
+                            menu_theme_next(engine.menu_theme(), -1, games,
+                                            external_theme_count(engine)));
                     } else {
                         engine.set_menu_theme(
-                            menu_theme_next(engine.menu_theme(), 1, games));
+                            menu_theme_next(engine.menu_theme(), 1, games,
+                                            external_theme_count(engine)));
                     }
                 }
                 break;
@@ -2385,26 +2715,28 @@ int run_sdl(const Options& opt, Engine& engine,
         if (engine.game().id != music_game) {
             music_game = engine.game().id;
             music_player.stop();
-            if (!engine.game().title_music.empty()) {
-                std::string merr;
-                auto song =
-                    load_track(engine.game(), engine.game().title_music, merr);
-                if (song) {
-                    music_player.play(song);
-                } else {
-                    std::fprintf(stderr, "%s\n", merr.c_str());
+            // The sampled bank belongs to the episode, not to the executable.
+            load_game_sfx(engine.game());
+            menu.noise_loaded = false;
+            for (size_t i = 0; i < games.size(); ++i) {
+                if (games[i].id == engine.game().id) {
+                    menu.noise_set = static_cast<int>(i);
+                    break;
                 }
             }
+            if (!engine.game().title_music.empty()) {
+                play_music(engine.game().title_music);
+            }
+        }
+        if (engine.game().id != ext_game) {
+            ext_game = engine.game().id;
+            // A fresh Engine was built for the new episode, so rebuild the
+            // pack's visual overrides against its shape bank and tile table.
+            refresh_external_visuals();
         }
         const std::string music_request = engine.take_music_request();
         if (!music_request.empty()) {
-            std::string merr;
-            auto song = load_track(engine.game(), music_request, merr);
-            if (song) {
-                music_player.play(song);
-            } else {
-                std::fprintf(stderr, "%s\n", merr.c_str());
-            }
+            play_music(music_request);
         }
         for (uint16_t s : engine.take_sound_requests()) {
             music_player.play_sfx(s >> 8, s & 0xFF);
@@ -2445,7 +2777,7 @@ int run_sdl(const Options& opt, Engine& engine,
             }
             if (menu_open(menu)) {
                 draw_menu(fb, engine, menu, game_started, video, bindings,
-                          theme_backdrop, games);
+                          theme_backdrop, games, music_player, ext_assets);
             }
         }
         const uint8_t* out_pal =
@@ -2530,6 +2862,7 @@ int run_sdl(const Options& opt, Engine& engine,
         ini.set_int("audio", "volume", menu.music_volume);
         ini.set_bool("audio", "sfx", menu.sfx_on);
         ini.set_int("audio", "sfx_volume", menu.sfx_volume);
+        ini.set_bool("audio", "pc_speaker", menu.pc_speaker);
         ini.set_bool("hud", "classic", engine.hud_classic());
         std::string bg_name;
         if (engine.hud_bg() == -2) {
@@ -2623,6 +2956,22 @@ int run_app(const Options& opt) {
         return 0;
     }
 
+    if (opt.list_packs) {
+        ExternalAssets assets;
+        std::string ext_err;
+        if (!assets.scan(opt.external_dir, ext_err)) {
+            std::fprintf(stderr, "%s\n", ext_err.c_str());
+            return 2;
+        }
+        std::printf("%s: %d pack(s)\n", opt.external_dir.c_str(),
+                    static_cast<int>(assets.packs().size()));
+        for (const PackInfo& p : assets.packs()) {
+            std::printf("%-24s %-8s %s\n", p.id.c_str(),
+                        p.is_zip ? "zip" : "folder", p.path.c_str());
+        }
+        return 0;
+    }
+
     if (!opt.dump_splash.empty()) {
 #ifdef JILL_HAVE_SDL
         dump_splash_pages(games, opt.splash > 0 ? opt.splash : 1,
@@ -2711,6 +3060,28 @@ int run_app(const Options& opt) {
         std::fprintf(stderr, "data dir: %s (use --data to point at the game files)\n",
                      game.data_dir.c_str());
         return 2;
+    }
+    // Headless runs honour --pack too, so --dump can compare pack art.
+    ExternalAssets headless_assets;
+    if (opt.ticks > 0 && !opt.pack.empty()) {
+        std::string ext_err;
+        if (headless_assets.scan(opt.external_dir, ext_err)) {
+            const int index = headless_assets.find(opt.pack);
+            if (index < 0) {
+                std::fprintf(stderr, "external: pack '%s' not found\n",
+                             opt.pack.c_str());
+            } else if (!headless_assets.mount(index, ext_err)) {
+                std::fprintf(stderr, "external: %s\n", ext_err.c_str());
+            } else {
+                uint8_t ext_palette[768];
+                load_palette(game.palette, ext_palette);
+                engine.apply_external(headless_assets, ext_palette);
+                std::printf("external: mounted %s\n",
+                            headless_assets.active()->name.c_str());
+            }
+        } else {
+            std::fprintf(stderr, "%s\n", ext_err.c_str());
+        }
     }
     for (int i = 0; i < opt.items; ++i) {
         engine.add_item(2);  // debug: knives

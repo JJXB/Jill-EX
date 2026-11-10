@@ -87,8 +87,31 @@ void MusicPlayer::play(std::shared_ptr<const CmfSong> song) {
 #endif
     pending_ = std::move(song);
     has_pending_ = true;
+    ext_music_.reset();
+    ext_pos_ = 0.0;
     title_ = pending_ ? pending_->title : std::string();
     playing_ = pending_ != nullptr;
+    peak_ = 0.0f;
+    frames_mixed_ = 0;
+#ifdef JILL_HAVE_SDL
+    if (device_ != 0) {
+        SDL_UnlockAudioDevice(device_);
+    }
+#endif
+}
+
+void MusicPlayer::play_pcm(std::shared_ptr<const DecodedAudio> audio) {
+#ifdef JILL_HAVE_SDL
+    if (device_ != 0) {
+        SDL_LockAudioDevice(device_);
+    }
+#endif
+    pending_.reset();
+    has_pending_ = false;
+    ext_music_ = std::move(audio);
+    ext_pos_ = 0.0;
+    title_ = ext_music_ ? "external" : std::string();
+    playing_ = ext_music_ != nullptr && ext_music_->valid();
     peak_ = 0.0f;
     frames_mixed_ = 0;
 #ifdef JILL_HAVE_SDL
@@ -123,6 +146,8 @@ bool MusicPlayer::load_sfx(const std::string& path, std::string& err) {
 #endif
     sfx_bank_ = bank;
     sfx_.set_bank(bank);
+    sfx_.set_overrides(sfx_overrides_);
+    sfx_.set_pc_speaker(pc_speaker_);
     sfx_.set_volume(sfx_volume_);
 #ifdef JILL_HAVE_SDL
     if (device_ != 0) {
@@ -130,6 +155,38 @@ bool MusicPlayer::load_sfx(const std::string& path, std::string& err) {
     }
 #endif
     return true;
+}
+
+void MusicPlayer::set_pc_speaker(bool on) {
+#ifdef JILL_HAVE_SDL
+    if (device_ != 0) {
+        SDL_LockAudioDevice(device_);
+    }
+#endif
+    pc_speaker_ = on;
+    sfx_.set_pc_speaker(on);
+#ifdef JILL_HAVE_SDL
+    if (device_ != 0) {
+        SDL_UnlockAudioDevice(device_);
+    }
+#endif
+}
+
+void MusicPlayer::set_sfx_overrides(
+    std::shared_ptr<const SfxOverrides> overrides) {
+#ifdef JILL_HAVE_SDL
+    if (device_ != 0) {
+        SDL_LockAudioDevice(device_);
+    }
+#endif
+    sfx_overrides_ = std::move(overrides);
+    sfx_.set_overrides(sfx_overrides_);
+    sfx_.set_pc_speaker(pc_speaker_);
+#ifdef JILL_HAVE_SDL
+    if (device_ != 0) {
+        SDL_UnlockAudioDevice(device_);
+    }
+#endif
 }
 
 void MusicPlayer::play_sfx(int priority, int logical_id) {
@@ -144,6 +201,52 @@ void MusicPlayer::play_sfx(int priority, int logical_id) {
         SDL_UnlockAudioDevice(device_);
     }
 #endif
+}
+
+void MusicPlayer::play_sfx_sample(int priority, int sample_id) {
+#ifdef JILL_HAVE_SDL
+    if (device_ != 0) {
+        SDL_LockAudioDevice(device_);
+    }
+#endif
+    sfx_.play_sample(priority, sample_id);
+#ifdef JILL_HAVE_SDL
+    if (device_ != 0) {
+        SDL_UnlockAudioDevice(device_);
+    }
+#endif
+}
+
+bool MusicPlayer::sfx_has_sample(int sample_id) const {
+    return sfx_bank_ && sfx_bank_->has(sample_id);
+}
+
+int MusicPlayer::sfx_sample_rate(int sample_id) const {
+    return sfx_bank_ ? sfx_bank_->rate(sample_id) : 0;
+}
+
+double MusicPlayer::sfx_sample_seconds(int sample_id) const {
+    if (!sfx_bank_ || !sfx_bank_->has(sample_id)) {
+        return 0.0;
+    }
+    const int rate = sfx_bank_->rate(sample_id);
+    if (rate <= 0) {
+        return 0.0;
+    }
+    return static_cast<double>(sfx_bank_->sample(sample_id).size()) / rate;
+}
+
+int MusicPlayer::sfx_loaded_samples() const {
+    if (!sfx_bank_) {
+        return 0;
+    }
+    int n = 0;
+    for (int i = 0; i < 50; ++i) {
+        if (sfx_bank_->has(i)) {
+            ++n;
+        }
+    }
+    return n;
 }
 
 void MusicPlayer::set_sfx_volume(float volume) {
@@ -184,7 +287,36 @@ void MusicPlayer::mix(uint8_t* stream, int len) {
         scratch_.resize(static_cast<size_t>(frames));
     }
     std::fill(scratch_.begin(), scratch_.begin() + frames, 0.0f);
-    music_.render(scratch_.data(), frames);
+    const bool ext = ext_music_ && ext_music_->valid();
+    if (ext) {
+        // Looped external PCM (pack music).  Mixed here instead of the OPL
+        // sequencer so the same music gain applies.
+        if (enabled_) {
+            const DecodedAudio& a = *ext_music_;
+            const int ch = a.channels > 0 ? a.channels : 1;
+            const size_t total = a.frames();
+            if (total > 0) {
+                const double step = static_cast<double>(a.rate) /
+                                    (rate_ > 0 ? rate_ : 48000);
+                for (int i = 0; i < frames; ++i) {
+                    if (ext_pos_ >= static_cast<double>(total)) {
+                        ext_pos_ = std::fmod(ext_pos_, static_cast<double>(total));
+                    }
+                    const size_t f = static_cast<size_t>(ext_pos_);
+                    float v = 0.0f;
+                    for (int c = 0; c < ch; ++c) {
+                        v += a.samples[f * static_cast<size_t>(ch) +
+                                       static_cast<size_t>(c)];
+                    }
+                    scratch_[static_cast<size_t>(i)] +=
+                        v / static_cast<float>(ch);
+                    ext_pos_ += step;
+                }
+            }
+        }
+    } else {
+        music_.render(scratch_.data(), frames);
+    }
     // Music toggle/volume only affect the OPL mix; effects have their own.
     const float music_gain = enabled_ ? volume_ : 0.0f;
     for (int i = 0; i < frames; ++i) {

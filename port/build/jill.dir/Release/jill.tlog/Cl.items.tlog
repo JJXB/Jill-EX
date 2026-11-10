@@ -15,3 +15,10 @@ C:\Users\jjxb_\GIT\Jill-EX\port\src\opl2.cpp;C:\Users\jjxb_\GIT\Jill-EX\port\bui
 C:\Users\jjxb_\GIT\Jill-EX\port\src\music.cpp;C:\Users\jjxb_\GIT\Jill-EX\port\build\jill.dir\Release\music.obj
 C:\Users\jjxb_\GIT\Jill-EX\port\src\sfx.cpp;C:\Users\jjxb_\GIT\Jill-EX\port\build\jill.dir\Release\sfx.obj
 C:\Users\jjxb_\GIT\Jill-EX\port\src\audio.cpp;C:\Users\jjxb_\GIT\Jill-EX\port\build\jill.dir\Release\audio.obj
+C:\Users\jjxb_\GIT\Jill-EX\port\src\extaudio.cpp;C:\Users\jjxb_\GIT\Jill-EX\port\build\jill.dir\Release\extaudio.obj
+C:\Users\jjxb_\GIT\Jill-EX\port\src\external.cpp;C:\Users\jjxb_\GIT\Jill-EX\port\build\jill.dir\Release\external.obj
+C:\Users\jjxb_\GIT\Jill-EX\port\src\third_party\stb_vorbis.c;C:\Users\jjxb_\GIT\Jill-EX\port\build\jill.dir\Release\stb_vorbis.obj
+C:\Users\jjxb_\GIT\Jill-EX\port\src\third_party\miniz.c;C:\Users\jjxb_\GIT\Jill-EX\port\build\jill.dir\Release\miniz.obj
+C:\Users\jjxb_\GIT\Jill-EX\port\src\third_party\miniz_tinfl.c;C:\Users\jjxb_\GIT\Jill-EX\port\build\jill.dir\Release\miniz_tinfl.obj
+C:\Users\jjxb_\GIT\Jill-EX\port\src\third_party\miniz_tdef.c;C:\Users\jjxb_\GIT\Jill-EX\port\build\jill.dir\Release\miniz_tdef.obj
+C:\Users\jjxb_\GIT\Jill-EX\port\src\third_party\miniz_zip.c;C:\Users\jjxb_\GIT\Jill-EX\port\build\jill.dir\Release\miniz_zip.obj

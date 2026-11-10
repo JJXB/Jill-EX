@@ -1,10 +1,12 @@
 #pragma once
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "board.h"
+#include "external.h"
 #include "framebuffer.h"
 #include "game.h"
 #include "profile.h"
@@ -63,6 +65,18 @@ public:
     // Menu backdrops can use a board as artwork only: hide the TEXT6/TEXT8
     // objects so their captions do not end up baked into the backdrop.
     void set_hide_text_kinds(bool on) { hide_text_kinds_ = on; }
+    // External pack overrides (sprite frames, tile art, board backgrounds,
+    // extra menu themes).  Null/shared-empty disables them.
+    void set_external_visuals(std::shared_ptr<const ExternalVisuals> visuals) {
+        ext_visuals_ = std::move(visuals);
+    }
+    const ExternalVisuals* external_visuals() const {
+        return ext_visuals_.get();
+    }
+    // Palette used to quantise external art (0..255 per channel, 768 bytes).
+    void set_external_palette(const uint8_t rgb[768]);
+    // Rebuild `ext_visuals_` for a pack.  Returns false when nothing applied.
+    bool apply_external(const ExternalAssets& assets, const uint8_t rgb[768]);
     // The original HUD (pips, HEALTH/SCORE/LEVEL text, key icons) is optional:
     // the port keeps its minimal pip strip unless this is enabled.
     void set_hud_classic(bool on) { hud_classic_ = on; }
@@ -313,6 +327,8 @@ private:
     void draw_player_shape(Framebuffer& fb, int shape, int x, int y,
                            bool transparent);
     void build_player_remap();
+    // Shape lookup: external pack override first, then the game's shape bank.
+    const ShapeFrame* shape_frame(int entry, int index);
     void draw_shape(Framebuffer& fb, int shape, int x, int y, bool transparent);
     // Draws the shape's set pixels in a single palette colour (health pips).
     void draw_shape_tint(Framebuffer& fb, int shape, int x, int y,
@@ -443,4 +459,6 @@ private:
     bool latch1_ = false;
     bool latch2_ = false;
     bool has_player_ = false;
+    std::shared_ptr<const ExternalVisuals> ext_visuals_;
+    uint8_t ext_palette_[768] = {};
 };

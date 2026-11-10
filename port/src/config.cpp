@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <iterator>
+#include <sstream>
 
 std::string ini_lower(const std::string& s) {
     std::string out = s;
@@ -30,12 +32,20 @@ std::string trim(const std::string& s) {
 }  // namespace
 
 bool IniFile::load(const std::string& path, std::string& err) {
-    data_.clear();
     std::ifstream in(path);
     if (!in) {
         err = "cannot open " + path;
         return false;
     }
+    std::string text((std::istreambuf_iterator<char>(in)),
+                     std::istreambuf_iterator<char>());
+    return parse(text, path, err);
+}
+
+bool IniFile::parse(const std::string& text, const std::string& name,
+                    std::string& err) {
+    data_.clear();
+    std::istringstream in(text);
     std::string section = "root";
     std::string line;
     int lineno = 0;
@@ -54,7 +64,7 @@ bool IniFile::load(const std::string& path, std::string& err) {
         }
         const size_t eq = t.find('=');
         if (eq == std::string::npos) {
-            std::fprintf(stderr, "%s:%d: expected key = value\n", path.c_str(),
+            std::fprintf(stderr, "%s:%d: expected key = value\n", name.c_str(),
                          lineno);
             continue;
         }

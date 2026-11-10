@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(jill_port LANGUAGES CXX)
+project(jill_port LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -23,7 +23,19 @@ add_executable(jill
     src/music.cpp
     src/sfx.cpp
     src/audio.cpp
+    src/extaudio.cpp
+    src/external.cpp
+    src/third_party/stb_vorbis.c
+    src/third_party/miniz.c
+    src/third_party/miniz_tinfl.c
+    src/third_party/miniz_tdef.c
+    src/third_party/miniz_zip.c
 )
+
+# Media Foundation (M4A/AAC decoding) is a Windows system component.
+if(WIN32)
+    target_link_libraries(jill PRIVATE mfplat mfreadwrite mfuuid ole32)
+endif()
 
 target_compile_definitions(jill PRIVATE SDL_MAIN_HANDLED)
 if(MSVC)

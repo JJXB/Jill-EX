@@ -21,6 +21,7 @@ No copyright assets shipped, provide your own.
 * High framerate support - 60/90/120/144 Hz - Interpolation as a separate option - Logic still at 18.2hz
 * Expanded Limits (Board Obj Cap = 384, KIND Limit = 138, Visible/Active Obj Cap = 384)
 * Windowed, exclusive fullscreen and borderless modes; resolution presets and 1x-6x window scaling.
+* Noisemaker Menu in Options/Sound
 * Extra Features (All Optional)
   * Minimap
   * Centred fish shot
@@ -45,12 +46,12 @@ No copyright assets shipped, provide your own.
 
 ### Remaining
 * Splash screens to be fixed.
-* Noisemaker Modes
 * Work on Display Filters to be continued 
-* Verify music playback is right.
 * Character portraits.
-* External enhanced asset loading
 * Mac/Linux/console builds.
+
+## License
+[See LICENSE](LICENSE.md)
 
 ## Engine and gameplay Info
 [See ENGINE](ENGINE.md)
@@ -58,8 +59,9 @@ No copyright assets shipped, provide your own.
 ## Tools and data
 [See TOOLS_DATA](TOOLS_DATA.md)
 
-## Adding Mods
+## Adding Mods and External Enhanced Assets
 [See MODS](MODS.md)
+[See EXTASSETS](EXTASSETS.md)
 
 ## Building
 [See BUILDING](BUILDING.md)

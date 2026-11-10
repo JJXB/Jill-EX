@@ -322,6 +322,10 @@ const ProfileDef& profile_at(int index) {
     return kProfiles[index];
 }
 
+const char* sfx_sample_name(int index) {
+    return (index >= 0 && index < 50) ? kSfxNames[index] : "?";
+}
+
 namespace {
 
 const ProfileDef* load_one(const std::string& id, int depth);

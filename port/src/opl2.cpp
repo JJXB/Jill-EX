@@ -268,7 +268,10 @@ double Opl2::wave_at(int wave, double phase) const {
 double Opl2::op_sample(int slot, double mod_phase) {
     Operator& o = ops_[slot];
     double p = o.phase + mod_phase;
-    double s = o.rhythm ? noise_val_ : wave_at(o.wave, p);
+    // Noise is only for the rhythm voices while rhythm mode is enabled.  With
+    // rhythm mode off, slots 13/16/17 are ordinary melodic operators; using
+    // the LFSR there produced a constant hiss on channels 7-9.
+    double s = (rhythm_ && o.rhythm) ? noise_val_ : wave_at(o.wave, p);
 
     double att = o.eg_db + static_cast<double>(o.tl) * 0.75;
     static const double kKsl[4] = {0.0, 3.0, 1.5, 6.0};

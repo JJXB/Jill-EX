@@ -5,16 +5,19 @@ A comprehensive GUI utility for viewing and extracting game assets from Jill 1, 
 
 Supports:
 - Board files (.jn1, .jn2, .jn3, .dem)
-- Shape files (.sha)
-- Tile definitions (jill.dma)
-- Sound banks (.vcl)
+- Shape files (.sha), including the text font
+- Tile definitions (jill.dma) and rendered tile images
+- Sound banks (.vcl), sampled effects and text pages
 - Music files (.ddt - CMF format)
 - Config files (.cfg)
 - Input macros (.mac)
+- Enhanced pack export: fonts, HUD panels, text pages, palettes,
+  board previews and ready-to-edit external asset packs
 """
 
 import sys
 import os
+import shutil
 import struct
 import json
 import tkinter as tk
@@ -24,6 +27,7 @@ import io
 import zlib
 import tempfile
 import wave
+import subprocess
 from pathlib import Path
 from typing import Optional, List, Tuple, Dict, Any, BinaryIO
 from dataclasses import dataclass, field
@@ -37,6 +41,117 @@ try:
 except ImportError:
     HAS_WINSOUND = False
     winsound = None
+
+
+BASE_DIR = Path(__file__).resolve().parent
+# The port's OPL2/CMF renderer is used to turn .ddt music into WAV.  This is
+# the only reliable CMF synthesiser available to the extractor.
+MUSIC_EXPORT_SECONDS = 60.0
+
+
+def find_port_exe() -> Optional[Path]:
+    """Locate the built port executable used to render CMF music."""
+    candidates = [
+        BASE_DIR / "port" / "build" / "Release" / "jill.exe",
+        BASE_DIR / "port" / "build" / "Debug" / "jill.exe",
+        BASE_DIR / "port" / "build" / "jill.exe",
+        BASE_DIR / "jill.exe",
+    ]
+    for p in candidates:
+        if p.is_file():
+            return p
+    which = shutil.which("jill.exe")
+    return Path(which) if which else None
+
+
+def render_cmf_wav(game: Dict[str, Any], track: Path, out_wav: Path,
+                   seconds: float = MUSIC_EXPORT_SECONDS) -> Tuple[bool, str]:
+    """Render a .ddt/.cmf track to WAV with the port's OPL2 renderer.
+
+    Returns (ok, message).  The extractor can still read/export the raw CMF
+    when no built port executable is available.
+    """
+    exe = find_port_exe()
+    if exe is None:
+        return False, ("no built jill.exe found (build the port, or use "
+                       "Export Raw / --dump-music)")
+    out_wav = Path(out_wav)
+    out_wav.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [str(exe), "--game", game['id'], "--data",
+           str(Path(game['data_dir'])), "--dump-music", str(out_wav),
+           "--music-file", track.name, "--music-seconds",
+           f"{max(1.0, seconds):.1f}"]
+    try:
+        proc = subprocess.run(cmd, cwd=str(BASE_DIR), capture_output=True,
+                              text=True, timeout=max(120.0, seconds * 4.0))
+    except Exception as e:
+        return False, f"music render failed: {e}"
+    if proc.returncode != 0 or not out_wav.is_file() or out_wav.stat().st_size <= 44:
+        detail = (proc.stderr or proc.stdout or "").strip().splitlines()
+        return False, (detail[-1] if detail else f"music render failed "
+                       f"(exit {proc.returncode})")
+    return True, str(out_wav)
+
+
+def is_cmf_file(path: Path) -> bool:
+    try:
+        with open(path, 'rb') as f:
+            return f.read(4) == b'CTMF'
+    except OSError:
+        return False
+
+
+def export_music_wavs(game: Dict[str, Any], out_dir: Path,
+                      seconds: float = MUSIC_EXPORT_SECONDS) -> int:
+    """Render every CMF track (.ddt or .ARK) to `music/<stem>.wav`."""
+    data_dir = Path(game['data_dir'])
+    music_dir = Path(out_dir) / "music"
+    music_dir.mkdir(parents=True, exist_ok=True)
+    count = 0
+    files = []
+    try:
+        files.extend(data_dir.glob("*.ddt"))
+        files.extend(data_dir.glob("*.ark"))
+        files.extend(data_dir.glob("*.ARK"))
+    except OSError:
+        pass
+    seen = set()
+    for f in sorted(files, key=lambda p: p.name.lower()):
+        if f.name.lower() in seen or not is_cmf_file(f):
+            continue
+        seen.add(f.name.lower())
+        out = music_dir / f"{f.stem}.wav"
+        ok, msg = render_cmf_wav(game, f, out, seconds)
+        if ok:
+            print(f"  Rendered: {f.name} -> {out.name}")
+            count += 1
+        else:
+            print(f"  Skipped {f.name}: {msg}")
+    return count
+
+
+def play_wav_file(path: Path, async_: bool = True) -> bool:
+    """Play a temporary WAV with winsound (Windows only)."""
+    if not HAS_WINSOUND:
+        return False
+    try:
+        flags = winsound.SND_FILENAME
+        if async_:
+            flags |= winsound.SND_ASYNC
+        winsound.PlaySound(str(path), flags)
+        if async_:
+            def cleanup():
+                import time
+                time.sleep(120)
+                try:
+                    Path(path).unlink()
+                except OSError:
+                    pass
+            threading.Thread(target=cleanup, daemon=True).start()
+        return True
+    except Exception as e:
+        print(f"Playback error: {e}")
+        return False
 
 
 # ============================================================================
@@ -470,6 +585,30 @@ class SHAFile:
         
         return entry
     
+    def frame_indices(self, entry_idx: int, frame_idx: int) -> Optional[Tuple[int, int, bytes]]:
+        """Raw palette indices for one frame (no RGB conversion).
+
+        Used by the font/HUD exporters, which need to know the key colour
+        (index 0/3 for the text font) rather than only the mapped RGB.
+        """
+        if entry_idx < 0 or entry_idx >= 128 or self.entries[entry_idx] is None:
+            return None
+        entry = self.entries[entry_idx]
+        if frame_idx < 0 or frame_idx >= len(entry.frames):
+            return None
+        frame = entry.frames[frame_idx]
+        w, h = frame['width'], frame['height']
+        if w <= 0 or h <= 0:
+            return None
+        if frame['opcode'] == 0:
+            raw = bytearray(frame['data'][:w * h])
+            if len(raw) < w * h:
+                raw.extend(b'\x00' * (w * h - len(raw)))
+            return w, h, bytes(raw)
+        if frame['opcode'] == 1:
+            return w, h, self._unpack_pixels(frame['data'], w, h, entry.src_bpp)
+        return w, h, bytes(w * h)
+
     def decode_frame_to_image(self, entry_idx: int, frame_idx: int, video_mode: int = 4) -> Optional[Image.Image]:
         """Decode a frame to PIL Image. video_mode: 0=CGA, 2=EGA, 4=VGA"""
         if entry_idx >= 128 or self.entries[entry_idx] is None:
@@ -753,6 +892,51 @@ class VCLFile:
             if offset + size <= len(self.file_data):
                 return self.file_data[offset:offset+size]
         return None
+
+    # The second bank (0x190 / 0x230) is the text-page table, not music.
+    # Keep the historical names above for API compatibility.
+    def extract_page(self, index: int) -> Optional[bytes]:
+        return self.extract_music(index)
+
+    def parse_text_page(self, index: int) -> Optional[List[Dict[str, Any]]]:
+        """Return [{'colour': 0..7, 'text': str}] for one text page."""
+        data = self.extract_page(index)
+        if not data:
+            return None
+        lines: List[Dict[str, Any]] = []
+        line = bytearray()
+
+        def flush():
+            while line and (line[-1] < 0x20 or line[-1] >= 0x7F):
+                line.pop()
+            if not line:
+                lines.append({'colour': 7, 'text': ''})
+                return
+            text = line.decode('ascii', errors='replace')
+            colour = 7
+            pos = 0
+            if len(text) > 1 and '/' < text[0] < '8':
+                colour = ord(text[0]) - ord('0')
+                pos = 1
+            lines.append({'colour': colour, 'text': text[pos:]})
+
+        for b in data:
+            if b == 0x0D:
+                flush()
+                line.clear()
+            elif b == 0x0A:
+                pass
+            elif 0x20 <= b < 0x7F:
+                line.append(b)
+        if line:
+            flush()
+        while lines and not lines[-1]['text']:
+            lines.pop()
+        return lines or None
+
+    def text_page_indexes(self) -> List[int]:
+        return [i for i in range(40) if self.music_sizes[i] > 0]
+
     
     def get_info(self) -> str:
         sfx_count = sum(1 for s in self.sfx_sizes if s > 0)
@@ -958,6 +1142,484 @@ class MACFile:
 
 
 # ============================================================================
+# ENHANCED ASSET EXPORTERS (fonts, text pages, palettes, tiles, HUD, packs)
+# ============================================================================
+
+FONT_ENTRY = 2
+FONT_TRANSPARENT = (0, 3)  # the original text blitter skips 0 and 3
+HUD_ICON_BANK = 0x0E
+
+
+def _palette_rgb(sha: SHAFile, index: int) -> Tuple[int, int, int]:
+    pal = sha.vga_palette
+    i = max(0, min(255, index)) * 3
+    if i + 2 < len(pal):
+        return int(pal[i]), int(pal[i + 1]), int(pal[i + 2])
+    return 0, 0, 0
+
+
+def _entry_xlate(sha: SHAFile, entry_idx: int) -> List[int]:
+    """Map raw frame indices to VGA palette indices.
+
+    Shapes whose `flags & 1` is clear carry a small per-entry colour table
+    (4, 8 or 16 entries).  The original blitter converts each raw pixel
+    through it before writing to the 8-bit framebuffer, exactly like the
+    C++ port's `ShapeBank::decode`.  Without this, 4bpp tiles/shapes get
+    mapped straight to the global palette and change colour.
+    """
+    table = list(range(256))
+    if entry_idx < 0 or entry_idx >= 128:
+        return table
+    entry = sha.entries[entry_idx]
+    if entry is None or (entry.flags & 1) or entry.src_bpp >= 8:
+        return table
+    for i, pal_entry in enumerate(entry.palette):
+        if i < 256:
+            table[i] = (pal_entry >> 16) & 0xFF
+    return table
+
+
+def _shape_rgba(sha: SHAFile, entry_idx: int, frame_idx: int,
+                skip=(0,), colour: Optional[Tuple[int, int, int]] = None) -> Optional[Image.Image]:
+    """Decode one frame to RGBA, making `skip` palette indices transparent."""
+    raw = sha.frame_indices(entry_idx, frame_idx)
+    if not raw:
+        return None
+    w, h, px = raw
+    xlate = _entry_xlate(sha, entry_idx)
+    img = Image.new('RGBA', (w, h), (0, 0, 0, 0))
+    out = img.load()
+    for y in range(h):
+        for x in range(w):
+            idx = px[y * w + x]
+            if idx in skip:
+                continue
+            r, g, b = _palette_rgb(sha, xlate[idx])
+            if colour is not None:
+                r, g, b = colour
+            out[x, y] = (r, g, b, 255)
+    return img
+
+
+def _render_text(img: Image.Image, sha: SHAFile, x: int, y: int,
+                 text: str, colour: Tuple[int, int, int],
+                 advance: int = 6) -> None:
+    """Draw text using the game font (shape entry 2), as the engine does."""
+    out = img.load()
+    for i, ch in enumerate(text):
+        code = ord(ch) & 0x7F
+        raw = sha.frame_indices(FONT_ENTRY, code)
+        if not raw:
+            continue
+        w, h, px = raw
+        for gy in range(h):
+            for gx in range(w):
+                idx = px[gy * w + gx]
+                if idx in FONT_TRANSPARENT:
+                    continue
+                tx, ty = x + i * advance + gx, y + gy
+                if 0 <= tx < img.width and 0 <= ty < img.height:
+                    out[tx, ty] = (colour[0], colour[1], colour[2], 255)
+
+
+def export_font_assets(sha: SHAFile, out_dir: Path) -> int:
+    """Export `fonts/main.png` (128-cell strip) plus per-glyph PNGs."""
+    entry = sha.entries[FONT_ENTRY]
+    if entry is None or not entry.frames:
+        return 0
+    frames = []
+    for code in range(128):
+        raw = sha.frame_indices(FONT_ENTRY, code) if code < entry.frame_count else None
+        frames.append(raw)
+    widths = [f[0] for f in frames if f]
+    heights = [f[1] for f in frames if f]
+    cell_w = max(widths) if widths else 6
+    cell_h = max(heights) if heights else 6
+
+    font_dir = Path(out_dir) / "fonts"
+    font_dir.mkdir(parents=True, exist_ok=True)
+    sheet = Image.new('RGBA', (cell_w * 128, cell_h), (0, 0, 0, 0))
+    sheet_px = sheet.load()
+    glyph_dir = font_dir / "glyphs"
+    glyph_dir.mkdir(exist_ok=True)
+
+    meta = {'entry': FONT_ENTRY, 'frames': entry.frame_count,
+            'cell_width': cell_w, 'cell_height': cell_h,
+            'transparent_indices': list(FONT_TRANSPARENT), 'glyphs': []}
+    count = 0
+    for code, raw in enumerate(frames):
+        if not raw:
+            continue
+        w, h, px = raw
+        glyph = Image.new('RGBA', (w, h), (0, 0, 0, 0))
+        gpx = glyph.load()
+        for y in range(h):
+            for x in range(w):
+                if px[y * w + x] not in FONT_TRANSPARENT:
+                    gpx[x, y] = (255, 255, 255, 255)
+                    sheet_px[code * cell_w + x, y] = (255, 255, 255, 255)
+        glyph.save(glyph_dir / f"glyph_{code:03d}.png")
+        meta['glyphs'].append({'code': code, 'width': w, 'height': h})
+        count += 1
+    sheet.save(font_dir / "main.png")
+    with open(font_dir / "font.json", 'w', encoding='utf-8') as f:
+        json.dump(meta, f, indent=2)
+    return count
+
+
+def _page_colour(code: int) -> int:
+    if code == 1:
+        return 9
+    if code == 0:
+        return 8
+    return max(0, min(15, code))
+
+
+def export_text_page_assets(vcl: VCLFile, sha: Optional[SHAFile],
+                            out_dir: Path) -> int:
+    """Export text pages as .txt, JSON and optional font-rendered previews."""
+    page_dir = Path(out_dir) / "text_pages"
+    preview_dir = page_dir / "preview"
+    page_dir.mkdir(parents=True, exist_ok=True)
+    preview_dir.mkdir(exist_ok=True)
+    entries = []
+    count = 0
+    for n in vcl.text_page_indexes():
+        lines = vcl.parse_text_page(n)
+        if not lines:
+            continue
+        title = lines[0]['text'] if lines else ''
+        with open(page_dir / f"page_{n:02d}.txt", 'w', encoding='ascii',
+                  errors='replace') as f:
+            for line in lines:
+                f.write(line['text'] + "\n")
+        entries.append({'index': n, 'title': title, 'lines': lines})
+        if sha is not None and sha.entries[FONT_ENTRY] is not None:
+            bg = _palette_rgb(sha, 0)
+            frame = _palette_rgb(sha, 8)
+            img = Image.new('RGBA', (320, 200), (*bg, 255))
+            d = ImageDraw.Draw(img)
+            d.rectangle([6, 4, 313, 195], fill=(*frame, 255))
+            d.rectangle([7, 5, 312, 194], fill=(*bg, 255))
+            title_col = _palette_rgb(sha, _page_colour(lines[0]['colour']))
+            tx = max(12, (320 - len(title) * 6) // 2)
+            _render_text(img, sha, tx, 11, title, title_col)
+            d.line([14, 21, 305, 21], fill=(*frame, 255))
+            y = 27
+            for line in lines[1:]:
+                if line['text']:
+                    col = _palette_rgb(sha, _page_colour(line['colour']))
+                    x = max(10, (320 - len(line['text']) * 6) // 2)
+                    _render_text(img, sha, x, y, line['text'], col)
+                y += 9
+            _render_text(img, sha, 14, 187, f"PAGE {n}", _palette_rgb(sha, 8))
+            img.save(preview_dir / f"page_{n:02d}.png")
+        count += 1
+    with open(page_dir / "pages.json", 'w', encoding='utf-8') as f:
+        json.dump(entries, f, indent=2)
+    return count
+
+
+def export_palette_assets(sha: SHAFile, out_dir: Path) -> bool:
+    """Write the 8-bit DAC palette as .pal, .bin (6-bit) and JSON."""
+    pal_dir = Path(out_dir)
+    pal_dir.mkdir(parents=True, exist_ok=True)
+    data = bytes(max(0, min(255, int(v))) for v in sha.vga_palette[:768])
+    if len(data) < 768:
+        data = data + b'\x00' * (768 - len(data))
+    (pal_dir / "palette.pal").write_bytes(data)
+    six = bytes(max(0, min(63, round(v * 63 / 255))) for v in data)
+    (pal_dir / "palette_6bit.bin").write_bytes(six)
+    entries = [{'index': i, 'rgb': list(data[i * 3:i * 3 + 3]),
+                'hex': '#%02X%02X%02X' % tuple(data[i * 3:i * 3 + 3])}
+               for i in range(256)]
+    with open(pal_dir / "palette.json", 'w', encoding='utf-8') as f:
+        json.dump(entries, f, indent=2)
+    return True
+
+
+def _dma_by_tile(dma: DMAFile) -> Dict[int, DMARecord]:
+    return {rec.tile_id: rec for rec in dma.records}
+
+
+def _tile_rgba(sha: SHAFile, rec: DMARecord,
+               cache: Dict[Tuple[int, int], Optional[Image.Image]]) -> Optional[Image.Image]:
+    shape = rec.shape_id
+    entry = (shape >> 8) & 0x3F
+    index = shape & 0xFF
+    key = (entry, index)
+    if key not in cache:
+        cache[key] = _shape_rgba(sha, entry, index, skip=(0,))
+    return cache[key]
+
+
+def export_tile_assets(sha: SHAFile, dma: DMAFile, out_dir: Path) -> int:
+    """Export every DMA tile as `tiles/<tile id>.png` plus tiles.json."""
+    tile_dir = Path(out_dir) / "tiles"
+    tile_dir.mkdir(parents=True, exist_ok=True)
+    cache: Dict[Tuple[int, int], Optional[Image.Image]] = {}
+    meta = []
+    count = 0
+    for rec in dma.records:
+        img = _tile_rgba(sha, rec, cache)
+        if img is None:
+            continue
+        img.save(tile_dir / f"{rec.tile_id}.png")
+        meta.append({'tile_id': rec.tile_id, 'index': dma.records.index(rec),
+                     'shape_id': rec.shape_id, 'attr': rec.attr,
+                     'name': rec.name, 'width': img.width, 'height': img.height})
+        count += 1
+    with open(tile_dir / "tiles.json", 'w', encoding='utf-8') as f:
+        json.dump(meta, f, indent=2)
+    return count
+
+
+def _render_board(board: BoardFile, sha: SHAFile, dma: DMAFile) -> Image.Image:
+    """Composite a board's tile layer into a 2048x1024 RGBA image."""
+    canvas = Image.new('RGBA', (128 * 16, 64 * 16), (*_palette_rgb(sha, 0), 255))
+    dma_map = _dma_by_tile(dma)
+    cache: Dict[Tuple[int, int], Optional[Image.Image]] = {}
+    for c in range(128):
+        for r in range(64):
+            tid = board.get_tile_at(c, r)
+            rec = dma_map.get(tid)
+            if rec is None:
+                continue
+            tile = _tile_rgba(sha, rec, cache)
+            if tile is not None:
+                canvas.paste(tile, (c * 16, r * 16), tile)
+    return canvas
+
+
+def export_board_previews(game: Dict[str, Any], sha: SHAFile, dma: DMAFile,
+                          out_dir: Path) -> int:
+    """Write full board renders and 320x200 pack-ready backgrounds."""
+    data_dir = Path(game['data_dir'])
+    ext = game['board_ext']
+    full_dir = Path(out_dir) / "board_previews"
+    pack_dir = Path(out_dir) / "boards"
+    full_dir.mkdir(parents=True, exist_ok=True)
+    pack_dir.mkdir(parents=True, exist_ok=True)
+    targets = []
+    for name in game.get('boards', []):
+        p = data_dir / f"{name}{ext}"
+        if p.exists():
+            targets.append(p)
+    try:
+        for p in sorted(data_dir.glob(f"*{ext}")):
+            if p not in targets:
+                targets.append(p)
+    except OSError:
+        pass
+    resample = getattr(Image, 'Resampling', Image).NEAREST
+    meta = []
+    count = 0
+    for p in targets:
+        try:
+            board = BoardFile.load(str(p))
+            img = _render_board(board, sha, dma)
+            img.save(full_dir / f"{p.stem}.png")
+            # Nearest-neighbour keeps every pixel on the game palette; a
+            # filtered downscale would invent blended colours that the engine
+            # then quantises again (the "mangled colours" seen in packs).
+            small = img.resize((320, 200), resample)
+            small.save(pack_dir / f"{p.stem}.png")
+            meta.append({'board': p.stem, 'width': img.width, 'height': img.height})
+            count += 1
+        except Exception as e:
+            print(f"  ERROR rendering {p.name}: {e}")
+    with open(pack_dir / "boards.json", 'w', encoding='utf-8') as f:
+        json.dump(meta, f, indent=2)
+    return count
+
+
+def export_theme_assets(game: Dict[str, Any], sha: SHAFile, dma: DMAFile,
+                        out_dir: Path) -> bool:
+    """Export the intro-board menu panel as `themes/intro.png`."""
+    data_dir = Path(game['data_dir'])
+    ext = game['board_ext']
+    intro = None
+    for name in game.get('boards', []):
+        if name.lower() == 'intro':
+            p = data_dir / f"{name}{ext}"
+            if p.exists():
+                intro = p
+                break
+    if intro is None:
+        p = data_dir / f"intro{ext}"
+        if p.exists():
+            intro = p
+    if intro is None:
+        return False
+    try:
+        board = BoardFile.load(str(intro))
+        full = _render_board(board, sha, dma)
+        # Port menu panel: tiles (36,0)..(55,13), centred vertically.
+        crop = full.crop((36 * 16, 12, 36 * 16 + 320, 12 + 200))
+        theme_dir = Path(out_dir) / "themes"
+        theme_dir.mkdir(parents=True, exist_ok=True)
+        crop.save(theme_dir / "intro.png")
+        return True
+    except Exception as e:
+        print(f"  ERROR rendering intro theme: {e}")
+        return False
+
+
+def export_hud_assets(sha: SHAFile, out_dir: Path,
+                      icon_bank: int = HUD_ICON_BANK) -> int:
+    """Export HUD panel backgrounds, previews and icon frames."""
+    hud_dir = Path(out_dir) / "hud"
+    icon_dir = hud_dir / "icons"
+    icon_dir.mkdir(parents=True, exist_ok=True)
+    bg = (16, 24, 48)
+    edge = (90, 160, 230)
+    text = (235, 235, 235)
+
+    classic = Image.new('RGBA', (64, 84), (*bg, 255))
+    d = ImageDraw.Draw(classic)
+    d.rectangle([0, 0, 63, 83], outline=(*edge, 255))
+    classic.save(hud_dir / "classic.png")
+    classic_prev = classic.copy()
+    _render_text(classic_prev, sha, 2, 2, "HEALTH", text)
+    for i in range(6):
+        pip = _shape_rgba(sha, icon_bank, 0x2A, skip=(0,))
+        if pip:
+            classic_prev.paste(pip, (0x2A + i * 3, 2), pip)
+    last = _shape_rgba(sha, icon_bank, 0x2B, skip=(0,))
+    if last:
+        classic_prev.paste(last, (0x28 + 5 * 3, 2), last)
+    _render_text(classic_prev, sha, 0x21, 10, "SCORE", text)
+    _render_text(classic_prev, sha, 0x40 - 7, 16, "0", text)
+    _render_text(classic_prev, sha, 1, 10, "LEVEL", text)
+    _render_text(classic_prev, sha, 1, 16, "0", text)
+    classic_prev.save(hud_dir / "classic_preview.png")
+
+    modern = Image.new('RGBA', (320, 12), (*bg, 255))
+    ImageDraw.Draw(modern).rectangle([0, 10, 319, 11], fill=(*edge, 255))
+    modern.save(hud_dir / "modern.png")
+    modern_prev = modern.copy()
+    _render_text(modern_prev, sha, 2, 3, "LEVEL 0", text)
+    _render_text(modern_prev, sha, 163, 3, "HEALTH", text)
+    for i in range(7):
+        pip = _shape_rgba(sha, icon_bank, 0x2A, skip=(0,))
+        if pip:
+            modern_prev.paste(pip, (203 + 2 + i * 3, 3), pip)
+    first = _shape_rgba(sha, icon_bank, 0x2B, skip=(0,))
+    if first:
+        modern_prev.paste(first, (203, 3), first)
+    _render_text(modern_prev, sha, 276, 3, "SCORE 0", text)
+    modern_prev.save(hud_dir / "modern_preview.png")
+
+    icons = sha.entries[icon_bank]
+    count = 0
+    if icons is not None:
+        for frame in range(icons.frame_count):
+            img = _shape_rgba(sha, icon_bank, frame, skip=(0,))
+            if img:
+                img.save(icon_dir / f"icon_{frame:03d}.png")
+                count += 1
+    with open(hud_dir / "hud.json", 'w', encoding='utf-8') as f:
+        json.dump({'classic_size': [64, 84], 'modern_size': [320, 12],
+                   'icon_bank': icon_bank, 'icons': count}, f, indent=2)
+    return count
+
+
+def export_portrait_asset(sha: SHAFile, out_dir: Path) -> bool:
+    """Export `portrait.png` (64x84) used beside level-title dialogs.
+
+    The default is composed from the player's idle sprite (the same art the
+    original title screen uses for Jill), framed and scaled 2x.
+    """
+    sprite = _shape_rgba(sha, 8, 0x10, skip=(0,))
+    if sprite is None:
+        return False
+    resample = getattr(Image, 'Resampling', Image).NEAREST
+    big = sprite.resize((sprite.width * 2, sprite.height * 2), resample)
+    frame = Image.new('RGBA', (64, 84), (16, 24, 48, 255))
+    d = ImageDraw.Draw(frame)
+    d.rectangle([0, 0, 63, 83], outline=(90, 160, 230, 255))
+    x = (64 - big.width) // 2
+    y = (84 - big.height) // 2
+    frame.paste(big, (x, y), big)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    frame.save(out_dir / "portrait.png")
+    with open(out_dir / "portrait.json", 'w', encoding='utf-8') as f:
+        json.dump({'size': [64, 84], 'source': 'shape entry 8 frame 0x10',
+                   'scale': 2}, f, indent=2)
+    return True
+
+
+def export_reference_pack(game: Dict[str, Any], sha: SHAFile, vcl: VCLFile,
+                          dma: DMAFile, out_dir: Path,
+                          music_seconds: float = MUSIC_EXPORT_SECONDS) -> Dict[str, int]:
+    """Write a ready-to-edit `external/<id>` style pack tree."""
+    out = Path(out_dir)
+    sprite_dir = out / "sprites"
+    sprite_dir.mkdir(parents=True, exist_ok=True)
+    stats: Dict[str, int] = {}
+
+    # Every shape frame under the pack's shape_<entry>_<frame> name.
+    shapes = 0
+    for entry_idx in range(128):
+        entry = sha.entries[entry_idx]
+        if entry is None:
+            continue
+        for frame_idx in range(entry.frame_count):
+            skip = FONT_TRANSPARENT if entry_idx == FONT_ENTRY else (0,)
+            img = _shape_rgba(sha, entry_idx, frame_idx, skip=skip)
+            if img:
+                img.save(sprite_dir / f"shape_{entry_idx:03d}_{frame_idx:03d}.png")
+                shapes += 1
+    stats['sprites'] = shapes
+
+    stats['fonts'] = export_font_assets(sha, out)
+    stats['pages'] = export_text_page_assets(vcl, sha, out)
+    stats['tiles'] = export_tile_assets(sha, dma, out)
+    stats['boards'] = export_board_previews(game, sha, dma, out)
+    export_theme_assets(game, sha, dma, out)
+    export_palette_assets(sha, out)
+
+    # Pack page art: blank framed pages, with the text kept beside them.
+    pages_dir = out / "pages"
+    pages_dir.mkdir(exist_ok=True)
+    src_pages = out / "text_pages"
+    for p in sorted(src_pages.glob("page_*.txt")):
+        n = int(p.stem.split('_')[1])
+        bg = _palette_rgb(sha, 0)
+        frame = _palette_rgb(sha, 8)
+        img = Image.new('RGBA', (320, 200), (*bg, 255))
+        d = ImageDraw.Draw(img)
+        d.rectangle([6, 4, 313, 195], fill=(*frame, 255))
+        d.rectangle([7, 5, 312, 194], fill=(*bg, 255))
+        d.line([14, 21, 305, 21], fill=(*frame, 255))
+        img.save(pages_dir / f"page_{n:02d}.png")
+
+    # Sound effects as WAV, the format the pack loader expects.
+    sfx_dir = out / "sfx"
+    sfx_dir.mkdir(exist_ok=True)
+    sfx_count = 0
+    for i in range(50):
+        wav = vcl.create_wav(i, "sfx")
+        if wav:
+            (sfx_dir / f"{i}.wav").write_bytes(wav)
+            sfx_count += 1
+    stats['sfx'] = sfx_count
+    # Music: OPL2-rendered WAVs named after the original .ddt track stems.
+    stats['music'] = export_music_wavs(game, out, music_seconds)
+
+    icon_bank = game.get('hud_icon_bank', HUD_ICON_BANK)
+    stats['hud_icons'] = export_hud_assets(sha, out, icon_bank)
+    stats['portrait'] = 1 if export_portrait_asset(sha, out) else 0
+
+    with open(out / "pack.ini", 'w', encoding='ascii') as f:
+        f.write("; Generated reference pack - edit or replace these files.\n")
+        f.write("[pack]\n")
+        f.write(f"name = {game.get('title', game['id'])} Reference\n")
+        f.write(f"game = {game['id']}\n")
+    return stats
+
+
+# ============================================================================
 # EPISODE PROFILES
 # ============================================================================
 
@@ -1056,6 +1718,7 @@ def _game_from_episode(episode: int, data_dir: Path) -> Dict[str, Any]:
         'board_ext': prof['board_ext'],
         'boards': list(prof['boards']),
         'palette': None,
+        'title_music': prof['title_music'],
     }
 
 
@@ -1114,6 +1777,7 @@ def discover_games(base_dir: Path) -> List[Dict[str, Any]]:
             'board_ext': m.get('board_ext', prof['board_ext']),
             'boards': boards or list(prof['boards']),
             'palette': (base_dir / pal) if pal else None,
+            'title_music': m.get('title_music', prof['title_music']),
         })
 
     if games:
@@ -1188,6 +1852,16 @@ class JillExtractorApp:
         tools_menu.add_command(label="Batch Extract All Boards...", command=self.batch_extract_boards)
         tools_menu.add_command(label="Batch Extract All Shapes...", command=self.batch_extract_shapes)
         tools_menu.add_command(label="Batch Extract All Sounds...", command=self.batch_extract_sounds)
+        tools_menu.add_separator()
+        tools_menu.add_command(label="Batch Extract Fonts...", command=self.batch_extract_fonts)
+        tools_menu.add_command(label="Batch Extract Text Pages...", command=self.batch_extract_text_pages)
+        tools_menu.add_command(label="Batch Extract Tile Images...", command=self.batch_extract_tiles)
+        tools_menu.add_command(label="Batch Extract HUD + Theme...", command=self.batch_extract_hud)
+        tools_menu.add_command(label="Batch Extract Music (WAV)...", command=self.batch_extract_music_wavs)
+        tools_menu.add_command(label="Batch Extract Board Previews...", command=self.batch_extract_board_previews)
+        tools_menu.add_command(label="Export Palette...", command=self.export_palette)
+        tools_menu.add_separator()
+        tools_menu.add_command(label="Export Reference Asset Pack...", command=self.export_reference_pack)
         
         import_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Convert", menu=import_menu)
@@ -1676,11 +2350,13 @@ class JillExtractorApp:
     
     def play_selected_sound(self):
         selection = self.sound_listbox.curselection()
-        if not selection or not self.vcl_file:
+        if not selection:
             return
         text = self.sound_listbox.get(selection[0])
         
         if text.startswith("SFX "):
+            if not self.vcl_file:
+                return
             parts = text.split()
             sfx_idx = int(parts[1])
             if self.vcl_file.play_sound(sfx_idx, "sfx"):
@@ -1688,12 +2364,25 @@ class JillExtractorApp:
             else:
                 self.status_var.set("Playback failed")
         elif text.startswith("Music "):
+            if not self.vcl_file:
+                return
             parts = text.split()
             music_idx = int(parts[1])
             if self.vcl_file.play_sound(music_idx, "music"):
                 self.status_var.set(f"Playing Music {music_idx}")
             else:
                 self.status_var.set("Playback failed")
+        elif text.lower().endswith((".ddt", ".ark")):
+            filename = text.split()[-1]
+            path = self.game_path / filename
+            tmp = Path(tempfile.gettempdir()) / f"jill_preview_{Path(filename).stem}.wav"
+            ok, msg = render_cmf_wav(self.current_game, path, tmp, 30.0)
+            if ok and play_wav_file(tmp):
+                self.status_var.set(f"Playing {filename} (port OPL2 render)")
+            else:
+                self.status_var.set(msg if not ok else "Playback failed")
+                if not ok:
+                    messagebox.showwarning("Music playback", msg)
     
     def stop_sound(self):
         if HAS_WINSOUND:
@@ -1702,20 +2391,39 @@ class JillExtractorApp:
     
     def save_selected_sound_wav(self):
         selection = self.sound_listbox.curselection()
-        if not selection or not self.vcl_file:
+        if not selection:
             return
         text = self.sound_listbox.get(selection[0])
         
         if text.startswith("SFX "):
+            if not self.vcl_file:
+                return
             parts = text.split()
             sfx_idx = int(parts[1])
             default_name = f"sfx_{sfx_idx}.wav"
             type_ = "sfx"
         elif text.startswith("Music "):
+            if not self.vcl_file:
+                return
             parts = text.split()
             music_idx = int(parts[1])
             default_name = f"music_{music_idx}.wav"
             type_ = "music"
+        elif text.lower().endswith((".ddt", ".ark")):
+            filename = text.split()[-1]
+            filepath = filedialog.asksaveasfilename(
+                defaultextension=".wav",
+                filetypes=[("WAV", "*.wav")],
+                initialfile=f"{Path(filename).stem}.wav")
+            if not filepath:
+                return
+            ok, msg = render_cmf_wav(self.current_game, self.game_path / filename,
+                                     Path(filepath), MUSIC_EXPORT_SECONDS)
+            if ok:
+                self.status_var.set(f"Saved WAV to {filepath}")
+            else:
+                messagebox.showerror("Music export", msg)
+            return
         else:
             return
         
@@ -2623,27 +3331,35 @@ class JillExtractorApp:
                         f"size={self.vcl_file.sfx_sizes[i]}, rate={self.vcl_file.sfx_rates[i]}Hz")
             
             self.sound_listbox.insert(tk.END, "")
-            self.sound_listbox.insert(tk.END, "=== VCL Music/Pattern Bank ===")
-            for i in range(40):
-                if self.vcl_file.music_sizes[i] > 0:
-                    self.sound_listbox.insert(tk.END,
-                        f"Music {i:2d}: offset=0x{self.vcl_file.music_offsets[i]:08X}, "
-                        f"size={self.vcl_file.music_sizes[i]}")
+            self.sound_listbox.insert(tk.END, "=== VCL Text Pages ===")
+            for i in self.vcl_file.text_page_indexes():
+                self.sound_listbox.insert(tk.END,
+                    f"Page {i:2d}: offset=0x{self.vcl_file.music_offsets[i]:08X}, "
+                    f"size={self.vcl_file.music_sizes[i]}")
         
-        # DDT music files
-        title_music = EPISODE_PROFILES.get(self.current_episode, {}).get('title_music')
+        # DDT/ARK music files (Onesimus stores CMF tracks as SONG*.ARK)
+        title_music = self.current_game.get('title_music')
         if title_music:
-            ddt_path = self.game_path / title_music
-            if ddt_path.exists():
+            track_path = self.game_path / title_music
+            if track_path.exists():
                 self.sound_listbox.insert(tk.END, "")
                 self.sound_listbox.insert(tk.END, f"=== {title_music} ===")
-                self.sound_listbox.insert(tk.END, f"Title music: {ddt_path.name}")
+                self.sound_listbox.insert(tk.END, f"Title music: {track_path.name}")
         
-        # Other DDT files
+        # Other CMF tracks
         try:
-            for ddt_file in sorted(self.game_path.glob("*.ddt")):
-                if ddt_file.name != title_music:
-                    self.sound_listbox.insert(tk.END, f"Music: {ddt_file.name}")
+            tracks = list(self.game_path.glob("*.ddt")) + \
+                     list(self.game_path.glob("*.ark")) + \
+                     list(self.game_path.glob("*.ARK"))
+            seen = set()
+            for ddt_file in sorted(tracks, key=lambda p: p.name.lower()):
+                key = ddt_file.name.lower()
+                if key in seen or not is_cmf_file(ddt_file):
+                    continue
+                seen.add(key)
+                if title_music and ddt_file.name.lower() == title_music.lower():
+                    continue
+                self.sound_listbox.insert(tk.END, f"Music: {ddt_file.name}")
             # MAC files
             for mac_file in sorted(self.game_path.glob("*.mac")):
                 self.sound_listbox.insert(tk.END, f"Demo: {mac_file.name}")
@@ -2662,11 +3378,15 @@ class JillExtractorApp:
             parts = text.split()
             sfx_idx = int(parts[1])
             self.display_sound_info(sfx_idx)
+        elif text.startswith("Page "):
+            parts = text.split()
+            page_idx = int(parts[1])
+            self.display_text_page_info(page_idx)
         elif text.startswith("Music "):
             parts = text.split()
             music_idx = int(parts[1])
             self.display_music_info(music_idx)
-        elif text.endswith(".ddt"):
+        elif text.lower().endswith((".ddt", ".ark")):
             self.display_ddt_info(text.split()[-1])
         elif text.endswith(".mac"):
             self.display_mac_info(text.split()[-1])
@@ -2689,6 +3409,42 @@ class JillExtractorApp:
         self.sound_detail_text.delete(1.0, tk.END)
         self.sound_detail_text.insert(tk.END, '\n'.join(info))
     
+    def display_text_page_info(self, page_idx: int):
+        if not self.vcl_file:
+            return
+        lines = self.vcl_file.parse_text_page(page_idx)
+        info = [f"Text Page {page_idx}"]
+        if not lines:
+            info.append("  (empty or undecodable)")
+        else:
+            info.append(f"  Title: {lines[0]['text']}")
+            info.append(f"  Lines: {len(lines)}")
+            info.append("")
+            for i, line in enumerate(lines[:24]):
+                info.append(f"    [{line['colour']}] {line['text']}")
+            if len(lines) > 24:
+                info.append(f"    ... and {len(lines) - 24} more lines")
+
+        self.sound_detail_text.delete(1.0, tk.END)
+        self.sound_detail_text.insert(tk.END, '\n'.join(info))
+
+    def export_text_page(self, page_idx: int):
+        if not self.vcl_file:
+            return
+        lines = self.vcl_file.parse_text_page(page_idx)
+        if not lines:
+            messagebox.showwarning("Warning", "No data to extract")
+            return
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("Text", "*.txt"), ("All", "*.*")],
+            initialfile=f"page_{page_idx:02d}.txt")
+        if filepath:
+            with open(filepath, 'w', encoding='ascii', errors='replace') as f:
+                for line in lines:
+                    f.write(line['text'] + "\n")
+            self.status_var.set(f"Exported text page {page_idx} to {filepath}")
+
     def display_music_info(self, music_idx: int):
         if not self.vcl_file:
             return
@@ -2712,7 +3468,7 @@ class JillExtractorApp:
         
         ddt = DDTFile.load(str(path))
         info = []
-        info.append(f"DDT File: {filename}")
+        info.append(f"Music File: {filename}")
         info.append(f"  Size: {len(ddt.data)} bytes")
         info.append(f"  Is CMF/CTMF: {ddt.is_cmf}")
         if ddt.is_cmf:
@@ -2758,11 +3514,15 @@ class JillExtractorApp:
             parts = text.split()
             sfx_idx = int(parts[1])
             self.export_sound(sfx_idx, "sfx")
+        elif text.startswith("Page "):
+            parts = text.split()
+            page_idx = int(parts[1])
+            self.export_text_page(page_idx)
         elif text.startswith("Music "):
             parts = text.split()
             music_idx = int(parts[1])
             self.export_sound(music_idx, "music")
-        elif text.endswith(".ddt"):
+        elif text.lower().endswith((".ddt", ".ark")):
             filename = text.split()[-1]
             self.export_file(self.game_path / filename)
         elif text.endswith(".mac"):
@@ -2809,21 +3569,165 @@ class JillExtractorApp:
             return
         
         count = 0
+        out_path = Path(out_dir)
         for i in range(50):
             data = self.vcl_file.extract_sfx(i)
             if data:
-                with open(Path(out_dir) / f"sfx_{i:02d}.raw", 'wb') as f:
+                with open(out_path / f"sfx_{i:02d}.raw", 'wb') as f:
                     f.write(data)
+                wav = self.vcl_file.create_wav(i, "sfx")
+                if wav:
+                    with open(out_path / f"sfx_{i:02d}.wav", 'wb') as f:
+                        f.write(wav)
                 count += 1
-        
-        for i in range(40):
-            data = self.vcl_file.extract_music(i)
-            if data:
-                with open(Path(out_dir) / f"music_{i:02d}.raw", 'wb') as f:
-                    f.write(data)
-                count += 1
-        
-        self.status_var.set(f"Extracted {count} sound files to {out_dir}")
+
+        # The second VCL bank is the text-page table; export readable copies.
+        page_dir = out_path / "text_pages"
+        pages = 0
+        for i in self.vcl_file.text_page_indexes():
+            lines = self.vcl_file.parse_text_page(i)
+            if lines:
+                page_dir.mkdir(exist_ok=True)
+                with open(page_dir / f"page_{i:02d}.txt", 'w',
+                          encoding='ascii', errors='replace') as f:
+                    for line in lines:
+                        f.write(line['text'] + "\n")
+                pages += 1
+
+        self.status_var.set(
+            f"Extracted {count} WAV/raw sounds and {pages} text pages to {out_dir}")
+
+    # ---- Enhanced asset exporters (fonts/pages/tiles/HUD/packs) -----------
+    def _pick_out(self, title: str) -> Optional[Path]:
+        out_dir = filedialog.askdirectory(title=title)
+        return Path(out_dir) if out_dir else None
+
+    def batch_extract_fonts(self):
+        if not self.sha_file:
+            messagebox.showwarning("Fonts", "No shape archive for this game.")
+            return
+        out = self._pick_out("Output folder for fonts/")
+        if not out:
+            return
+        try:
+            count = export_font_assets(self.sha_file, out)
+            self.status_var.set(
+                f"Extracted {count} glyphs + fonts/main.png to {out / 'fonts'}")
+        except Exception as e:
+            messagebox.showerror("Fonts", str(e))
+
+    def batch_extract_text_pages(self):
+        if not self.vcl_file:
+            messagebox.showwarning("Text pages", "No .vcl bank for this game.")
+            return
+        out = self._pick_out("Output folder for text_pages/")
+        if not out:
+            return
+        try:
+            count = export_text_page_assets(self.vcl_file, self.sha_file, out)
+            self.status_var.set(
+                f"Extracted {count} text pages to {out / 'text_pages'}")
+        except Exception as e:
+            messagebox.showerror("Text pages", str(e))
+
+    def batch_extract_tiles(self):
+        if not self.sha_file or not self.dma_file:
+            messagebox.showwarning("Tiles", "Shape archive and jill.dma are required.")
+            return
+        out = self._pick_out("Output folder for tiles/")
+        if not out:
+            return
+        try:
+            count = export_tile_assets(self.sha_file, self.dma_file, out)
+            self.status_var.set(f"Extracted {count} tile images to {out / 'tiles'}")
+        except Exception as e:
+            messagebox.showerror("Tiles", str(e))
+
+    def batch_extract_hud(self):
+        if not self.sha_file or not self.dma_file:
+            messagebox.showwarning("HUD", "Shape archive and jill.dma are required.")
+            return
+        out = self._pick_out("Output folder for hud/ and themes/")
+        if not out:
+            return
+        try:
+            icons = export_hud_assets(self.sha_file, out)
+            portrait = export_portrait_asset(self.sha_file, out)
+            theme = export_theme_assets(self.current_game, self.sha_file,
+                                        self.dma_file, out)
+            extra = " + themes/intro.png" if theme else ""
+            extra += " + portrait.png" if portrait else ""
+            self.status_var.set(
+                f"Extracted HUD panels and {icons} icons{extra} to {out}")
+        except Exception as e:
+            messagebox.showerror("HUD", str(e))
+
+    def batch_extract_music_wavs(self):
+        out = self._pick_out("Output folder for music/")
+        if not out:
+            return
+        try:
+            count = export_music_wavs(self.current_game, out)
+            if count:
+                self.status_var.set(
+                    f"Rendered {count} music tracks to {out / 'music'}")
+            else:
+                self.status_var.set(
+                    "No music rendered - build the port so jill.exe can render CMF")
+        except Exception as e:
+            messagebox.showerror("Music", str(e))
+
+    def batch_extract_board_previews(self):
+        if not self.sha_file or not self.dma_file:
+            messagebox.showwarning("Board previews",
+                                   "Shape archive and jill.dma are required.")
+            return
+        out = self._pick_out("Output folder for board_previews/ and boards/")
+        if not out:
+            return
+        try:
+            count = export_board_previews(self.current_game, self.sha_file,
+                                          self.dma_file, out)
+            self.status_var.set(f"Rendered {count} boards to {out}")
+        except Exception as e:
+            messagebox.showerror("Board previews", str(e))
+
+    def export_palette(self):
+        if not self.sha_file:
+            messagebox.showwarning("Palette", "No shape archive for this game.")
+            return
+        out = self._pick_out("Output folder for palette.pal")
+        if not out:
+            return
+        try:
+            export_palette_assets(self.sha_file, out)
+            self.status_var.set(f"Wrote palette.pal / palette.json to {out}")
+        except Exception as e:
+            messagebox.showerror("Palette", str(e))
+
+    def export_reference_pack(self):
+        if not self.sha_file or not self.vcl_file or not self.dma_file:
+            messagebox.showwarning(
+                "Reference pack",
+                "Shape archive, .vcl and jill.dma are required.")
+            return
+        out = self._pick_out("Output folder for the reference pack")
+        if not out:
+            return
+        if not messagebox.askyesno(
+                "Reference pack",
+                "This writes a full editable pack (all shape frames, boards, "
+                "tiles, fonts, HUD, pages, SFX WAVs). It can take a while and "
+                "use a lot of disk space. Continue?"):
+            return
+        try:
+            stats = export_reference_pack(self.current_game, self.sha_file,
+                                          self.vcl_file, self.dma_file, out)
+            summary = ", ".join(f"{k}={v}" for k, v in stats.items())
+            self.status_var.set(f"Reference pack -> {out} ({summary})")
+        except Exception as e:
+            messagebox.showerror("Reference pack", str(e))
+
     
     def refresh_dma(self):
         self.dma_listbox.delete(0, tk.END)

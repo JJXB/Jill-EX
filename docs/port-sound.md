@@ -119,6 +119,26 @@ The original also had a PC-speaker synthesis path for machines without a
 Sound Blaster.  The port only implements the DSP/PCM behaviour, which is what
 the sampled data was authored for.
 
+### NOISEMAKER (sound test)
+
+`OPTIONS > SOUND > NOISEMAKER` is the port's version of the front end's `N`
+page: it auditions the raw sample slots instead of the logical effect ids.
+
+* `SET` cycles every installed game and loads that game's `.vcl` bank, so all
+  episodes and packs can be compared without restarting.
+* `SOUND n` selects any of the 50 raw sample slots; the label comes from
+  `docs/profiles.json` `sound_names` (emitted as `kSfxNames` by
+  `re/gen_port_data.py`).  Empty slots report `SILENT`.
+* `PLAY` (or Enter on the sound row) calls `MusicPlayer::play_sfx_sample()`,
+  which bypasses the logical-id remap so the selected slot plays verbatim.
+* Music is muted while the screen is open; the volume follows the SFX slider
+  even when gameplay SFX are switched off.  Leaving the screen restores the
+  selected game's bank and the music switch.
+
+The original's page 99 `_noisemaker` is the same idea, but it drives the
+PC-speaker driver; the port plays the sampled bank because that is the data
+every shipped release actually contains.
+
 ## Integration
 
 * `MusicPlayer` opens SDL audio at 48 kHz (stereo, 16-bit) and runs the
@@ -138,21 +158,29 @@ the sampled data was authored for.
 
   It is played when the front end starts and when the episode changes.
 * Board CHECKPT strings beginning with `*` request a level track
-  (`*stealth.ddt`, `*song5.ark`).  The engine reports each change once through
+  (`*stealth.ddt`, `*song5.ark`).  The first such string in a board is started
+  when the board loads, so board 1 begins on `zeppelin.ddt`; later strings are
+  section changes.  The engine reports each change once through
   `Engine::take_music_request()`; the app resolves it against the game's data
-  directory.
-* Settings: `[audio] music = 0/1` and `[audio] volume = 0..100` in `jill.ini`,
-  the **OPTIONS > SOUND** screen (MUSIC ON/OFF, MUSIC VOLUME), and
-  `--no-music` / `--music-volume N`.
+  directory.  The full per-board mapping is in `docs/music-catalog.md`.
+* Settings: `[audio] music = 0/1`, `[audio] volume = 0..100` and
+  `[audio] pc_speaker = 0/1` in `jill.ini`, the **OPTIONS > SOUND** screen
+  (MUSIC, MUSIC VOLUME, SFX, SFX VOLUME, PC SPEAKER), and
+  `--no-music` / `--music-volume N` / `--pc-speaker`.
+* PC SPEAKER replaces each sampled effect with a 1-bit square-wave rendition
+  of the same sample (the original's `_noisemaker` PIT output is not
+  data-driven in the shipped banks).  Music stays on the OPL2 path.
 * Headless verification: `--dump-music FILE` renders the title track (or
   `--music-file NAME`) to a 16-bit mono WAV for `--music-seconds N` seconds,
   so playback can be checked without an audio device.
 
 ## Limits **[open]**
 
-* The PC-speaker `_noisemaker` synthesis path is not implemented; the port
-  uses the sampled Sound Blaster path for all effects.
+* The PC-speaker mode is a 1-bit rendering of the sampled effects, not a
+  cycle-accurate PIT channel-2 emulation.
 * The port does not emulate OPL3 or the chip's timers/status port.
+* Rhythm-mode noise is now gated on the rhythm flag; ordinary melodic channels
+  7-9 were incorrectly using the LFSR and produced a hiss **[verified]**.
 * Some songs may send no note-off for percussion; the envelope then sustains
   until the next retrigger.  The shipped Jill/Onesimus tracks do send them.
 * Envelope and modulation depths are approximations, so A/B comparisons with

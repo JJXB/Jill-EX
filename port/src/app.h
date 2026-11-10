@@ -8,6 +8,10 @@ struct Options {
     std::string games_dir;      // --games DIR: manifest directory (default games)
     std::string profiles_dir;   // --profiles DIR: runtime profiles (default profiles)
     bool list_games = false;    // --list-games
+    // External enhanced-asset packs: `<external_dir>/<pack>` or `<pack>.zip`.
+    std::string external_dir = "external";  // --external DIR
+    std::string pack;           // --pack ID: mounted at start-up
+    bool list_packs = false;    // --list-packs
     std::string data_dir;       // --data DIR: overrides the manifest's directory
     // [paths] in jill.ini: per-game id -> asset directory.  Missing entries
     // keep the manifest's local default (jillt / ONESIM).
@@ -44,6 +48,7 @@ struct Options {
     int music_volume = 80;      // --music-volume N: 0..100
     bool sfx = true;            // --no-sfx: keep sampled effects silent
     int sfx_volume = 80;        // --sfx-volume N: 0..100
+    bool pc_speaker = false;    // --pc-speaker: 1-bit square-wave effects
     std::string dump_music;     // --dump-music FILE: render a CMF to WAV
     bool audio_check = false;   // --audio-check: open the device, report levels
     std::string music_file;     // --music-file NAME: track for --dump-music

@@ -100,6 +100,17 @@ def main():
         "// Source: docs/profiles.json and the per-episode load modules.",
         "",
     ]
+    # Shared sound-test labels for the 50 sampled-effect slots.  The sample
+    # data and logical-id remap are identical across the Jill engine builds.
+    sfx_names = cfg.get("sound_names", [])
+    if len(sfx_names) != 50:
+        raise SystemExit("docs/profiles.json: sound_names must hold 50 entries")
+    lines.append("static const char* const kSfxNames[50] = {")
+    for i in range(0, 50, 4):
+        chunk = ", ".join('"%s"' % s for s in sfx_names[i:i + 4])
+        lines.append("    " + chunk + ",")
+    lines.append("};")
+    lines.append("")
     for ep in cfg["episodes"]:
         n = ep["episode"]
         data = open(os.path.join(ROOT, ep["image"]), "rb").read()
