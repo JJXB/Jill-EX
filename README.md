@@ -46,9 +46,14 @@ No copyright assets shipped, provide your own.
 
 ### Remaining
 * Splash screens to be fixed.
+* Classic HUD and Menu work
+* Dedicated Demo record/playback
 * Work on Display Filters to be continued 
 * Character portraits.
-* Mac/Linux/console builds.
+* Stereo Image Rendering (SBS, Interlaced)
+* Possibly Add Midi support (CMF to Midi?)
+* Mac/Linux/console builds
+* 32 Bit Builds
 
 ## License
 [See LICENSE](LICENSE.md)

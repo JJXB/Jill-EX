@@ -3,6 +3,7 @@
 * Splash Screens - Temporarily Disabled in the code
 * Character Portraits - Present on the main title screen of the original game where the inventory would be
 * Xargon Support? - no. Separate Project. Use this and xargon's own source code as a base for it.
+* Vinyl Goddess? - no. Separate Project, check compatibility
 * Classic/Modern Menu Layout
 * Stereo Rendering - SBS, Interlaced
 * Dedicated Demo Playback mode (*.mac?) - May help with ending key macros.
