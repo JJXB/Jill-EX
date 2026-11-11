@@ -180,13 +180,24 @@ public:
         dialogs_per_tick_ = on ? 4 : 1;
     }
     bool fast_dialogs() const { return fast_dialogs_; }
-    // Background box behind the bottom message line (VIDEO menu option).
-    void set_message_box(bool on) { message_box_ = on; }
-    bool message_box() const { return message_box_; }
+    // Message-box style (VIDEO menu option): 0 = off, 1 = modern frame,
+    // 2 = classic shape-7 windows (portrait caption + titled card).
+    void set_message_box(int style) {
+        message_box_style_ = (style < 0) ? 0 : (style > 2 ? 2 : style);
+    }
+    int message_box() const { return message_box_style_; }
+    bool message_box_classic() const { return message_box_style_ == 2; }
+    // Classic "Reminder" card: a titled shape-7 window centred over the
+    // playfield.  Used by the help prompt and the start-of-game reminder.
+    void show_message_box(const std::string& title, const std::string& text,
+                          int ticks = 0x78);
+    void close_message_box();
+    bool message_box_open() const { return box_ttl_ > 0; }
     // Skip any pending caption/reveal (used for the static menu backdrop).
     void finish_dialogs() {
         caption_ttl_ = 0;
         msg_ttl_ = 0;
+        box_ttl_ = 0;
         text_reveal_ = 0x400;
     }
     // --- text page viewer --------------------------------------------------
@@ -373,6 +384,10 @@ private:
                         int advance, const char* s);
     void draw_bottom_msg(Framebuffer& fb);
     void draw_caption(Framebuffer& fb);           // level-title dialog box
+    void draw_caption_classic(Framebuffer& fb,
+                              const std::vector<std::string>& lines);
+    void draw_portrait(Framebuffer& fb, int x, int y);
+    void draw_message_box(Framebuffer& fb);       // classic Reminder card
     void draw_text_page(Framebuffer& fb);         // VCL page viewer
     void draw_frame(Framebuffer& fb, int x, int y, int w, int h);
     void render_hud_classic(Framebuffer& fb);  // original 64x84 panel
@@ -476,7 +491,11 @@ private:
     size_t msg_shown_ = 0;       // characters revealed so far
     bool fast_dialogs_ = false;  // enhancement (captions / text pages)
     int dialogs_per_tick_ = 1;
-    bool message_box_ = true;    // draw a frame behind the bottom message
+    int message_box_style_ = 1;  // 0 off, 1 modern frame, 2 classic windows
+    std::string box_title_;      // classic titled message card
+    std::string box_text_;
+    int box_ttl_ = 0;
+    int box_hold_ = 0;           // input cannot dismiss the card yet
     std::string caption_;        // level-title caption text
     int caption_ttl_ = 0;
     int caption_hold_ = 0;       // input cannot dismiss the caption yet

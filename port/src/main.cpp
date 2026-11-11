@@ -104,7 +104,9 @@ void usage() {
         "  --fire-crouched  enhancement default: fire while crouched\n"
         "  --retain-items   enhancement default: keep keys/weapons between levels\n"
         "  --fast-dialogs   enhancement default: 4 chars/tick for captions/pages\n"
-        "  --no-message-box plain bottom messages, no background frame\n"
+        "  --no-message-box plain messages, no frames\n"
+        "  --modern-message-box  modern framed message boxes (default)\n"
+        "  --classic-message-box original shape-7 caption/reminder windows\n"
         "  --air-jump-buffer keep the original hold-jump-through-a-fall buffer\n"
         "  --minimap      draw a small board overview in the lower-right corner\n"
         "  --center-fish-shot  centre the fish form's shot vertically\n"
@@ -209,8 +211,8 @@ int main(int argc, char** argv) {
                                         opt.retain_items);
         opt.fast_dialogs = ini.get_bool("gameplay", "fast_dialogs",
                                         opt.fast_dialogs);
-        opt.message_box = ini.get_bool("gameplay", "message_box",
-                                       opt.message_box);
+        opt.message_box = ini.get_int("gameplay", "message_box",
+                                      opt.message_box);
         opt.air_jump_buffer = ini.get_bool("gameplay", "air_jump_buffer",
                                            opt.air_jump_buffer);
         opt.minimap = ini.get_bool("gameplay", "minimap", opt.minimap);
@@ -362,7 +364,11 @@ int main(int argc, char** argv) {
         } else if (a == "--fast-dialogs") {
             opt.fast_dialogs = true;
         } else if (a == "--no-message-box") {
-            opt.message_box = false;
+            opt.message_box = 0;
+        } else if (a == "--modern-message-box") {
+            opt.message_box = 1;
+        } else if (a == "--classic-message-box") {
+            opt.message_box = 2;
         } else if (a == "--air-jump-buffer") {
             opt.air_jump_buffer = true;
         } else if (a == "--minimap") {

@@ -42,6 +42,19 @@ THEME.
 (CURRENT, or another installed game).  It is stored as `[hud] frame` and can
 also be set with `--hud-frame N`.
 
+`OPTIONS > VIDEO > MESSAGE BOX` cycles three styles:
+
+| Style | Behaviour |
+| --- | --- |
+| OFF | Plain text hints; the level-title card keeps its port frame |
+| MODERN | Port frame behind the bottom hint and the level-title box |
+| CLASSIC | Original shape-7 windows: the 64x70 Jill portrait caption and the titled `Reminder` card |
+
+CLASSIC is stored as `[gameplay] message_box = 2` (`1` = MODERN, `0` = OFF) and
+can be selected with `--classic-message-box`.  The original portrait is shape
+entry 24, also exported as `portrait.png` by the extractor.  A fresh game shows
+the `Reminder` card after the first level-title caption.
+
 The main menu always has `RESTORE GAME` and `HIGH SCORES`.  On `RESTORE GAME`,
 Left/Right changes the episode and the slots then show that game's saves.
 `HIGH SCORES` also uses Left/Right to switch episodes.  Each game/mod keeps its

@@ -1,5 +1,24 @@
 # Progress
 
+## 2026-11-11 (original portrait and classic message boxes)
+
+* Tracked the Jill portrait down to shape entry 24: sixteen 16x16 tiles (the
+  bottom row is 16x22/16x20) laid out as a 4x4 picture, 64x70 px.  It is the
+  face on the original title screen and beside level-title dialogs, and is
+  shared by Jill 1/2/3 (Onesimus has none).  `export_portrait_asset` now emits
+  this exact art as `portrait.png` instead of composing the idle sprite.
+* `VIDEO > MESSAGE BOX` is now a three-way option: OFF, MODERN, CLASSIC.
+  CLASSIC draws the original shape-7 windows: the portrait caption card
+  (`JILL BOUNDS / THROUGH / THE BOULDERS`) and the titled `Reminder` card
+  (`YOU CAN PRESS F1 AT ANY TIME TO GET HELP.`), both with the 6 px font and
+  blue text plate.  The reminder appears after the first caption of a fresh
+  game and from F1 when no text pages are installed.
+* Level-title dialogs in both styles now use the real entry-24 portrait; the
+  modern box keeps its frame.  The portrait can still be overridden by a pack
+  `portrait.<ext>`.
+* `[gameplay] message_box` accepts `0/1/2`; `--classic-message-box` and
+  `--modern-message-box` set it from the command line.
+
 ## 2026-11-11 (splash screens)
 
 * Start-up splashes are enabled again.  Jill 1/2/3 use the original

@@ -63,7 +63,9 @@ run.cmd [options]
 | `--hud-text N` | HUD label colour palette index (default 7) |
 | `--hud-health N` | Health colour 0..15, or `original` |
 | `--minimap` | Draw the board overview in the lower-right corner |
-| `--no-message-box` | Plain bottom messages, no background frame |
+| `--no-message-box` | Plain messages, no frames (`[gameplay] message_box = 0`) |
+| `--modern-message-box` | Modern framed message boxes (default, `= 1`) |
+| `--classic-message-box` | Original shape-7 caption/portrait and `Reminder` windows (`= 2`) |
 
 ### Gameplay and enhancements
 

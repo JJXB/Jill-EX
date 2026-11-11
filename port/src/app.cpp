@@ -551,7 +551,7 @@ bool apply_selection(Engine& engine, const std::vector<GameDef>& games,
     const int knives = engine.max_knives();
     const bool retain_items = engine.retain_items();
     const bool fast_dialogs = engine.fast_dialogs();
-    const bool message_box = engine.message_box();
+    const int message_box = engine.message_box();
     const bool air_jump = engine.air_jump_buffer();
     const bool minimap = engine.minimap();
     const bool center_fish = engine.center_fish_shot();
@@ -1005,6 +1005,14 @@ const char* filter_name(int filter) {
     }
 }
 
+const char* message_box_name(int style) {
+    switch (style) {
+        case 1: return "MODERN";
+        case 2: return "CLASSIC";
+        default: return "OFF";
+    }
+}
+
 int filter_next(int filter) { return (filter + 1) % 3; }
 
 struct ResolutionOption {
@@ -1245,7 +1253,7 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                              ? "N/A (HIGH FRAMERATE OFF)"
                              : (video.interpolate ? "ON" : "OFF")),
                     std::string("MESSAGE BOX: ") +
-                        (engine.message_box() ? "ON" : "OFF"),
+                        message_box_name(engine.message_box()),
                     std::string("FILTER: ") + filter_name(video.filter),
                     "BACK"};
         }
@@ -2273,7 +2281,7 @@ bool start_game(Engine& engine, const std::vector<GameDef>& games, int index,
     const int knives = engine.max_knives();
     const bool retain = engine.retain_items();
     const bool fast_dialogs = engine.fast_dialogs();
-    const bool message_box = engine.message_box();
+    const int message_box = engine.message_box();
     const bool air_jump = engine.air_jump_buffer();
     const bool minimap = engine.minimap();
     const bool center_fish = engine.center_fish_shot();
@@ -3017,6 +3025,11 @@ int run_sdl(const Options& opt, Engine& engine,
                                    menu.menu_frame)) {
                         game_started = true;
                         menu.screen = MenuScreen::Closed;
+                        if (engine.message_box_classic()) {
+                            engine.show_message_box(
+                                "Reminder",
+                                "YOU CAN PRESS F1 AT ANY TIME TO GET HELP.");
+                        }
                     }
                 } else {
                     menu.screen = MenuScreen::Main;
@@ -3123,7 +3136,8 @@ int run_sdl(const Options& opt, Engine& engine,
                     }
                 } else if (sel == 5) {
                     if (nav == 5 || nav == 3 || nav == 4) {
-                        engine.set_message_box(!engine.message_box());
+                        const int step = (nav == 3) ? 2 : 1;
+                        engine.set_message_box((engine.message_box() + step) % 3);
                     }
                 } else if (sel == 6) {
                     if (nav == 5 || nav == 3 || nav == 4) {
@@ -3591,6 +3605,10 @@ int run_sdl(const Options& opt, Engine& engine,
                         // Heck to Play" (the original's PRESS F1 FOR HELP).
                         if (engine.text_pages_available()) {
                             engine.show_text_page(1);
+                        } else if (engine.message_box_classic()) {
+                            engine.show_message_box(
+                                "Reminder",
+                                "YOU CAN PRESS F1 AT ANY TIME TO GET HELP.");
                         } else {
                             std::printf("%s\n", engine.status().c_str());
                         }
@@ -3881,7 +3899,7 @@ int run_sdl(const Options& opt, Engine& engine,
         ini.set_int("gameplay", "max_knives", engine.max_knives());
         ini.set_bool("gameplay", "retain_items", engine.retain_items());
         ini.set_bool("gameplay", "fast_dialogs", engine.fast_dialogs());
-        ini.set_bool("gameplay", "message_box", engine.message_box());
+        ini.set_int("gameplay", "message_box", engine.message_box());
         ini.set_bool("gameplay", "air_jump_buffer", engine.air_jump_buffer());
         ini.set_bool("gameplay", "minimap", engine.minimap());
         ini.set_bool("gameplay", "center_fish_shot", engine.center_fish_shot());

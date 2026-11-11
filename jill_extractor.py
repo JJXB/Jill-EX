@@ -1148,6 +1148,7 @@ class MACFile:
 FONT_ENTRY = 2
 FONT_TRANSPARENT = (0, 3)  # the original text blitter skips 0 and 3
 HUD_ICON_BANK = 0x0E
+PORTRAIT_ENTRY = 24  # 4x4 tile grid (16 frames) used by the dialog portrait
 
 
 def _palette_rgb(sha: SHAFile, index: int) -> Tuple[int, int, int]:
@@ -1525,27 +1526,33 @@ def export_hud_assets(sha: SHAFile, out_dir: Path,
 
 
 def export_portrait_asset(sha: SHAFile, out_dir: Path) -> bool:
-    """Export `portrait.png` (64x84) used beside level-title dialogs.
+    """Export `portrait.png` (64x70), the original dialog/title portrait.
 
-    The default is composed from the player's idle sprite (the same art the
-    original title screen uses for Jill), framed and scaled 2x.
+    Jill's face is shape entry 24: sixteen 16x16 tiles laid out as a 4x4 grid
+    (the last row's frames are 16x22/16x20, so the finished picture is 70 px
+    tall).  The same entry is used by Jill 1/2/3; Onesimus has no portrait.
     """
-    sprite = _shape_rgba(sha, 8, 0x10, skip=(0,))
-    if sprite is None:
+    entry = sha.entries[PORTRAIT_ENTRY] if PORTRAIT_ENTRY < len(sha.entries) else None
+    if entry is None or not entry.frames:
         return False
-    resample = getattr(Image, 'Resampling', Image).NEAREST
-    big = sprite.resize((sprite.width * 2, sprite.height * 2), resample)
-    frame = Image.new('RGBA', (64, 84), (16, 24, 48, 255))
-    d = ImageDraw.Draw(frame)
-    d.rectangle([0, 0, 63, 83], outline=(90, 160, 230, 255))
-    x = (64 - big.width) // 2
-    y = (84 - big.height) // 2
-    frame.paste(big, (x, y), big)
+    frame = Image.new('RGBA', (64, 70), (0, 0, 0, 255))
+    drew = False
+    for i in range(16):
+        tile = _shape_rgba(sha, PORTRAIT_ENTRY, i, skip=())
+        if tile is None:
+            continue
+        frame.paste(tile, ((i % 4) * 16, (i // 4) * 16))
+        drew = True
+    if not drew:
+        return False
     out_dir.mkdir(parents=True, exist_ok=True)
     frame.save(out_dir / "portrait.png")
     with open(out_dir / "portrait.json", 'w', encoding='utf-8') as f:
-        json.dump({'size': [64, 84], 'source': 'shape entry 8 frame 0x10',
-                   'scale': 2}, f, indent=2)
+        json.dump({'size': [64, 70],
+                   'source': f'shape entry {PORTRAIT_ENTRY} frames 0-15 '
+                             '(4x4 tile grid)',
+                   'layout': '16x16 tiles, bottom row 16x22/16x20'},
+                  f, indent=2)
     return True
 
 

@@ -69,7 +69,7 @@ struct Options {
     bool fire_crouched = false; // --fire-crouched: enhancement default
     bool retain_items = false;  // --retain-items: enhancement default
     bool fast_dialogs = false;  // --fast-dialogs: shorter, revealing messages
-    bool message_box = true;    // --no-message-box: plain text, no frame
+    int message_box = 1;        // 0 off, 1 modern frame, 2 classic windows
     bool air_jump_buffer = false; // --air-jump-buffer: hold jump through a fall
     bool minimap = false;       // --minimap: board overview overlay
     bool center_fish_shot = false; // --center-fish-shot: vertical fish shot

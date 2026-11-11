@@ -353,6 +353,10 @@ void Engine::set_input(int h, int v, bool btn1_down, bool btn2_down) {
     if ((h != 0 || v != 0 || btn1_down || btn2_down) && caption_hold_ == 0) {
         caption_ttl_ = 0;
     }
+    // Same for the classic Reminder card.
+    if ((h != 0 || v != 0 || btn1_down || btn2_down) && box_hold_ == 0) {
+        box_ttl_ = 0;
+    }
 
     // The original latches are cleared when the physical button is released;
     // the player sets them when it consumes a jump/throw (26F4 tail).
@@ -404,6 +408,14 @@ void Engine::tick() {
     }
     if (text_reveal_ < 0x400) {
         text_reveal_ += static_cast<size_t>(dialogs_per_tick_);
+    }
+    if (caption_ttl_ > 0 && box_ttl_ > 0) {
+        box_hold_ = 8;  // re-arm when the caption finishes and the card appears
+    } else if (box_hold_ > 0) {
+        --box_hold_;
+    }
+    if (box_ttl_ > 0 && caption_ttl_ <= 0) {
+        --box_ttl_;
     }
 }
 
@@ -2607,6 +2619,7 @@ void Engine::render(Framebuffer& fb, bool with_hud, float alpha) {
     // with_hud=false and have no message anyway).
     draw_bottom_msg(fb);
     draw_caption(fb);
+    draw_message_box(fb);
     draw_text_page(fb);
 
     clear_frame_marks();
@@ -3348,10 +3361,11 @@ void Engine::draw_bottom_msg(Framebuffer& fb) {
     int w = static_cast<int>(shown.size()) * 6;
     int x = (Framebuffer::W - w) / 2;
     int y = Framebuffer::H - 14;
-    if (message_box_) {
+    if (message_box_style_ == 1) {
         draw_frame(fb, x - 5, y - 3, w + 10, 13);
     } else {
-        // 1 px shadow so the line stays readable over bright tiles.
+        // Plain line (the original look) with a 1 px shadow so the text stays
+        // readable over bright tiles.  Classic mode also uses this branch.
         draw_text(fb, x + 1, y + 1, 0, shown.c_str());
     }
     draw_text(fb, x, y, msg_colour_, shown.c_str());
@@ -3359,6 +3373,65 @@ void Engine::draw_bottom_msg(Framebuffer& fb) {
 
 // Level-title dialog box.  Text lines come from the 36-entry title table and
 // are revealed at the dialog speed, so FASTER DIALOG BOXES also speeds this up.
+void Engine::draw_portrait(Framebuffer& fb, int x, int y) {
+    // A pack's portrait.<ext> is a hand-authored replacement and wins.
+    const ExternalPicture* ext_portrait =
+        ext_visuals_ ? ext_visuals_->portrait() : nullptr;
+    if (ext_portrait) {
+        // Older reference packs exported a 64x84 portrait; clip it to the
+        // original 64x70 card so it cannot spill over the window border.
+        const int w = std::min(ext_portrait->w, 64);
+        const int h = std::min(ext_portrait->h, 70);
+        for (int sy = 0; sy < h; ++sy) {
+            for (int sx = 0; sx < w; ++sx) {
+                const size_t i = static_cast<size_t>(sy) * ext_portrait->w + sx;
+                if (i < ext_portrait->mask.size() && ext_portrait->mask[i]) {
+                    fb.put(x + sx, y + sy, ext_portrait->px[i]);
+                }
+            }
+        }
+        return;
+    }
+    // The original title/menu portrait is shape entry 24: sixteen 16x16 (the
+    // bottom row is 16x22/16x20) tiles arranged as a 4-wide grid.  Jill 1/2/3
+    // all ship it; Onesimus has no equivalent.
+    bool drew = false;
+    for (int i = 0; i < 16; ++i) {
+        const ShapeFrame* f = shape_frame(24, i);
+        if (!f || f->w <= 0 || f->h <= 0) {
+            continue;
+        }
+        drew = true;
+        const int ox = x + (i % 4) * 16;
+        const int oy = y + (i / 4) * 16;
+        for (int sy = 0; sy < f->h; ++sy) {
+            for (int sx = 0; sx < f->w; ++sx) {
+                fb.put(ox + sx, oy + sy,
+                       f->px[static_cast<size_t>(sy) * f->w + sx]);
+            }
+        }
+    }
+    if (drew) {
+        return;
+    }
+    // Fallback for a game without entry 24: the player's idle sprite, 2x.
+    draw_frame(fb, x, y, 64, 70);
+    const ShapeFrame* pf = shape_frame(8, 0x10);
+    if (pf) {
+        const int ox = x + (64 - pf->w * 2) / 2;
+        const int oy = y + (70 - pf->h * 2) / 2;
+        for (int sy = 0; sy < pf->h; ++sy) {
+            for (int sx = 0; sx < pf->w; ++sx) {
+                const uint8_t c = pf->px[static_cast<size_t>(sy) * pf->w + sx];
+                if (c == 0) {
+                    continue;
+                }
+                fb.fill_rect(ox + sx * 2, oy + sy * 2, 2, 2, c);
+            }
+        }
+    }
+}
+
 void Engine::draw_caption(Framebuffer& fb) {
     if (caption_.empty() || caption_ttl_ <= 0) {
         return;
@@ -3381,6 +3454,10 @@ void Engine::draw_caption(Framebuffer& fb) {
     if (lines.empty()) {
         return;
     }
+    if (message_box_style_ == 2) {
+        draw_caption_classic(fb, lines);
+        return;
+    }
     int maxlen = 0;
     for (const std::string& line : lines) {
         maxlen = std::max(maxlen, static_cast<int>(line.size()));
@@ -3393,10 +3470,9 @@ void Engine::draw_caption(Framebuffer& fb) {
 
     // Dialog portrait: the original title screen shows the character where the
     // in-game inventory panel sits.  Draw the same portrait beside the caption
-    // box; pack `portrait.<ext>` overrides it, otherwise use the player's idle
-    // sprite scaled 2x inside a small frame.
+    // box; pack `portrait.<ext>` overrides it.
     constexpr int kPortraitW = 64;
-    constexpr int kPortraitH = 84;
+    constexpr int kPortraitH = 70;
     constexpr int kPortraitGap = 6;
     int px = -1;
     if (hud_portrait_ && boxw + kPortraitGap + kPortraitW <= Framebuffer::W) {
@@ -3409,28 +3485,8 @@ void Engine::draw_caption(Framebuffer& fb) {
         const int py = std::max(
             0, std::min(by + (boxh - kPortraitH) / 2,
                         Framebuffer::H - kPortraitH));
-        const ExternalPicture* ext_portrait =
-            ext_visuals_ ? ext_visuals_->portrait() : nullptr;
-        if (ext_portrait) {
-            blit_external_picture(fb, px, py, *ext_portrait);
-        } else {
-            draw_frame(fb, px, py, kPortraitW, kPortraitH);
-            const ShapeFrame* pf = shape_frame(8, 0x10);
-            if (pf) {
-                const int ox = px + (kPortraitW - pf->w * 2) / 2;
-                const int oy = py + (kPortraitH - pf->h * 2) / 2;
-                for (int sy = 0; sy < pf->h; ++sy) {
-                    for (int sx = 0; sx < pf->w; ++sx) {
-                        const uint8_t c =
-                            pf->px[static_cast<size_t>(sy) * pf->w + sx];
-                        if (c == 0) {
-                            continue;
-                        }
-                        fb.fill_rect(ox + sx * 2, oy + sy * 2, 2, 2, c);
-                    }
-                }
-            }
-        }
+        draw_frame(fb, px - 3, py - 3, kPortraitW + 6, kPortraitH + 6);
+        draw_portrait(fb, px, py);
     }
     draw_frame(fb, bx, by, boxw, boxh);
 
@@ -3446,6 +3502,142 @@ void Engine::draw_caption(Framebuffer& fb) {
         ty += 10;
     }
 }
+
+// Original level-title card: a shape-7 window with the 64x70 Jill portrait on
+// the left and a blue text plate on the right (the "JILL BOUNDS THROUGH THE
+// BOULDERS" box).  Selected by VIDEO > MESSAGE BOX: CLASSIC.
+void Engine::draw_caption_classic(Framebuffer& fb,
+                                  const std::vector<std::string>& lines) {
+    constexpr int kBoxW = 200;
+    constexpr int kBoxH = 88;
+    const int centre =
+        hud_classic_ ? view_x() + view_w() / 2 : Framebuffer::W / 2;
+    int bx = centre - kBoxW / 2;
+    bx = std::max(0, std::min(bx, Framebuffer::W - kBoxW));
+    const int by = (Framebuffer::H - kBoxH) / 2;
+
+    draw_menu_window(fb, bx, by, kBoxW, kBoxH);
+
+    const int panel_x = hud_portrait_ ? bx + 80 : bx + 10;
+    const int panel_y = by + 9;
+    const int panel_w = hud_portrait_ ? kBoxW - 88 : kBoxW - 20;
+    const int panel_h = 70;
+    if (hud_portrait_) {
+        draw_portrait(fb, bx + 8, by + 9);
+    }
+    fb.fill_rect(panel_x, panel_y, panel_w, panel_h, 0);
+    fb.fill_rect(panel_x + 1, panel_y + 1, panel_w - 2, panel_h - 2, 1);
+
+    const int line_h = 9;
+    int ty = panel_y + (panel_h - static_cast<int>(lines.size()) * line_h) / 2;
+    size_t budget = caption_shown_;
+    for (const std::string& line : lines) {
+        const size_t n = std::min(budget, line.size());
+        if (n > 0) {
+            const std::string part = line.substr(0, n);
+            const int tx =
+                panel_x + (panel_w - static_cast<int>(part.size()) * 6) / 2;
+            draw_text(fb, tx + 1, ty + 1, 4, part.c_str());
+            draw_text(fb, tx, ty, 15, part.c_str());
+            budget -= n;
+        }
+        ty += line_h;
+    }
+}
+
+// Classic titled card (the original "Reminder" window).
+void Engine::show_message_box(const std::string& title, const std::string& text,
+                              int ticks) {
+    box_title_ = title;
+    box_text_ = text;
+    box_ttl_ = ticks > 0 ? ticks : 0x78;
+    box_hold_ = 8;
+}
+
+void Engine::close_message_box() {
+    box_ttl_ = 0;
+    box_hold_ = 0;
+}
+
+void Engine::draw_message_box(Framebuffer& fb) {
+    if (box_ttl_ <= 0 || box_text_.empty()) {
+        return;
+    }
+    if (caption_ttl_ > 0) {
+        return;  // let the level-title card finish first
+    }
+    std::vector<std::string> lines;
+    std::string cur;
+    auto flush = [&]() {
+        while (!cur.empty() && cur.front() == ' ') {
+            cur.erase(cur.begin());
+        }
+        lines.push_back(cur);
+        cur.clear();
+    };
+    // Word wrap at 24 characters (6 px font), matching the original card.
+    for (size_t i = 0; i < box_text_.size(); ++i) {
+        const char c = box_text_[i];
+        if (c == '\n') {
+            flush();
+            continue;
+        }
+        cur.push_back(c);
+        if (cur.size() >= 24) {
+            size_t sp = cur.find_last_of(' ');
+            if (sp != std::string::npos) {
+                const std::string rest = cur.substr(sp + 1);
+                cur.resize(sp);
+                flush();
+                cur = rest;
+            } else {
+                flush();
+            }
+        }
+    }
+    if (!cur.empty()) {
+        flush();
+    }
+    if (lines.empty()) {
+        return;
+    }
+
+    constexpr int kBoxW = 200;
+    const int line_h = 9;
+    const int content_h = static_cast<int>(lines.size()) * line_h;
+    const int kBoxH = std::max(96, content_h + 52);
+    const int centre =
+        hud_classic_ ? view_x() + view_w() / 2 : Framebuffer::W / 2;
+    int bx = centre - kBoxW / 2;
+    bx = std::max(0, std::min(bx, Framebuffer::W - kBoxW));
+    const int by = (Framebuffer::H - kBoxH) / 2;
+
+    draw_menu_window(fb, bx, by, kBoxW, kBoxH);
+
+    if (!box_title_.empty()) {
+        const int tw = static_cast<int>(box_title_.size()) * 8;
+        const int tx = bx + (kBoxW - tw) / 2;
+        draw_text_8(fb, tx + 1, by + 9, 1, box_title_.c_str());
+        draw_text_8(fb, tx, by + 8, 13, box_title_.c_str());
+    }
+
+    const int panel_x = bx + 10;
+    const int panel_y = by + 22;
+    const int panel_w = kBoxW - 20;
+    const int panel_h = kBoxH - 32;
+    fb.fill_rect(panel_x, panel_y, panel_w, panel_h, 0);
+    fb.fill_rect(panel_x + 1, panel_y + 1, panel_w - 2, panel_h - 2, 1);
+
+    int ty = panel_y + (panel_h - content_h) / 2;
+    for (const std::string& line : lines) {
+        const int tx =
+            panel_x + (panel_w - static_cast<int>(line.size()) * 6) / 2;
+        draw_text(fb, tx + 1, ty + 1, 4, line.c_str());
+        draw_text(fb, tx, ty, 15, line.c_str());
+        ty += line_h;
+    }
+}
+
 
 void Engine::draw_text_page(Framebuffer& fb) {
     if (!page_open_) {
