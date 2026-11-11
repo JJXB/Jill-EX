@@ -45,7 +45,7 @@ struct Options {
     int hud_text = 7;           // --hud-text: HUD label colour palette index
     int hud_health = -1;        // --hud-health: -1 original pips, else palette
     int hud_frame = 0;          // --hud-frame: 0 current, N = games[N-1] art
-    int menu_frame = 0;         // --menu-frame: 0 current, N = games[N-1] art
+    int menu_frame = -1;        // --menu-frame: -1 theme, 0 current, N = game
     bool music = true;          // --no-music: keep the CMF player silent
     int music_volume = 80;      // --music-volume N: 0..100
     bool sfx = true;            // --no-sfx: keep sampled effects silent
@@ -62,6 +62,7 @@ struct Options {
     int super_jump = 0;         // --super-jump N: cheat, minimum feather count (0..15)
     int menu_theme = 0;         // --menu-theme N: 0 plain, N = games[N-1] intro board
     bool classic_menu = false;  // --classic-menu: original frame/window menu
+    bool live_menu_bg = false;  // show the live game behind a modern menu
     int splash = 0;             // --splash N: 0 off, N = games[N-1] publisher screen
     int save_slot = -1;         // --save N: headless debug, write save slot N
     int load_slot = -1;         // --load N: load save slot N before running

@@ -2641,7 +2641,7 @@ void Engine::draw_classic_backdrop(Framebuffer& fb, const std::string& title,
     // Frame 0x0A is the 16x16 noise fill; 0x00/0x03 are the 8x16 vertical
     // edges, 0x06/0x08 the 16x12 horizontal edges and 0x04 the corner.
     auto frame = [&](int entry, int index) {
-        return menu ? classic_menu_shape(entry, index)
+        return menu ? classic_frame_shape(entry, index)
                     : classic_hud_shape(entry, index);
     };
     const ShapeFrame* fill = frame(3, 0x0A);
@@ -2758,19 +2758,21 @@ void Engine::draw_menu_window(Framebuffer& fb, int x, int y, int w, int h) {
             }
         }
     }
-    // Edges (2 top, 4 right, 6 bottom, 8 left) and corners (1/3/5/7).
+    // Frames 1..8 are a scan-order nine-slice: 1/2/3 top row, 4/5 middle
+    // edges, 6/7/8 bottom row.  (The old mapping used 5/7 as corners and
+    // therefore put the right edge and bottom row in the wrong places.)
     for (int xx = x + 8; xx < x + w - 8; xx += 8) {
         part(2, xx, y);
-        part(6, xx, y + h - 8);
+        part(7, xx, y + h - 8);
     }
     for (int yy = y + 8; yy < y + h - 8; yy += 8) {
-        part(8, x, yy);
-        part(4, x + w - 8, yy);
+        part(4, x, yy);
+        part(5, x + w - 8, yy);
     }
     part(1, x, y);
     part(3, x + w - 8, y);
-    part(5, x + w - 8, y + h - 8);
-    part(7, x, y + h - 8);
+    part(8, x + w - 8, y + h - 8);
+    part(6, x, y + h - 8);
 }
 
 // Original HUD (22ab:05dd), the optional CLASSIC style.  The board still fills
@@ -3598,6 +3600,20 @@ bool Engine::set_hud_frame_game(const GameDef* game, std::string& err) {
     return true;
 }
 
+bool Engine::set_classic_frame_game(const GameDef* game, std::string& err) {
+    classic_frame_custom_ = false;
+    classic_frame_shapes_ = ShapeBank{};
+    if (!game || game->id == game_.id) {
+        return true;
+    }
+    if (!classic_frame_shapes_.load(join(game->data_dir, game->shape_file),
+                                    err)) {
+        return false;
+    }
+    classic_frame_custom_ = true;
+    return true;
+}
+
 bool Engine::set_menu_frame_game(const GameDef* game, std::string& err) {
     menu_frame_custom_ = false;
     menu_frame_shapes_ = ShapeBank{};
@@ -3614,6 +3630,15 @@ bool Engine::set_menu_frame_game(const GameDef* game, std::string& err) {
 const ShapeFrame* Engine::classic_hud_shape(int entry, int index) {
     if (hud_frame_custom_) {
         if (const ShapeFrame* f = hud_frame_shapes_.frame(entry, index)) {
+            return f;
+        }
+    }
+    return shape_frame(entry, index);
+}
+
+const ShapeFrame* Engine::classic_frame_shape(int entry, int index) {
+    if (classic_frame_custom_) {
+        if (const ShapeFrame* f = classic_frame_shapes_.frame(entry, index)) {
             return f;
         }
     }
@@ -4008,7 +4033,8 @@ void Engine::draw_object(int i, Framebuffer& fb) {
             static const int kBase = 0x14;
             static const int kLen = 3;
             const int sx = view_x() + 0x10;
-            const int sy = view_y() + 4;
+            // The modern HUD occupies the top 12 px; keep the label below it.
+            const int sy = view_y() + (hud_classic_ ? 4 : 16);
             for (int k = 0; k < kLen; ++k) {
                 draw_shape(fb, (ts << 8) | ((kBase + k) & 0xFF),
                            sx + k * 16, sy, true);

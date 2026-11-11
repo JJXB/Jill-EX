@@ -93,8 +93,10 @@ void usage() {
         "  --super-jump N cheat: treat N feathers (item 9) as carried, 0..15\n"
         "  --menu-theme N front-end theme: 0 port, N = N-th game's intro board\n"
         "  --classic-menu draw menus with the original frame/window art\n"
+        "  --live-menu    keep the live game visible behind the modern menu\n"
+        "  --theme-menu   use the theme backdrop for the modern menu (default)\n"
         "  --hud-frame N  classic HUD art: 0 current, N = N-th game's shapes\n"
-        "  --menu-frame N classic menu border: 0 current, N = N-th game\n"
+        "  --menu-frame N menu border: -1 theme, 0 current, N = N-th game\n"
         "  --splash N     publisher screen: 0 off, N = N-th game's intro page\n"
         "  --save N       debug: write save slot N after the run / on exit\n"
         "  --load N       debug: restore save slot N before the run\n"
@@ -218,6 +220,8 @@ int main(int argc, char** argv) {
         opt.data_paths = ini.section("paths");
         opt.menu_theme = ini.get_int("gameplay", "menu_theme", opt.menu_theme);
         opt.classic_menu = ini.get_bool("menus", "classic", opt.classic_menu);
+        opt.live_menu_bg =
+            ini.get_bool("menus", "live_background", opt.live_menu_bg);
     }
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -331,12 +335,16 @@ int main(int argc, char** argv) {
             opt.classic_menu = true;
         } else if (a == "--modern-menu") {
             opt.classic_menu = false;
+        } else if (a == "--live-menu") {
+            opt.live_menu_bg = true;
+        } else if (a == "--theme-menu") {
+            opt.live_menu_bg = false;
         } else if (a == "--hud-frame") {
             int n = std::atoi(value("--hud-frame"));
             opt.hud_frame = (n < 0) ? 0 : (n > 16 ? 16 : n);
         } else if (a == "--menu-frame") {
             int n = std::atoi(value("--menu-frame"));
-            opt.menu_frame = (n < 0) ? 0 : (n > 16 ? 16 : n);
+            opt.menu_frame = (n < -1) ? -1 : (n > 16 ? 16 : n);
         } else if (a == "--splash") {
             int n = std::atoi(value("--splash"));
             opt.splash = (n < 0) ? 0 : n;

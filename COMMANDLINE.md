@@ -54,7 +54,9 @@ run.cmd [options]
 | `--portrait` | Show the portrait (default) |
 | `--classic-menu` | Draw menus with the original frame/window art |
 | `--modern-menu` | Use the default modern menu layout |
-| `--menu-frame N` | Classic menu border source: 0 = current game, N = installed game N |
+| `--live-menu` | Keep the live game screen behind the modern menu |
+| `--theme-menu` | Use the theme backdrop behind the modern menu (default) |
+| `--menu-frame N` | Menu border source: -1 = THEME, 0 = current game, N = installed game N |
 | `--hud-frame N` | Classic HUD frame source: 0 = current game, N = installed game N |
 | `--hud-bg N` | HUD background palette index, `suit` or `vibrant` |
 | `--hud-text N` | HUD label colour palette index (default 7) |

@@ -82,6 +82,9 @@ public:
     // over the running game's art.  Null (or the current game) restores the
     // game's own bank.
     bool set_hud_frame_game(const GameDef* game, std::string& err);
+    // Classic menu backdrop (shape 3) and menu window (shape 7) are separate:
+    // THEME selects the backdrop's source independently of BORDER.
+    bool set_classic_frame_game(const GameDef* game, std::string& err);
     bool set_menu_frame_game(const GameDef* game, std::string& err);
     // Draw the original screen frame/title strip.  Reused by the CLASSIC HUD
     // and the CLASSIC menu style.  `menu` selects the menu frame source.
@@ -346,6 +349,7 @@ private:
     const ShapeFrame* shape_frame(int entry, int index);
     // Classic frame lookup: selected game bank when set, else the normal path.
     const ShapeFrame* classic_hud_shape(int entry, int index);
+    const ShapeFrame* classic_frame_shape(int entry, int index);
     const ShapeFrame* classic_menu_shape(int entry, int index);
     void draw_shape(Framebuffer& fb, int shape, int x, int y, bool transparent);
     // Draws the shape's set pixels in a single palette colour (health pips).
@@ -390,8 +394,10 @@ private:
     ShapeBank shapes_;
     // Optional shape banks used only for the classic screen/menu frames.
     ShapeBank hud_frame_shapes_;
+    ShapeBank classic_frame_shapes_;
     ShapeBank menu_frame_shapes_;
     bool hud_frame_custom_ = false;
+    bool classic_frame_custom_ = false;
     bool menu_frame_custom_ = false;
     Board board_;
     std::array<uint16_t, Board::kCols * Board::kRows> map_{};

@@ -1,5 +1,35 @@
 # Progress
 
+## 2026-11-11 (classic menu border and ending cards)
+
+* Shape entry 7 is a scan-order nine-slice: frames `1/2/3` are the top row,
+  `4/5` the left/right edges, `6/7/8` the bottom row and `9` the checker fill.
+  The CLASSIC menu now uses those tiles, fixing its right edge, bottom edge and
+  bottom corners.
+* Ending cards now start only when the player hits a board's state-3 ending
+  CHECKPT (`50.jn1`, `20.jn2`, `14.jn3`, the Onesimus ending and mod boards
+  using the same marker); simply loading the board no longer starts them.
+  The TEXT6/TEXT8 objects are grouped around the p13 >= 200 CHECKPT camera
+  anchors and shown as full-screen cards.  Cards advance every seven seconds,
+  Enter/click/A advances immediately, and Esc/B skips to the main menu.
+* Per-game high scores: `HIGH SCORES` on the main menu, plus a classic front-end
+  side panel.  Tables are stored in `hiscore_<game id>.txt`, ten entries each,
+  and a qualifying score is recorded when a game ends or `QUIT TO MAIN MENU` is
+  used.  A qualifying score opens a name prompt (up to 9 characters); blank or
+  Esc saves it as `JILL`.
+* Main menu now always offers `RESTORE GAME`; Left/Right changes the episode
+  on both RESTORE GAME and HIGH SCORES.  In-game menus also expose
+  `QUIT TO MAIN MENU`.
+* Modern menus have `BACKGROUND: THEME / LIVE GAME`, and an in-game classic
+  menu is now a window overlay on the paused game instead of redrawing the
+  full classic backdrop.
+* The world-map `MAP` label sits below the modern 12-px HUD bar instead of
+  being clipped by it.
+* Menu THEME and BORDER are independent: THEME chooses the classic backdrop's
+  shape 3 frame, BORDER chooses the shape 7 window (`THEME`, `CURRENT` or a
+  specific game).  Selecting an explicit BORDER now also applies to the modern
+  menu window, while `BORDER: THEME` keeps the old theme-tile border.
+
 ## 2026-11-10 (menu theme shift and NOISEMAKER)
 
 * Menu THEME backdrops now bake the intro-board picture panel at tiles
@@ -1271,7 +1301,8 @@ offsets, board list, title table).
   workflows and limits).
 * Classic menu style: `OPTIONS > MENUS > STYLE` (and `--classic-menu`) draws
   the original frame/title with shape entry 3 and the menu window as a
-  shape-entry-7 9-slice (1/3/5/7 corners, 2/4/6/8 edges, 9 checker fill).
+  shape-entry-7 9-slice (scan order: 1/2/3 top, 4/5 edges, 6/7/8 bottom,
+  9 checker fill).
   The existing menu items and navigation are unchanged; MODERN remains the
   default.
 * Added `build32.cmd` / `run32.cmd`: Win32/x86 Release build through

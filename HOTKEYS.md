@@ -20,21 +20,45 @@ Movement is held; jump and throw are edge-triggered.  Bindings are stored in
 
 ## Front-end menus
 
-`OPTIONS > MENUS` has three rows:
+`OPTIONS > MENUS` has four rows:
 
 | Row | Meaning |
 | --- | --- |
 | STYLE | MODERN or CLASSIC; CLASSIC uses the original frame and shape-7 window |
-| BORDER | Classic frame source: CURRENT, or any installed game's shape entry 3/7 |
+| BORDER | THEME, CURRENT, or any installed game's shape entry 7 window; THEME follows the selected THEME |
 | THEME | Backdrop artwork: port, a game intro board, or a pack theme |
+| BACKGROUND | THEME, or LIVE GAME to show the paused game behind a modern menu |
 
 The style is stored as `[menus] classic = 0/1`, the border source as
-`[menus] frame = 0/1/2...`, and can be started with
-`--classic-menu` / `--modern-menu` / `--menu-frame N`.
+`[menus] frame = -1/0/1/2...` (`-1` = THEME), and the live background as
+`[menus] live_background = 0/1`.  They can be started with
+`--classic-menu` / `--modern-menu` / `--menu-frame N` /
+`--live-menu` / `--theme-menu`.  THEME selects the classic backdrop's shape 3
+frame; BORDER selects the shape 7 window independently unless it is set to
+THEME.
 
 `OPTIONS > HUD > FRAME` selects the shape source used by the CLASSIC HUD
 (CURRENT, or another installed game).  It is stored as `[hud] frame` and can
 also be set with `--hud-frame N`.
+
+The main menu always has `RESTORE GAME` and `HIGH SCORES`.  On `RESTORE GAME`,
+Left/Right changes the episode and the slots then show that game's saves.
+`HIGH SCORES` also uses Left/Right to switch episodes.  Each game/mod keeps its
+own table in `hiscore_<game id>.txt`.
+
+While a game is running the main menu also shows `QUIT TO MAIN MENU`, which
+returns to the front end and records the current score if it makes the table.
+
+When a score qualifies, a name prompt appears first:
+
+| Key | Action |
+| --- | --- |
+| A-Z, 0-9, space | Add a character (up to 9) |
+| Backspace | Delete the last character |
+| Enter | Save the score |
+| Esc | Save with the default name `JILL` |
+
+Leaving the name blank also saves it as `JILL`.
 
 ## In-game system keys
 
@@ -89,6 +113,17 @@ Menus also accept the gamepad: D-pad or left stick moves, **A** confirms,
 | Enter | Start listening for a new key |
 | Any key / gamepad button | Assign it |
 | Esc | Cancel the assignment |
+
+## Ending cards
+
+Ending boards show their text as full-screen cards.
+
+| Key | Action |
+| --- | --- |
+| Enter, Space, click, pad A/Start | Next card |
+| Esc, pad B/Back | Skip to the main menu |
+
+Cards also advance automatically after seven seconds.
 
 ## Text pages
 
