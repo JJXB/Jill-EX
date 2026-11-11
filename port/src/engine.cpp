@@ -3315,6 +3315,11 @@ void Engine::draw_text(Framebuffer& fb, int x, int y, uint8_t colour,
     draw_text_font(fb, x, y, colour, 2, 6, s);
 }
 
+void Engine::draw_text_8(Framebuffer& fb, int x, int y, uint8_t colour,
+                         const char* s) {
+    draw_text_font(fb, x, y, colour, 1, 8, s);
+}
+
 void Engine::put_bottom_msg(const std::string& text, int colour) {
     if (text.empty()) {
         return;

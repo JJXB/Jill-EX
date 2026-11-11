@@ -244,6 +244,8 @@ public:
         return (game_.hud_icon_bank << 8) | (frame & 0xFF);
     }
     void draw_text(Framebuffer& fb, int x, int y, uint8_t colour, const char* s);
+    // 8-pixel font (bank 1), used by the start-up splash titles.
+    void draw_text_8(Framebuffer& fb, int x, int y, uint8_t colour, const char* s);
 
     const GameDef& game() const { return game_; }
     const ProfileDef& profile() const { return *profile_; }

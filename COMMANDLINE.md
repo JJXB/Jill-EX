@@ -30,7 +30,8 @@ run.cmd [options]
 | `--board NAME` | Board name without extension (default: game start) |
 | `--palette FILE` | Optional raw 768-byte VGA palette |
 | `--menu-theme N` | `0` = port backdrop, `N` = N-th game's intro board |
-| `--splash N` | Publisher page `N`; display is currently disabled [verified] |
+| `--splash N` | Start-up splash: `-1` auto (current game), `0` off, `N` = game `N` |
+| `--no-splash` | Disable the start-up splash sequence |
 
 ### Video and presentation
 
@@ -191,6 +192,6 @@ See `IMPORT_README.md` for the full command list, input sizes and examples.
 ## Notes
 
 * `--help` (`-h`) prints the executable's current option list [verified].
-* `--dump-splash` still renders pages even though the in-game splash display
-  is currently turned off [verified].
+* `--dump-splash` writes the generated loading/ARK/title pages for inspection.
+  The start-up sequence is shown by default and any input skips it.
 * The game requires its own data files; no copyrighted assets are shipped.

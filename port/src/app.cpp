@@ -979,7 +979,7 @@ struct VideoSettings {
     int scale = 3;       // windowed integer scale, 1..6
     int resolution = 0;  // 0 desktop, else index into kResolutions
     int high_fps = 60;   // presentation rate, 0 = 18.2 Hz
-    int splash = 0;      // 0 off, N = games[N-1] intro publisher screen
+    int splash = -1;     // -1 auto, 0 off, N = games[N-1] splash
     bool interpolate = true;  // high-framerate smoothing (needs high_fps > 0)
     int filter = 0;      // 0 none, 1 smooth (light blur), 2 CRT
 };
@@ -1069,8 +1069,14 @@ std::string menu_theme_name(int t, const std::vector<GameDef>& games,
 }
 
 std::string splash_name(int t, const std::vector<GameDef>& games) {
-    if (t <= 0 || t > static_cast<int>(games.size())) {
+    if (t < 0) {
+        return "AUTO";
+    }
+    if (t == 0) {
         return "OFF";
+    }
+    if (t > static_cast<int>(games.size())) {
+        return "AUTO";
     }
     return upper_ascii(games[static_cast<size_t>(t - 1)].id.c_str());
 }
@@ -1086,7 +1092,12 @@ int menu_theme_next(int t, int step, const std::vector<GameDef>& games,
 }
 
 int splash_next(int t, int step, const std::vector<GameDef>& games) {
-    return menu_theme_next(t, step, games, 0);
+    const int n = static_cast<int>(games.size()) + 2;
+    int v = ((t + 1) + step) % n;
+    if (v < 0) {
+        v += n;
+    }
+    return v - 1;
 }
 
 // Classic HUD/menu frame sources: 0 = the running game's own shapes, N = the
@@ -1263,8 +1274,6 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                         frame_source_name(m.hud_frame, games),
                     "BACK"};
         case MenuScreen::Menus:
-            // SPLASH is temporarily disabled while the publisher screen is
-            // reworked; the row is hidden so the setting cannot be changed.
             return {std::string("STYLE: ") +
                         (m.classic ? "CLASSIC" : "MODERN"),
                     std::string("BORDER: ") +
@@ -1274,6 +1283,7 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                                         engine.external_visuals()),
                     std::string("BACKGROUND: ") +
                         (m.live_background ? "LIVE GAME" : "THEME"),
+                    std::string("SPLASH: ") + splash_name(video.splash, games),
                     "BACK"};
         case MenuScreen::Controls: {
             std::vector<std::string> v;
@@ -1440,9 +1450,9 @@ struct ThemeBackdrop {
     ThemeTile fill;
 };
 
-// Splash screens: the publisher/logo card and the title card are separate
-// regions of the intro board.  The port finds them from the board data instead
-// of hardcoding coordinates (the original has no PCX/LBM splash files).
+// Start-up publisher/loading and Onesimus title cards.  The Jill loading card
+// uses each episode's own shape-7 window; the Onesimus cards rebuild the ARK
+// and title pages from the original strings with the game font.
 struct SplashImage {
     int built = -1;
     std::vector<std::vector<uint8_t>> pages;
@@ -1466,6 +1476,130 @@ bool text_has_word(const std::string& text, const std::string& word) {
     return lower_ascii(text).find(lower_ascii(word)) != std::string::npos;
 }
 
+void splash_text_6(Framebuffer& fb, Engine& engine, int y, uint8_t colour,
+                   const char* s) {
+    const int w = static_cast<int>(std::strlen(s)) * 6;
+    engine.draw_text(fb, (Framebuffer::W - w) / 2, y, colour, s);
+}
+
+void splash_text_8(Framebuffer& fb, Engine& engine, int y, uint8_t colour,
+                   const char* s) {
+    const int w = static_cast<int>(std::strlen(s)) * 8;
+    engine.draw_text_8(fb, (Framebuffer::W - w) / 2, y, colour, s);
+}
+
+void splash_scaled_text(Framebuffer& fb, Engine& engine, int x, int y,
+                        uint8_t colour, int scale, const char* s) {
+    if (scale <= 1) {
+        engine.draw_text(fb, x, y, colour, s);
+        return;
+    }
+    Framebuffer tmp;
+    engine.draw_text(tmp, 0, 0, colour, s);
+    const int w = static_cast<int>(std::strlen(s)) * 6;
+    for (int yy = 0; yy < 8; ++yy) {
+        for (int xx = 0; xx < w; ++xx) {
+            if (tmp.get(xx, yy) != 0) {
+                fb.fill_rect(x + xx * scale, y + yy * scale, scale, scale,
+                             colour);
+            }
+        }
+    }
+}
+
+void splash_scaled_colour_text(Framebuffer& fb, Engine& engine, int x, int y,
+                               int scale, const char* s,
+                               const uint8_t* colours, int colour_count) {
+    const int adv = 6 * scale;
+    int ci = 0;
+    for (int i = 0; s[i] != '\0'; ++i) {
+        if (s[i] != ' ') {
+            char one[2] = {s[i], '\0'};
+            splash_scaled_text(fb, engine, x + i * adv, y,
+                               colours[ci % colour_count], scale, one);
+            ++ci;
+        }
+    }
+}
+
+std::string splash_game_title(const GameDef& g) {
+    if (g.id == "jill1") {
+        return "Jill of the Jungle";
+    }
+    if (g.id == "jill2") {
+        return "Jill Goes Underground";
+    }
+    if (g.id == "jill3") {
+        return "Jill Saves The Prince";
+    }
+    return upper_ascii(g.title.c_str());
+}
+
+void build_loading_splash(SplashImage& img, const GameDef& g, Engine& art) {
+    Framebuffer fb;
+    const int bx = 64;
+    const int by = 60;
+    const int bw = 192;
+    const int bh = 72;
+    art.draw_menu_window(fb, bx, by, bw, bh);
+    splash_text_6(fb, art, by + 8, 15, "A NEW RELEASE FROM");
+    splash_text_8(fb, art, by + 18, 15, "Epic MegaGames");
+    const std::string title = splash_game_title(g);
+    splash_text_8(fb, art, by + 32, 10, title.c_str());
+    splash_text_6(fb, art, by + 47, 15, "PRODUCED BY");
+    splash_text_6(fb, art, by + 55, 15, "TIM SWEENEY");
+    splash_text_6(fb, art, 164, 9, "NOW LOADING, PLEASE WAIT...");
+    img.pages.push_back(std::move(fb.px));
+}
+
+void build_onesimus_ark_splash(SplashImage& img, Engine& art) {
+    Framebuffer fb;
+    static const uint8_t ark_colours[3] = {12, 14, 10};
+    const int ark_scale = 9;
+    const char* ark = "A R K";
+    const int ark_w = static_cast<int>(std::strlen(ark)) * 6 * ark_scale;
+    splash_scaled_colour_text(fb, art, (Framebuffer::W - ark_w) / 2, 14,
+                              ark_scale, ark, ark_colours, 3);
+    const char* multi = "Multimedia Publishing";
+    const int multi_scale = 2;
+    const int multi_w =
+        static_cast<int>(std::strlen(multi)) * 6 * multi_scale;
+    splash_scaled_text(fb, art, (Framebuffer::W - multi_w) / 2, 98, 15,
+                       multi_scale, multi);
+    const char* presents = "Presents";
+    const int pres_w =
+        static_cast<int>(std::strlen(presents)) * 6 * multi_scale;
+    splash_scaled_text(fb, art, (Framebuffer::W - pres_w) / 2, 120, 15,
+                       multi_scale, presents);
+    img.pages.push_back(std::move(fb.px));
+}
+
+void build_onesimus_title_splash(SplashImage& img, Engine& art) {
+    Framebuffer fb;
+    static const uint8_t title_colours[8] = {12, 6, 14, 10, 10, 9, 13, 12};
+    const int title_scale = 5;
+    const char* title = "ONESIMUS";
+    const int title_w =
+        static_cast<int>(std::strlen(title)) * 6 * title_scale;
+    splash_scaled_colour_text(fb, art, (Framebuffer::W - title_w) / 2, 8,
+                              title_scale, title, title_colours, 8);
+    const char* quest = "A QUEST FOR";
+    const int quest_scale = 3;
+    const int quest_w = static_cast<int>(std::strlen(quest)) * 6 * quest_scale;
+    splash_scaled_text(fb, art, (Framebuffer::W - quest_w) / 2, 54, 6,
+                       quest_scale, quest);
+    const char* freedom = "FREEDOM";
+    const int free_w =
+        static_cast<int>(std::strlen(freedom)) * 6 * quest_scale;
+    splash_scaled_text(fb, art, (Framebuffer::W - free_w) / 2, 76, 6,
+                       quest_scale, freedom);
+    splash_text_8(fb, art, 112, 15, "Bible quotes from The Living Bible (c)");
+    splash_text_8(fb, art, 126, 15, "1971 used with permission of Tyndale");
+    splash_text_8(fb, art, 140, 15, "House Publishers, Inc., Wheaton IL");
+    splash_text_8(fb, art, 154, 15, "60189.  All rights reserved.");
+    img.pages.push_back(std::move(fb.px));
+}
+
 void ensure_splash_image(SplashImage& img, int index,
                          const std::vector<GameDef>& games) {
     if (img.built == index) {
@@ -1479,106 +1613,17 @@ void ensure_splash_image(SplashImage& img, int index,
     }
     const GameDef& g = games[static_cast<size_t>(index - 1)];
     img.palette_ready = load_palette(g.palette, img.palette);
-    Engine tmp;
+    Engine art;
     std::string err;
-    if (!tmp.init(g, err)) {
+    if (!art.init(g, err)) {
         std::fprintf(stderr, "splash %s: %s\n", g.id.c_str(), err.c_str());
         return;
     }
-    if (!tmp.load_board(g.intro_board, err)) {
-        std::fprintf(stderr, "splash %s: %s\n", g.id.c_str(), err.c_str());
-        return;
-    }
-    tmp.finish_dialogs();
-    const int board_w = Board::kCols * 16;
-    const int board_h = Board::kRows * 16;
-    auto clamp_cam = [&](int& x, int& y) {
-        x = std::max(0, std::min(x, board_w - Framebuffer::W));
-        y = std::max(0, std::min(y, board_h - Framebuffer::H));
-    };
-    auto render_page = [&](int cx, int cy) {
-        clamp_cam(cx, cy);
-        Framebuffer fb;
-        tmp.render_at(fb, cx, cy, false);
-        img.pages.push_back(std::move(fb.px));
-    };
-
-    // 1. Publisher logo: the top-most cluster of MEGA (42) / EPIC (49)
-    //    objects.  Jill 1/2/3 spell "MegaGames"/"Epic MegaGames"; Onesimus's
-    //    bank uses the same kinds for its own ARK logo.
-    const std::vector<BoardObject>& objs = tmp.objects();
-    struct Cluster {
-        int minx = 0, miny = 0, maxx = 0, maxy = 0;
-        int count = 0;
-    };
-    std::vector<Cluster> clusters;
-    for (const BoardObject& o : objs) {
-        if (o.kind != 42 && o.kind != 49) {
-            continue;
-        }
-        bool joined = false;
-        for (Cluster& c : clusters) {
-            if (o.x <= c.maxx + 64 && o.x + o.w >= c.minx - 64 &&
-                o.y <= c.maxy + 64 && o.y + o.h >= c.miny - 64) {
-                c.minx = std::min(c.minx, o.x);
-                c.miny = std::min(c.miny, o.y);
-                c.maxx = std::max(c.maxx, o.x + o.w);
-                c.maxy = std::max(c.maxy, o.y + o.h);
-                ++c.count;
-                joined = true;
-                break;
-            }
-        }
-        if (!joined) {
-            Cluster c;
-            c.minx = o.x;
-            c.miny = o.y;
-            c.maxx = o.x + o.w;
-            c.maxy = o.y + o.h;
-            c.count = 1;
-            clusters.push_back(c);
-        }
-    }
-    const Cluster* logo = nullptr;
-    for (const Cluster& c : clusters) {
-        if (!logo || c.count > logo->count ||
-            (c.count == logo->count && c.miny < logo->miny)) {
-            logo = &c;
-        }
-    }
-    if (logo && logo->count >= 2) {
-        render_page((logo->minx + logo->maxx) / 2 - Framebuffer::W / 2,
-                    (logo->miny + logo->maxy) / 2 - Framebuffer::H / 2);
-    }
-
-    // 2. Title card: the top-most TEXT6/TEXT8 object that mentions the first
-    //    word of the game title ("Jill" / "Onesimus").
-    std::string title_word = g.title;
-    const size_t space = title_word.find_first_of(" :");
-    if (space != std::string::npos) {
-        title_word.resize(space);
-    }
-    const BoardObject* title = nullptr;
-    for (const BoardObject& o : objs) {
-        if ((o.kind != 20 && o.kind != 21) || o.text.empty() ||
-            !text_has_word(o.text, title_word)) {
-            continue;
-        }
-        if (!title || o.y < title->y ||
-            (o.y == title->y && o.x < title->x)) {
-            title = &o;
-        }
-    }
-    if (title) {
-        const int char_w = title->kind == 21 ? 8 : 6;
-        const int text_w = static_cast<int>(title->text.size()) * char_w;
-        render_page(title->x + text_w / 2 - Framebuffer::W / 2,
-                    title->y + 6 - Framebuffer::H / 2);
-    }
-
-    // Fallback for a board without either feature.
-    if (img.pages.empty()) {
-        render_page(240, 0);
+    if (g.id == "onesimus") {
+        build_onesimus_ark_splash(img, art);
+        build_onesimus_title_splash(img, art);
+    } else {
+        build_loading_splash(img, g, art);
     }
 }
 
@@ -2443,14 +2488,13 @@ int run_sdl(const Options& opt, Engine& engine,
     bool running = true;
     int page_axis_x = 0;  // text-page stick edge latches
     int page_axis_y = 0;
-    // Splash screens are temporarily disabled while the publisher screen is
-    // reworked.  Keep --dump-splash available for inspecting the old pages,
-    // but never show a splash at start-up.
-    constexpr bool kSplashEnabled = false;
-    const int splash_index =
-        kSplashEnabled
-            ? std::max(0, std::min(video.splash, static_cast<int>(games.size())))
-            : 0;
+    // -1 = auto: show the splash for the game being started.  0 disables it.
+    int splash_index = video.splash;
+    if (splash_index < 0) {
+        splash_index = game_index_for_id(games, engine.game().id) + 1;
+    }
+    splash_index =
+        std::max(0, std::min(splash_index, static_cast<int>(games.size())));
     bool splash_active = false;
     size_t splash_page = 0;
     Uint32 splash_page_start = 0;
@@ -2783,6 +2827,8 @@ int run_sdl(const Options& opt, Engine& engine,
                 }
             } else if (menu.screen == MenuScreen::Menus && sel == 3) {
                 menu.live_background = !menu.live_background;
+            } else if (menu.screen == MenuScreen::Menus && sel == 4) {
+                video.splash = splash_next(video.splash, 1, games);
             } else if (menu.screen == MenuScreen::Enhancements && sel == 0) {
                 engine.set_fire_while_crouched(!engine.fire_while_crouched());
             } else if (menu.screen == MenuScreen::Enhancements && sel == 1) {
@@ -3097,7 +3143,7 @@ int run_sdl(const Options& opt, Engine& engine,
                 }
                 break;
             case MenuScreen::Menus:
-                if (nav == 5 && sel == 4) {
+                if (nav == 5 && sel == 5) {
                     menu.screen = MenuScreen::Options;
                 } else if (sel == 0 && (nav == 5 || nav == 3 || nav == 4)) {
                     menu.classic = !menu.classic;
@@ -3119,6 +3165,9 @@ int run_sdl(const Options& opt, Engine& engine,
                     }
                 } else if (sel == 3 && (nav == 5 || nav == 3 || nav == 4)) {
                     menu.live_background = !menu.live_background;
+                } else if (sel == 4 && (nav == 5 || nav == 3 || nav == 4)) {
+                    video.splash = splash_next(video.splash,
+                                               nav == 3 ? -1 : 1, games);
                 }
                 break;
             case MenuScreen::Controls:
@@ -3686,7 +3735,7 @@ int run_sdl(const Options& opt, Engine& engine,
             } else {
                 fb.fill_rect(0, 0, Framebuffer::W, Framebuffer::H, 0);
             }
-            if (SDL_GetTicks() - splash_page_start >= 1600) {
+            if (SDL_GetTicks() - splash_page_start >= 2500) {
                 ++splash_page;
                 if (splash_page >= splash_image.pages.size()) {
                     splash_active = false;
@@ -3925,8 +3974,18 @@ int run_app(const Options& opt) {
 
     if (!opt.dump_splash.empty()) {
 #ifdef JILL_HAVE_SDL
-        dump_splash_pages(games, opt.splash > 0 ? opt.splash : 1,
-                           opt.dump_splash);
+        int dump_index = opt.splash;
+        if (dump_index < 0) {
+            if (!opt.game.empty()) {
+                dump_index = game_index_for_id(games, opt.game) + 1;
+            } else if (opt.episode > 0) {
+                dump_index = opt.episode;
+            }
+        }
+        if (dump_index <= 0) {
+            dump_index = 1;
+        }
+        dump_splash_pages(games, dump_index, opt.dump_splash);
         return 0;
 #else
         std::fprintf(stderr, "--dump-splash needs an SDL build\n");

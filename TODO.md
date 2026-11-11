@@ -1,6 +1,5 @@
 * IMPORTANT 
 * Fixes
-  * Splash Screens - Temporarily Disabled in the code
   * Character Portraits - Present on the main title screen of the original game where the inventory would be
   * Dialog portrait extraction/replacement - NOT DONE - Data not correct. also add toggle for it in HUD
   * Neaten up Classic Menus/HUD

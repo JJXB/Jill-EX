@@ -20,7 +20,7 @@ Movement is held; jump and throw are edge-triggered.  Bindings are stored in
 
 ## Front-end menus
 
-`OPTIONS > MENUS` has four rows:
+`OPTIONS > MENUS` has five rows:
 
 | Row | Meaning |
 | --- | --- |
@@ -28,6 +28,7 @@ Movement is held; jump and throw are edge-triggered.  Bindings are stored in
 | BORDER | THEME, CURRENT, or any installed game's shape entry 7 window; THEME follows the selected THEME |
 | THEME | Backdrop artwork: port, a game intro board, or a pack theme |
 | BACKGROUND | THEME, or LIVE GAME to show the paused game behind a modern menu |
+| SPLASH | AUTO, OFF, or a specific game's start-up splash |
 
 The style is stored as `[menus] classic = 0/1`, the border source as
 `[menus] frame = -1/0/1/2...` (`-1` = THEME), and the live background as
@@ -113,6 +114,11 @@ Menus also accept the gamepad: D-pad or left stick moves, **A** confirms,
 | Enter | Start listening for a new key |
 | Any key / gamepad button | Assign it |
 | Esc | Cancel the assignment |
+
+## Start-up splash
+
+The publisher/loading screens play before the main menu.  Any key, mouse click
+or controller button skips the remaining pages.  `--no-splash` disables them.
 
 ## Ending cards
 

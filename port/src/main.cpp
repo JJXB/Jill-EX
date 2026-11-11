@@ -97,7 +97,8 @@ void usage() {
         "  --theme-menu   use the theme backdrop for the modern menu (default)\n"
         "  --hud-frame N  classic HUD art: 0 current, N = N-th game's shapes\n"
         "  --menu-frame N menu border: -1 theme, 0 current, N = N-th game\n"
-        "  --splash N     publisher screen: 0 off, N = N-th game's intro page\n"
+        "  --splash N     start-up splash: -1 auto, 0 off, N = game N\n"
+        "  --no-splash    disable the start-up splash sequence\n"
         "  --save N       debug: write save slot N after the run / on exit\n"
         "  --load N       debug: restore save slot N before the run\n"
         "  --fire-crouched  enhancement default: fire while crouched\n"
@@ -347,7 +348,9 @@ int main(int argc, char** argv) {
             opt.menu_frame = (n < -1) ? -1 : (n > 16 ? 16 : n);
         } else if (a == "--splash") {
             int n = std::atoi(value("--splash"));
-            opt.splash = (n < 0) ? 0 : n;
+            opt.splash = (n < -1) ? -1 : n;
+        } else if (a == "--no-splash") {
+            opt.splash = 0;
         } else if (a == "--save") {
             opt.save_slot = std::atoi(value("--save"));
         } else if (a == "--load") {

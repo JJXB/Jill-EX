@@ -63,7 +63,7 @@ struct Options {
     int menu_theme = 0;         // --menu-theme N: 0 plain, N = games[N-1] intro board
     bool classic_menu = false;  // --classic-menu: original frame/window menu
     bool live_menu_bg = false;  // show the live game behind a modern menu
-    int splash = 0;             // --splash N: 0 off, N = games[N-1] publisher screen
+    int splash = -1;            // --splash N: -1 auto, 0 off, N = games[N-1]
     int save_slot = -1;         // --save N: headless debug, write save slot N
     int load_slot = -1;         // --load N: load save slot N before running
     bool fire_crouched = false; // --fire-crouched: enhancement default

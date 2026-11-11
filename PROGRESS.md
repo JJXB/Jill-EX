@@ -1,5 +1,17 @@
 # Progress
 
+## 2026-11-11 (splash screens)
+
+* Start-up splashes are enabled again.  Jill 1/2/3 use the original
+  "A NEW RELEASE FROM Epic MegaGames" loading card with the game title,
+  `PRODUCED BY TIM SWEENEY`, `NOW LOADING, PLEASE WAIT...`, and each episode's
+  own shape-7 window colours.  Onesimus uses the ARK / Multimedia Publishing
+  Presents card followed by the rainbow ONESIMUS title and Bible-quote
+  copyright card.
+* The startup choice is now `[video] splash`: `-1` auto (current game), `0`
+  off, `N` = game N; `--no-splash` disables it.  `OPTIONS > MENUS > SPLASH`
+  cycles AUTO / OFF / each installed game.  Any input skips the pages.
+
 ## 2026-11-11 (classic menu border and ending cards)
 
 * Shape entry 7 is a scan-order nine-slice: frames `1/2/3` are the top row,
