@@ -291,7 +291,7 @@ Turn it off with `OPTIONS > HUD > PORTRAIT` or `[hud] portrait = 0`.
 | `sfx\<slot>_<label>.<ext>` | same, with a descriptive label |
 
 Effects are addressed by the original logical-id table, so replacing raw slot
-`1` is heard wherever that sample is used.  The NOISEMAKER screen in
+`1` is heard wherever that sample is used.  The SOUND TEST screen in
 `OPTIONS > SOUND` auditions raw slots and is handy for finding the right one.
 
 ### 5.11 Music: `music\`

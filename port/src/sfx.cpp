@@ -183,7 +183,7 @@ void SfxVoice::mix_external(float* out, int frames, int device_rate) {
         }
         v *= volume_;
         out[i] += v;
-        peak_ = std::max(peak_, std::fabs(v));
+        peak_ = std::max(peak_, static_cast<float>(std::fabs(v)));
         ext_pos_ += step;
     }
 }
@@ -221,7 +221,7 @@ void SfxVoice::mix(float* out, int frames, int device_rate) {
         }
         v *= volume_;
         out[i] += v;
-        peak_ = std::max(peak_, std::fabs(v));
+        peak_ = std::max(peak_, static_cast<float>(std::fabs(v)));
         pos_ += step;
     }
 }

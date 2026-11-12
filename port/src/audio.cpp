@@ -9,11 +9,33 @@
 #include <SDL.h>
 #endif
 
+#ifdef JILL_PS4
+#include <orbis/AudioOut.h>
+#include <orbis/UserService.h>
+#include <vector>
+
+#include "platform_paths.h"
+
+namespace {
+SDL_mutex* g_ps4_audio_lock = nullptr;
+constexpr int kPs4AudioFrames = 2048;  // ~42.7 ms at 48 kHz
+}  // namespace
+
+// The rest of this file locks the audio device around state changes.  On PS4
+// there is no SDL audio device; the same guards now protect the native audio
+// thread, whose callback runs mix() under the same mutex.
+#define SDL_LockAudioDevice(x) SDL_LockMutex(g_ps4_audio_lock)
+#define SDL_UnlockAudioDevice(x) SDL_UnlockMutex(g_ps4_audio_lock)
+#endif
+
 MusicPlayer::MusicPlayer() : music_(48000) {}
 
 MusicPlayer::~MusicPlayer() { close(); }
 
 bool MusicPlayer::open(std::string& err) {
+#ifdef JILL_PS4
+    return ps4_open(err);
+#else
 #ifdef JILL_HAVE_SDL
     if (device_ != 0) {
         return true;
@@ -66,6 +88,7 @@ bool MusicPlayer::open(std::string& err) {
     err = "built without SDL audio support";
     return false;
 #endif
+#endif  // JILL_PS4
 }
 
 void MusicPlayer::close() {
@@ -79,10 +102,28 @@ void MusicPlayer::close() {
     if (device_ != 0) {
         SDL_UnlockAudioDevice(device_);
     }
+#ifdef JILL_PS4
+    if (ps4_thread_ != nullptr) {
+        ps4_run_ = false;
+        SDL_WaitThread(static_cast<SDL_Thread*>(ps4_thread_), nullptr);
+        ps4_thread_ = nullptr;
+    }
+    if (ps4_handle_ > 0) {
+        sceAudioOutClose(ps4_handle_);
+        ps4_handle_ = 0;
+    }
+    if (ps4_lock_ != nullptr) {
+        SDL_DestroyMutex(static_cast<SDL_mutex*>(ps4_lock_));
+        ps4_lock_ = nullptr;
+        g_ps4_audio_lock = nullptr;
+    }
+    device_ = 0;
+#else
     if (device_ != 0) {
         SDL_CloseAudioDevice(device_);
         device_ = 0;
     }
+#endif
 #endif
     midi_out_.close();
     midi_active_ = false;
@@ -91,6 +132,92 @@ void MusicPlayer::close() {
     music_.stop();
     playing_ = false;
 }
+
+#ifdef JILL_PS4
+bool MusicPlayer::ps4_open(std::string& err) {
+    if (device_ != 0) {
+        return true;
+    }
+    if (ps4_lock_ == nullptr) {
+        ps4_lock_ = SDL_CreateMutex();
+        if (ps4_lock_ == nullptr) {
+            err = "SDL_CreateMutex failed";
+            return false;
+        }
+        g_ps4_audio_lock = static_cast<SDL_mutex*>(ps4_lock_);
+    }
+    const int32_t init_rc = sceAudioOutInit();
+    jill_paths::trace("audio: sceAudioOutInit rc=0x%x", init_rc);
+    ps4_handle_ =
+        sceAudioOutOpen(ORBIS_USER_SERVICE_USER_ID_SYSTEM,
+                        ORBIS_AUDIO_OUT_PORT_TYPE_MAIN, 0, kPs4AudioFrames,
+                        48000, ORBIS_AUDIO_OUT_PARAM_FORMAT_S16_STEREO);
+    if (ps4_handle_ <= 0) {
+        err = "sceAudioOutOpen failed";
+        return false;
+    }
+    jill_paths::trace("audio: sceAudioOutOpen handle=%d frames=%d", ps4_handle_,
+                      kPs4AudioFrames);
+    rate_ = 48000;
+    channels_ = 2;
+    format_ = AUDIO_S16SYS;
+    music_ = Music(rate_);
+    sfx_.set_volume(sfx_volume_);
+    ps4_run_ = true;
+    ps4_thread_ =
+        SDL_CreateThread(&MusicPlayer::ps4_audio_thread, "jill-audio", this);
+    if (ps4_thread_ == nullptr) {
+        err = "SDL_CreateThread(audio) failed";
+        sceAudioOutClose(ps4_handle_);
+        ps4_handle_ = 0;
+        return false;
+    }
+    device_ = 1;  // sentinel: guards in the rest of the file use it
+    std::fprintf(stderr, "audio: 48000 Hz, 2 channel(s), s16 (native)\n");
+    return true;
+}
+
+int MusicPlayer::ps4_audio_thread(void* user) {
+    static_cast<MusicPlayer*>(user)->ps4_audio_loop();
+    return 0;
+}
+
+void MusicPlayer::ps4_audio_loop() {
+    const int bytes =
+        kPs4AudioFrames * 2 * static_cast<int>(sizeof(int16_t));
+    std::vector<uint8_t> buffers[2] = {
+        std::vector<uint8_t>(static_cast<size_t>(bytes)),
+        std::vector<uint8_t>(static_cast<size_t>(bytes))};
+    int cur = 0;
+    unsigned calls = 0;
+    unsigned long long mix_ticks = 0;
+    const double freq = static_cast<double>(SDL_GetPerformanceFrequency());
+    while (ps4_run_) {
+        const uint64_t mix_start = SDL_GetPerformanceCounter();
+        SDL_LockMutex(static_cast<SDL_mutex*>(ps4_lock_));
+        mix(buffers[cur].data(), bytes);
+        SDL_UnlockMutex(static_cast<SDL_mutex*>(ps4_lock_));
+        mix_ticks += SDL_GetPerformanceCounter() - mix_start;
+
+        // Blocks until the previously submitted buffer has finished playing;
+        // the next buffer is mixed while this one is audible.
+        sceAudioOutOutput(ps4_handle_, buffers[cur].data());
+        cur ^= 1;
+
+        if (++calls == 46) {  // ~2 s of audio
+            const double budget_ms = kPs4AudioFrames * 1000.0 / 48000.0;
+            const double mix_ms = (static_cast<double>(mix_ticks) / freq) *
+                                  1000.0 / calls;
+            mix_ms_ = static_cast<float>(mix_ms);
+            mix_budget_ms_ = static_cast<float>(budget_ms);
+            jill_paths::trace("audio: mix %.2f ms / %.2f ms budget", mix_ms,
+                              budget_ms);
+            calls = 0;
+            mix_ticks = 0;
+        }
+    }
+}
+#endif
 
 void MusicPlayer::play(std::shared_ptr<const CmfSong> song) {
 #ifdef JILL_HAVE_SDL
@@ -440,7 +567,7 @@ void MusicPlayer::mix(uint8_t* stream, int len) {
         for (int i = 0; i < frames; ++i) {
             float s = scratch_[static_cast<size_t>(i)];
             s = std::max(-1.0f, std::min(1.0f, s));
-            peak = std::max(peak, std::fabs(s));
+            peak = std::max(peak, static_cast<float>(std::fabs(s)));
             for (int c = 0; c < channels; ++c) {
                 out[i * channels + c] = s;
             }
@@ -450,7 +577,7 @@ void MusicPlayer::mix(uint8_t* stream, int len) {
         for (int i = 0; i < frames; ++i) {
             float s = scratch_[static_cast<size_t>(i)];
             s = std::max(-1.0f, std::min(1.0f, s));
-            peak = std::max(peak, std::fabs(s));
+            peak = std::max(peak, static_cast<float>(std::fabs(s)));
             const int16_t v = static_cast<int16_t>(s * 32767.0f);
             for (int c = 0; c < channels; ++c) {
                 out[i * channels + c] = v;

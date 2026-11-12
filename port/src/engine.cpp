@@ -1,6 +1,7 @@
 #include "engine.h"
 
 #include "palette.inc"
+#include "platform_paths.h"
 
 #include <algorithm>
 #include <array>
@@ -5391,7 +5392,7 @@ std::string Engine::save_path(int slot) const {
     if (prefix.empty()) {
         return std::string();
     }
-    return prefix + "." + std::to_string(slot);
+    return jill_paths::resolve(prefix + "." + std::to_string(slot));
 }
 
 void Engine::refresh_save_labels() {

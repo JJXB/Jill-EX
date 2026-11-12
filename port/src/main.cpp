@@ -7,9 +7,14 @@
 
 #include "app.h"
 #include "config.h"
+#include "platform_paths.h"
 
 #ifdef _WIN32
 #include <windows.h>
+#endif
+
+#ifdef JILL_PS4
+#include <unistd.h>
 #endif
 
 namespace {
@@ -20,6 +25,12 @@ namespace {
 // directly still finds the repository configuration.
 std::string config_directory(const char* argv0) {
     namespace fs = std::filesystem;
+#ifdef JILL_PS4
+    // PS4: jill.ini, games/, profiles/ and the game data all live in one
+    // writable folder.  main() chdir()s there before any file is opened.
+    (void)argv0;
+    return jill_paths::data_root();
+#else
     std::error_code ec;
     const fs::path cwd = fs::current_path(ec);
     if (!ec && fs::exists(cwd / "jill.ini", ec)) {
@@ -57,6 +68,7 @@ std::string config_directory(const char* argv0) {
         }
     }
     return {};
+#endif
 }
 
 void usage() {
@@ -84,6 +96,10 @@ void usage() {
         "  --high-fps N   presentation rate: 0 (18.2 Hz), 60, 90, 120 or 144\n"
         "  --no-interpolate  disable high-framerate sprite smoothing\n"
         "  --filter N     display filter: 0 none, 1 smooth, 2 CRT\n"
+        "  --renderer B   PS4 display backend: auto, videoout, gl or sdl\n"
+#ifdef JILL_PS4
+        "  --debug        PS4: show the FPS/profiler overlay\n"
+#endif
         "  --fullscreen   start in exclusive fullscreen\n"
         "  --windowed     start windowed (default)\n"
         "  --borderless   start in borderless fullscreen\n"
@@ -145,6 +161,18 @@ void usage() {
 }  // namespace
 
 int main(int argc, char** argv) {
+#ifdef JILL_PS4
+    // The PS4 filesystem root is read-only; create the writable game folder
+    // and run from it before touching jill.ini or any asset path.
+    {
+        std::string root_err;
+        if (!jill_paths::ensure_data_root(root_err)) {
+            std::fprintf(stderr, "%s\n", root_err.c_str());
+            return 1;
+        }
+    }
+    jill_paths::trace("startup: data root %s", jill_paths::data_root().c_str());
+#endif
     // Make relative `games/`, `profiles/`, asset and save paths work when the
     // executable is launched from Explorer or another working directory.
     const std::string cfg_dir = config_directory(argc > 0 ? argv[0] : nullptr);
@@ -152,11 +180,24 @@ int main(int argc, char** argv) {
         std::error_code ec;
         std::filesystem::current_path(cfg_dir, ec);
     }
+#ifdef JILL_PS4
+    // There is no console on the console: keep a diagnostic log next to the
+    // data so failures can be inspected over FTP.  Use the absolute path:
+    // shadPS4 (among others) does not implement chdir, so the process working
+    // directory cannot be trusted.
+    const std::string log_path = jill_paths::resolve("jill.log");
+    jill_paths::log_open(log_path);
+    std::freopen(log_path.c_str(), "w", stdout);
+    std::freopen(log_path.c_str(), "a", stderr);
+    std::setvbuf(stdout, nullptr, _IOLBF, 0);
+    std::setvbuf(stderr, nullptr, _IONBF, 0);
+    jill_paths::trace("startup: log ready");
+#endif
     Options opt;
     // jill.ini supplies the defaults; command-line arguments override it.
     IniFile ini;
     std::string ini_err;
-    if (ini.load("jill.ini", ini_err)) {
+    if (ini.load(jill_paths::resolve("jill.ini"), ini_err)) {
         opt.games_dir = ini.get("paths", "games", opt.games_dir);
         opt.profiles_dir = ini.get("paths", "profiles", opt.profiles_dir);
         opt.game = ini.get("game", "id", opt.game);
@@ -164,6 +205,10 @@ int main(int argc, char** argv) {
         opt.pack = ini.get("external", "pack", opt.pack);
         opt.window_mode = ini.get_int("video", "window_mode", opt.window_mode);
         opt.scale = ini.get_int("video", "scale", opt.scale);
+        opt.renderer = ini.get("video", "renderer", opt.renderer);
+#ifdef JILL_PS4
+        opt.debug = ini.get_bool("debug", "overlay", opt.debug);
+#endif
         opt.resolution = ini.get_int("video", "resolution", opt.resolution);
         opt.high_fps = ini.get_int("video", "high_fps", opt.high_fps);
         opt.interpolate = ini.get_bool("video", "interpolate", opt.interpolate);
@@ -310,6 +355,12 @@ int main(int argc, char** argv) {
             if (opt.filter < 0 || opt.filter > 2) {
                 opt.filter = 0;
             }
+        } else if (a == "--renderer") {
+            opt.renderer = value("--renderer");
+#ifdef JILL_PS4
+        } else if (a == "--debug") {
+            opt.debug = true;
+#endif
         } else if (a == "--fullscreen") {
             opt.fullscreen = true;
             opt.window_mode = 1;
@@ -465,9 +516,62 @@ int main(int argc, char** argv) {
             return 2;
         }
     }
+#ifdef JILL_PS4
+    // Make every configured path absolute under /data/JillEX.  shadPS4 and
+    // some loaders stub chdir, so relative paths are not dependable even
+    // though we still attempt the chdir above.
+    opt.games_dir = jill_paths::resolve(opt.games_dir);
+    opt.profiles_dir = jill_paths::resolve(opt.profiles_dir);
+    opt.external_dir = jill_paths::resolve(opt.external_dir);
+    opt.data_dir = jill_paths::resolve(opt.data_dir);
+    opt.palette = jill_paths::resolve(opt.palette);
+    for (auto& entry : opt.data_paths) {
+        entry.second = jill_paths::resolve(entry.second);
+    }
+    // A jill.ini copied from Windows usually carries D:/Emu/... asset paths.
+    // Those never exist in the PS4 namespace, so fall back to the local folders
+    // under /data/JillEX instead of failing to find any game.  Absolute POSIX
+    // paths that do exist (USB storage, for example) are kept.
+    auto has_drive_letter = [](const std::string& p) {
+        return p.size() >= 2 && p[1] == ':' &&
+               ((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z'));
+    };
+    auto fix_asset_dir = [&](std::string& value, const std::string& fallback) {
+        if (!value.empty() &&
+            (has_drive_letter(value) || !jill_paths::exists(value))) {
+            value = fallback;
+        }
+    };
+    fix_asset_dir(opt.games_dir, jill_paths::resolve("games"));
+    fix_asset_dir(opt.profiles_dir, jill_paths::resolve("profiles"));
+    fix_asset_dir(opt.external_dir, jill_paths::resolve("external"));
+    for (auto& entry : opt.data_paths) {
+        if (entry.first == "games" || entry.first == "profiles") {
+            continue;
+        }
+        if (!entry.second.empty() &&
+            (has_drive_letter(entry.second) ||
+             !jill_paths::exists(entry.second))) {
+            entry.second.clear();  // use the manifest's local default
+        }
+    }
+#endif
     if (opt.scale < 1 || opt.scale > 10) {
         opt.scale = 3;
     }
+    jill_paths::trace("startup: games=%s profiles=%s external=%s renderer=%s",
+                      opt.games_dir.c_str(), opt.profiles_dir.c_str(),
+                      opt.external_dir.c_str(), opt.renderer.c_str());
     opt.stereo = 0;  // stereo display is currently disabled
+#ifdef JILL_PS4
+    const int rc = run_app(opt);
+    // The devices are already closed and saves/config flushed.  Returning
+    // through the CRT runs atexit(SDL_Quit) and static destructors after the
+    // videoout/audio handles are gone, which faults on retail hardware
+    // (CE-34878-0).  Terminate the process directly instead.
+    jill_paths::trace("startup: exiting (rc=%d)", rc);
+    _exit(rc);
+#else
     return run_app(opt);
+#endif
 }

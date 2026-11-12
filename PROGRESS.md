@@ -1,5 +1,108 @@
 # Progress
 
+## 2026-11-12 (PS4 port: first build)
+
+* Added `PS4_PORT_PLAN.md`: verified toolchain facts, `/data/JillEX` layout,
+  the Piglet/EGL OpenGL ES renderer design, a FluidSynth licence/feasibility
+  verdict, a numbered risk table and the phase plan.
+* New `platform_paths` helper: on PS4 the data root is `/data/JillEX`; the
+  process creates it, tries to `chdir` into it, and mirrors
+  `stdout`/`stderr` to `jill.log`.  All configured dirs, per-game asset
+  folders, palettes, save slots and high scores are resolved to absolute
+  paths, because shadPS4 (like some loaders) stubs `chdir`.  Desktop builds
+  are unchanged.
+* New `Screen` seam (`screen.h`): the SDL window/renderer/texture code moved
+  out of `app.cpp` into `screen_sdl.cpp` unchanged, so PC output is identical.
+  `app.cpp` only creates the screen, presents frames, sets the title and shuts
+  it down.
+* New `port/ps4/screen_gl.cpp`: EGL + OpenGL ES 2.0 via `libScePigletv2VSH`,
+  using the firmware's precompiled `texmap` shaders (`glShaderBinary`) and a
+  streaming 320x200 RGBA texture, integer-scaled and letterboxed into 1080p.
+* New `build_ps4.cmd`: compiles every port source plus the GL screen with
+  clang (`gnu++17`), links with `ld.lld`, produces
+  `port\ps4\build\eboot.bin`, then builds a fake-signed installable
+  `IV0000-BREW00199_00-JILLEXPS40000000.pkg` with `create-gp4` +
+  `PkgTool.Core` (param.sfo, icon0.png, libc.prx, libSceFios2.prx,
+  `sce_sys/about/right.sprx`).  `build_ps4.cmd nopkg` stops after the eboot.
+  `build.cmd`/`build32.cmd` are untouched.
+* Toolchain portability fixes: guard `SDL_HINT_DIRECTINPUT_ENABLED` (SDL
+  2.0.9 does not have it) and cast `std::fabs` to `float` before `std::max`
+  (the PS4 libc returns `double`).  PC build re-verified.
+* shadPS4 testing: it stubs `chdir`, so all PS4 paths are resolved to absolute
+  `/data/JillEX/...` paths.  Startup milestones are traced to `jill.log`.
+  `[video] renderer = auto` uses GLES on hardware and the SDL software screen
+  under shadPS4 (detected via its `/hostapp` mount), where Piglet init hangs.
+* Black-screen fix: the PS4 SDL backend now follows the OpenOrbis sample
+  (`SDL_GetWindowSurface` + `SDL_CreateSoftwareRenderer` + explicit
+  `SDL_UpdateWindowSurface`, with a per-frame destination rect instead of
+  logical-size scaling).  The diagnostic log is written with a real `fopen`
+  handle, not `freopen`, so it is populated on both hardware and the emulator.
+* The first presented frame is checksummed and dumped to
+  `/data/JillEX/first_frame.ppm` (plus `frame: first argb sum=...` in the log)
+  to distinguish "black framebuffer" from "black presentation".  Piglet config
+  now matches the sample exactly (`flags |= 0x60`, splash hidden after EGL).
+* Confirmed with the dump that the engine frame is correct (menu visible) and
+  the PS4 window surface is `BGR888`.  The SDL software renderer's conversion
+  to that surface produced a black image, so the PS4 SDL backend now writes the
+  scaled pixels directly into `SDL_GetWindowSurface()` and calls
+  `SDL_UpdateWindowSurface()`; no SDL_Renderer is involved on PS4.
+* Root cause of the remaining black screen: the OpenOrbis SDL2 PS4 video driver
+  uses `window->x` / `window->y` as the *destination offset* when copying the
+  window surface into the video buffer.  shadPS4 reports a 1280x720 video mode,
+  so a forced 1920x1080 window is centred at (-320, -180); the driver's
+  unsigned/clamped offsets then copy the bottom-right black region.  The PS4
+  SDL backend now sizes the window from `SDL_GetDesktopDisplayMode(0)` and
+  creates it at (0,0), so surface size == buffer size and offsets are zero.
+  `sdl screen: video mode ...` and `sdl screen: presented #n` verify this.
+* Input: the bundled SDL2 PS4 joystick driver never produces a game-controller
+  mapping (its GUID is malformed), so no menu received any button.  The port now
+  initialises libScePad directly (`port/ps4/ps4_pad.cpp`), polls the DualShock 4
+  once per frame, synthesises `SDL_CONTROLLERBUTTONDOWN/UP` events for the menu
+  code, and feeds the engine directly for gameplay (Cross = jump, Square = throw,
+  d-pad/left stick = move).  SDL joystick/controller init is skipped on PS4.
+* Audio stability: the PS4 audio device buffer is 2048 samples (was 1024) and the
+  frame-pacing busy-spin is disabled on PS4 (it held a core for tens of
+  milliseconds and starved the audio thread).
+* Audio tempo: SDL2's PS4 audio driver waits for the previous buffer to finish
+  before mixing the next one, so the mixing time stretched every playback period
+  (audible as slow music on the console, fine on fast shadPS4 hosts).  The PS4
+  build now owns the output: a native `sceAudioOut` thread with two buffers
+  mixes buffer B while buffer A plays.  `audio: mix X ms / 42.7 ms budget` logs
+  the cost; the PS4 SDL audio driver is no longer used (SDL mutex replaces
+  `SDL_LockAudioDevice` so all existing state locking still works).
+* Added a PS4-only debug overlay (`[debug] overlay = 1` or `--debug`): FPS,
+  frame time, engine tick, frame build, present and audio mix/budget.  The same
+  numbers are logged as `perf: ...` every 5 s.
+* Licensing cleanup: untracked all reverse-engineering artifacts that contain
+  Epic-derived binaries/data (`re/img*.bin`, `re/proj/`, `re/export/`,
+  `re/*.txt`, `re/*.asm`, `re/*.png`) and the `hiscores_panel.png` screenshot;
+  they stay on disk and are ignored via `.gitignore`.  Added a Legal/trademarks
+  section to README, an OpenOrbis GPL-3.0 / Sony-module note to
+  THIRD_PARTY_NOTICES, updated `LICENSE.md` (Onesimus palette exception) and
+  refreshed `docs/licensing.md`.  History still contains the old files; purging
+  needs `git filter-repo`.
+* The PS4 icon uses Jill's face, so the Epic notice now covers it explicitly:
+  `LICENSE.md`/`README.md`/`THIRD_PARTY_NOTICES.md`/`docs/licensing.md` call out
+  `port/ps4/sce_sys/icon0.png`, a new root `DISCLAIMER.txt` is copied beside the
+  `.pkg` and into `JillEX-data.zip`, and every splash page shows
+  "UNOFFICIAL FAN PORT / JILL IS A TRADEMARK OF EPIC GAMES".
+* 30 Hz cap: the profile showed `present` at ~25 ms.  SDL2's PS4 video driver
+  waits for the previous flip to finish before building the next frame, so the
+  loop could only complete one frame per ~1.5 vblanks (30 Hz).  New native
+  `sceVideoOut` backend (`port/ps4/screen_videoout.cpp`) with 3 buffers and two
+  flips in flight: the CPU never stalls on a finished flip, so the frame pacer
+  holds 60 Hz.  `renderer = auto` prefers it (`videoout | gl | sdl`).
+* Quit crash (CE-34878-0): the log reached `startup: main loop exited` and the
+  fault happened afterwards, i.e. in CRT/SDL teardown after our devices were
+  already closed.  PS4 `main` now calls `_exit()` after `run_app()` (everything
+  is flushed by then).  Videoout teardown also drains outstanding flip events
+  before unregistering buffers.
+* `build_ps4.cmd` now stages and zips the companion data
+  (`jill.ini`, `games/`, `profiles/`, README) as `port\ps4\build\JillEX-data.zip`
+  for transferring to `/data/JillEX` alongside the installed pkg.  The pkg and
+  the zip are also copied to the repository root for quick access (ignored by
+  git via the new root `.gitignore`).
+
 ## 2026-11-12 (modern HUD suit shadow)
 
 * The modern HUD with `BACKGROUND: SUIT` now draws a two-row drop shadow under

@@ -18,6 +18,8 @@ add_executable(jill
     src/game.cpp
     src/textpages.cpp
     src/config.cpp
+    src/platform_paths.cpp
+    src/screen_sdl.cpp
     src/cmf.cpp
     src/opl2.cpp
     src/music.cpp

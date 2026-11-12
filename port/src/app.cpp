@@ -18,10 +18,16 @@
 #include "external.h"
 #include "framebuffer.h"
 #include "game.h"
+#include "platform_paths.h"
 #include "profile.h"
+#include "screen.h"
 
 #ifdef JILL_HAVE_SDL
 #include <SDL.h>
+#endif
+
+#ifdef JILL_PS4
+#include "../ps4/ps4_pad.h"
 #endif
 
 namespace {
@@ -63,6 +69,36 @@ void compose_stereo(Framebuffer& out, const Framebuffer& left,
         out.px = left.px;
     }
 }
+
+#ifdef JILL_PS4
+// --- PS4 debug overlay -----------------------------------------------------
+struct PerfStats {
+    double fps = 0.0;
+    double frame_ms = 0.0;
+    double tick_ms = 0.0;
+    double draw_ms = 0.0;
+    double present_ms = 0.0;
+};
+
+double perf_ema(double cur, double v) {
+    return cur <= 0.0 ? v : cur * 0.9 + v * 0.1;
+}
+
+void draw_debug_overlay(Framebuffer& fb, Engine& engine, const PerfStats& p,
+                        float mix_ms, float mix_budget_ms) {
+    char l0[48];
+    char l1[48];
+    char l2[48];
+    std::snprintf(l0, sizeof(l0), "DBG %5.1fFPS %5.1fMS", p.fps, p.frame_ms);
+    std::snprintf(l1, sizeof(l1), "T%4.1f D%4.1f P%4.1f MS", p.tick_ms,
+                  p.draw_ms, p.present_ms);
+    std::snprintf(l2, sizeof(l2), "A%5.1f/%5.1f MS", mix_ms, mix_budget_ms);
+    fb.fill_rect(1, 0, 196, 30, 0);
+    engine.draw_text(fb, 3, 2, 15, l0);
+    engine.draw_text(fb, 3, 11, 7, l1);
+    engine.draw_text(fb, 3, 20, 7, l2);
+}
+#endif  // JILL_PS4
 
 #ifdef JILL_HAVE_SDL
 // The original NOISEMAKER maps this QWERTY scan order to raw sound slots 1..45
@@ -456,8 +492,54 @@ bool key_down(const uint8_t* keys, const Bindings& b, int action) {
     return b.key2[action] != SDL_SCANCODE_UNKNOWN && keys[b.key2[action]];
 }
 
-bool pad_button(SDL_GameController* gc, const Bindings& b, int action) {
-    return gc && b.pad[action] >= 0 &&
+#ifdef JILL_PS4
+// Current native pad state, refreshed once per frame by the main loop.
+Ps4PadState g_ps4_pad;
+
+// Turn pad button edges into SDL controller events, so every existing
+// keyboard/controller menu path (navigation, rebinding, text pages, hiscore
+// entry, splash skip) works without touching it.
+void ps4_pad_emit(const Ps4PadState& prev, const Ps4PadState& now) {
+    struct Edge {
+        bool now_on;
+        bool prev_on;
+        int button;
+    };
+    const Edge edges[] = {
+        {now.up, prev.up, SDL_CONTROLLER_BUTTON_DPAD_UP},
+        {now.down, prev.down, SDL_CONTROLLER_BUTTON_DPAD_DOWN},
+        {now.left, prev.left, SDL_CONTROLLER_BUTTON_DPAD_LEFT},
+        {now.right, prev.right, SDL_CONTROLLER_BUTTON_DPAD_RIGHT},
+        {now.cross, prev.cross, SDL_CONTROLLER_BUTTON_A},
+        {now.circle, prev.circle, SDL_CONTROLLER_BUTTON_B},
+        {now.square, prev.square, SDL_CONTROLLER_BUTTON_X},
+        {now.triangle, prev.triangle, SDL_CONTROLLER_BUTTON_Y},
+        {now.l1, prev.l1, SDL_CONTROLLER_BUTTON_LEFTSHOULDER},
+        {now.r1, prev.r1, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER},
+        {now.options, prev.options, SDL_CONTROLLER_BUTTON_START},
+        {now.touch, prev.touch, SDL_CONTROLLER_BUTTON_BACK},
+        {now.l3, prev.l3, SDL_CONTROLLER_BUTTON_LEFTSTICK},
+        {now.r3, prev.r3, SDL_CONTROLLER_BUTTON_RIGHTSTICK},
+    };
+    for (const Edge& e : edges) {
+        if (e.now_on == e.prev_on) {
+            continue;
+        }
+        SDL_Event out;
+        SDL_zero(out);
+        out.type =
+            e.now_on ? SDL_CONTROLLERBUTTONDOWN : SDL_CONTROLLERBUTTONUP;
+        out.cbutton.type = out.type;
+        out.cbutton.timestamp = SDL_GetTicks();
+        out.cbutton.which = 0;
+        out.cbutton.button = static_cast<Uint8>(e.button);
+        out.cbutton.state = e.now_on ? SDL_PRESSED : SDL_RELEASED;
+        SDL_PushEvent(&out);
+    }
+}
+#endif
+
+bool pad_button(SDL_GameController* gc, const Bindings& b, int action) {    return gc && b.pad[action] >= 0 &&
            SDL_GameControllerGetButton(
                gc, static_cast<SDL_GameControllerButton>(b.pad[action])) != 0;
 }
@@ -541,6 +623,25 @@ void poll_input(const uint8_t* keys, const Bindings& b,
         jump = jump || SDL_JoystickGetButton(joy, 0) != 0;
         throw_btn = throw_btn || SDL_JoystickGetButton(joy, 2) != 0;
     }
+
+#ifdef JILL_PS4
+    // Native DualShock 4 state (SDL's PS4 joystick driver provides no usable
+    // controller mapping, so it is polled directly).
+    if (g_ps4_pad.left || g_ps4_pad.stick_x < -0.5f) {
+        --h;
+    }
+    if (g_ps4_pad.right || g_ps4_pad.stick_x > 0.5f) {
+        ++h;
+    }
+    if (g_ps4_pad.up || g_ps4_pad.stick_y < -0.5f) {
+        --v;
+    }
+    if (g_ps4_pad.down || g_ps4_pad.stick_y > 0.5f) {
+        ++v;
+    }
+    jump = jump || g_ps4_pad.cross;
+    throw_btn = throw_btn || g_ps4_pad.square;
+#endif
 
     engine.set_input(h, v, jump, throw_btn);
 }
@@ -706,7 +807,7 @@ std::string hiscore_safe_id(const std::string& id) {
 }
 
 std::string hiscore_path(const std::string& game_id) {
-    return "hiscore_" + hiscore_safe_id(game_id) + ".txt";
+    return jill_paths::resolve("hiscore_" + hiscore_safe_id(game_id) + ".txt");
 }
 
 std::string hiscore_default_name(const std::string& game_id) {
@@ -2588,14 +2689,47 @@ int run_sdl(const Options& opt, Engine& engine,
             const std::vector<GameDef>& games) {
     // Let SDL drive Xbox pads through XInput and legacy pads through the
     // DirectInput path (both hints default to on; set them explicitly).
+#ifdef SDL_HINT_XINPUT_ENABLED
     SDL_SetHint(SDL_HINT_XINPUT_ENABLED, "1");
+#endif
+#if defined(SDL_HINT_DIRECTINPUT_ENABLED) && SDL_VERSION_ATLEAST(2, 0, 18)
     SDL_SetHint(SDL_HINT_DIRECTINPUT_ENABLED, "1");
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMECONTROLLER |
-                 SDL_INIT_JOYSTICK) != 0) {
+#endif
+    // PS4 display backend: OpenGL ES (Piglet) on hardware, SDL software under
+    // shadPS4 (which mounts /hostapp and where Piglet init hangs).  An explicit
+    // `renderer = gl|sdl` in jill.ini or --renderer overrides the choice.
+#ifdef JILL_PS4
+    std::string backend = opt.renderer.empty() ? "auto" : opt.renderer;
+    const bool emulator = jill_paths::exists("/hostapp");
+    jill_paths::trace("display: /hostapp %s", emulator ? "present" : "missing");
+    const bool want_sdl_video = backend == "sdl";
+#else
+    const bool want_sdl_video = true;
+#endif
+    // PS4: the display comes from Piglet/EGL on hardware, so only the event and
+    // audio subsystems are initialised through SDL there.  Input uses libScePad
+    // directly (see ps4_pad.h): SDL's PS4 joystick driver never exposes a game
+    // controller mapping, so no menu ever saw a button press.
+#ifdef JILL_PS4
+    const Uint32 sdl_subsystems = (want_sdl_video ? SDL_INIT_VIDEO : 0) |
+                                  SDL_INIT_EVENTS;
+#else
+    const Uint32 sdl_subsystems = (want_sdl_video ? SDL_INIT_VIDEO : 0) |
+                                  SDL_INIT_EVENTS | SDL_INIT_GAMECONTROLLER |
+                                  SDL_INIT_JOYSTICK;
+#endif
+    if (SDL_Init(sdl_subsystems) != 0) {
         std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
     }
+    jill_paths::trace("startup: SDL ready");
     std::atexit(SDL_Quit);
+
+#ifdef JILL_PS4
+    if (!ps4_pad_init()) {
+        jill_paths::trace("pad: no controller at startup");
+    }
+#endif
 
     VideoSettings video;
     video.mode = opt.fullscreen ? 1 : opt.window_mode;
@@ -2609,32 +2743,60 @@ int run_sdl(const Options& opt, Engine& engine,
     video.stereo_depth = opt.stereo_depth;
     video.stereo_convergence = opt.stereo_convergence;
 
-    SDL_Window* window = SDL_CreateWindow(
-        "Jill (port skeleton)", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        window_width(video), window_height(video), SDL_WINDOW_RESIZABLE);
-    if (!window) {
-        std::fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError());
+    std::unique_ptr<Screen> screen;
+    std::string screen_err;
+    const int screen_w = window_width(video);
+    const int screen_h = window_height(video);
+#ifdef JILL_PS4
+    // Preference order per requested backend.  `videoout` avoids the SDL PS4
+    // driver's flip stall (30 Hz); `auto` prefers it and falls back to SDL.
+    std::vector<std::string> order;
+    if (backend == "gl") {
+        order = {"gl", "videoout", "sdl"};
+    } else if (backend == "sdl") {
+        order = {"sdl"};
+    } else if (backend == "videoout") {
+        order = {"videoout", "sdl"};
+    } else {
+        order = {"videoout", "gl", "sdl"};
+    }
+    std::string chosen;
+    for (const std::string& name : order) {
+        if (name == "gl") {
+            screen = create_screen_gl();
+        } else if (name == "videoout") {
+            screen = create_screen_videoout();
+        } else {
+            screen = create_screen_sdl();
+        }
+        screen_err.clear();
+        if (screen && screen->init(screen_w, screen_h, video.mode, screen_err)) {
+            chosen = name;
+            break;
+        }
+        jill_paths::trace("display: %s init failed: %s", name.c_str(),
+                          screen_err.c_str());
+        screen.reset();
+    }
+    if (!screen) {
+        std::fprintf(stderr, "%s\n",
+                     screen_err.empty() ? "no display backend"
+                                        : screen_err.c_str());
         return 1;
     }
-    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-    if (!renderer) {
-        renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
-    }
-    if (!renderer) {
-        std::fprintf(stderr, "SDL_CreateRenderer: %s\n", SDL_GetError());
+    backend = chosen;
+    jill_paths::trace("display: backend=%s active (requested=%s)",
+                      backend.c_str(), opt.renderer.c_str());
+#else
+    screen = create_screen_sdl();
+    if (!screen || !screen->init(screen_w, screen_h, video.mode, screen_err)) {
+        std::fprintf(stderr, "%s\n",
+                     screen_err.empty() ? "no display backend"
+                                        : screen_err.c_str());
         return 1;
     }
-    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
-    SDL_RenderSetLogicalSize(renderer, Framebuffer::W, Framebuffer::H);
-    SDL_RenderSetIntegerScale(renderer, SDL_TRUE);
-
-    SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
-                                             SDL_TEXTUREACCESS_STREAMING,
-                                             Framebuffer::W, Framebuffer::H);
-    if (!texture) {
-        std::fprintf(stderr, "SDL_CreateTexture: %s\n", SDL_GetError());
-        return 1;
-    }
+#endif
+    jill_paths::trace("display: ready");
 
     uint8_t palette[768];
     if (!load_palette(opt.palette.empty() ? engine.game().palette : opt.palette,
@@ -2686,9 +2848,11 @@ int run_sdl(const Options& opt, Engine& engine,
     music_player.set_pc_speaker(menu.pc_speaker);
     {
         std::string audio_err;
+        jill_paths::trace("startup: opening audio");
         if (!music_player.open(audio_err)) {
             std::fprintf(stderr, "%s\n", audio_err.c_str());
         }
+        jill_paths::trace("startup: audio ready");
     }
     if (opt.midi_device >= 0) {
         std::string midi_err;
@@ -2795,32 +2959,12 @@ int run_sdl(const Options& opt, Engine& engine,
 
     // Apply the current WINDOW TYPE / WINDOW SIZE / RESOLUTION triple.
     auto apply_video = [&]() {
-        if (video.mode == 2) {  // borderless fullscreen
-            SDL_SetWindowBordered(window, SDL_FALSE);
-            SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
-            return;
-        }
-        SDL_SetWindowBordered(window, SDL_TRUE);
-        if (video.mode == 1) {  // exclusive fullscreen at the chosen mode
-            if (video.resolution) {
-                SDL_DisplayMode want{};
-                want.w = kResolutions[video.resolution].w;
-                want.h = kResolutions[video.resolution].h;
-                want.format = SDL_PIXELFORMAT_UNKNOWN;
-                want.refresh_rate = 0;
-                SDL_DisplayMode closest{};
-                if (SDL_GetClosestDisplayMode(0, &want, &closest)) {
-                    SDL_SetWindowDisplayMode(window, &closest);
-                }
-            }
-            SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN);
-            return;
-        }
-        // Windowed: leave fullscreen, then size to the resolution or scale.
-        SDL_SetWindowFullscreen(window, 0);
-        SDL_SetWindowSize(window, window_width(video), window_height(video));
-        SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED,
-                              SDL_WINDOWPOS_CENTERED);
+        const int display_w =
+            video.resolution ? kResolutions[video.resolution].w : 0;
+        const int display_h =
+            video.resolution ? kResolutions[video.resolution].h : 0;
+        screen->apply(window_width(video), window_height(video), video.mode,
+                      display_w, display_h);
     };
     apply_video();
     const double step = 1.0 / 18.2065;  // one BIOS tick per update (18.2 fps)
@@ -2837,7 +2981,7 @@ int run_sdl(const Options& opt, Engine& engine,
     {
         IniFile ini;
         std::string ini_err;
-        if (ini.load("jill.ini", ini_err)) {
+        if (ini.load(jill_paths::resolve("jill.ini"), ini_err)) {
             load_bindings_ini(ini, base_bindings);
             for (const std::string& sec : ini.sections()) {
                 static const std::string kPrefix = "controls.";
@@ -3741,8 +3885,33 @@ int run_sdl(const Options& opt, Engine& engine,
         }
     };
 
+    jill_paths::trace("startup: entering main loop");
+#ifdef JILL_PS4
+    PerfStats perf;
+    uint64_t perf_last_frame = SDL_GetPerformanceCounter();
+    uint64_t perf_log_at = perf_last_frame;
+#endif
     while (running) {
         const uint64_t frame_start = SDL_GetPerformanceCounter();
+#ifdef JILL_PS4
+        if (opt.debug) {
+            const double dt =
+                static_cast<double>(frame_start - perf_last_frame) / freq;
+            if (dt > 0.0001) {
+                perf.fps = perf_ema(perf.fps, 1.0 / dt);
+                perf.frame_ms = perf_ema(perf.frame_ms, dt * 1000.0);
+            }
+            perf_last_frame = frame_start;
+        }
+#endif
+#ifdef JILL_PS4
+        {
+            Ps4PadState pad_now;
+            ps4_pad_poll(pad_now);
+            ps4_pad_emit(g_ps4_pad, pad_now);
+            g_ps4_pad = pad_now;
+        }
+#endif
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             if (ev.type == SDL_QUIT) {
@@ -4089,6 +4258,10 @@ int run_sdl(const Options& opt, Engine& engine,
         }
 
         const uint8_t* keys = SDL_GetKeyboardState(nullptr);
+        static const uint8_t kNoKeys[SDL_NUM_SCANCODES] = {};
+        if (!keys) {
+            keys = kNoKeys;  // PS4 has no keyboard subsystem
+        }
         if (!engine.text_page_open()) {
             page_axis_x = 0;
             page_axis_y = 0;
@@ -4112,10 +4285,22 @@ int run_sdl(const Options& opt, Engine& engine,
         if (paused) {
             accumulator = 0.0;  // pause the world while a menu is up
         }
+#ifdef JILL_PS4
+        const uint64_t perf_tick_start = SDL_GetPerformanceCounter();
+#endif
         while (accumulator >= step) {
             engine.tick();
             accumulator -= step;
         }
+#ifdef JILL_PS4
+        if (opt.debug) {
+            perf.tick_ms = perf_ema(
+                perf.tick_ms,
+                static_cast<double>(SDL_GetPerformanceCounter() -
+                                    perf_tick_start) /
+                    freq * 1000.0);
+        }
+#endif
         if (ending.active) {
             // Cards advance automatically; Enter/click/A skips ahead and Esc/B
             // leaves the ending immediately.
@@ -4175,6 +4360,9 @@ int run_sdl(const Options& opt, Engine& engine,
             music_player.play_sfx(s >> 8, s & 0xFF);
         }
 
+#ifdef JILL_PS4
+        const uint64_t perf_draw_start = SDL_GetPerformanceCounter();
+#endif
         if (splash_active) {
             const std::vector<uint8_t>& page = splash_image.pages[splash_page];
             if (page.size() == fb.px.size()) {
@@ -4182,6 +4370,13 @@ int run_sdl(const Options& opt, Engine& engine,
             } else {
                 fb.fill_rect(0, 0, Framebuffer::W, Framebuffer::H, 0);
             }
+            // Legal notice: the application icon and menu artwork are derived
+            // from Epic's game.  Shown on every splash page.
+            fb.fill_rect(0, Framebuffer::H - 20, Framebuffer::W, 20, 0);
+            engine.draw_text(fb, 4, Framebuffer::H - 19, 15,
+                             "UNOFFICIAL FAN PORT");
+            engine.draw_text(fb, 4, Framebuffer::H - 10, 7,
+                             "JILL IS A TRADEMARK OF EPIC GAMES");
             if (SDL_GetTicks() - splash_page_start >= 2500) {
                 ++splash_page;
                 if (splash_page >= splash_image.pages.size()) {
@@ -4241,6 +4436,12 @@ int run_sdl(const Options& opt, Engine& engine,
         if (score_entry.active) {
             draw_hiscore_entry(fb, engine, score_entry);
         }
+#ifdef JILL_PS4
+        if (opt.debug) {
+            draw_debug_overlay(fb, engine, perf, music_player.mix_ms(),
+                               music_player.mix_budget_ms());
+        }
+#endif
         const uint8_t* out_pal =
             (splash_active && splash_image.palette_ready) ? splash_image.palette
                                                           : palette;
@@ -4256,11 +4457,70 @@ int run_sdl(const Options& opt, Engine& engine,
         } else if (video.filter == 2) {
             filter_crt(argb, Framebuffer::W, Framebuffer::H);
         }
-        SDL_UpdateTexture(texture, nullptr, argb.data(),
-                          Framebuffer::W * static_cast<int>(sizeof(uint32_t)));
-        SDL_RenderClear(renderer);
-        SDL_RenderCopy(renderer, texture, nullptr, nullptr);
-        SDL_RenderPresent(renderer);
+#ifdef JILL_PS4
+        // First-frame diagnostic: prove whether the game frame itself is black
+        // and leave an image on disk for inspection.
+        {
+            static bool dumped_first = false;
+            if (!dumped_first) {
+                dumped_first = true;
+                uint64_t sum = 0;
+                int nonzero = 0;
+                for (uint32_t c : argb) {
+                    const uint32_t v = c & 0x00FFFFFFu;
+                    sum += v;
+                    if (v != 0) {
+                        ++nonzero;
+                    }
+                }
+                jill_paths::trace("frame: first argb sum=%llu nonzero=%d",
+                                  static_cast<unsigned long long>(sum),
+                                  nonzero);
+                const std::string ppm =
+                    jill_paths::resolve("first_frame.ppm");
+                if (std::FILE* f = std::fopen(ppm.c_str(), "wb")) {
+                    std::fprintf(f, "P6\n%d %d\n255\n", Framebuffer::W,
+                                 Framebuffer::H);
+                    for (uint32_t c : argb) {
+                        std::fputc(static_cast<int>((c >> 16) & 0xFF), f);
+                        std::fputc(static_cast<int>((c >> 8) & 0xFF), f);
+                        std::fputc(static_cast<int>(c & 0xFF), f);
+                    }
+                    std::fclose(f);
+                    jill_paths::trace("frame: wrote %s", ppm.c_str());
+                }
+            }
+        }
+#endif
+#ifdef JILL_PS4
+        if (opt.debug) {
+            perf.draw_ms = perf_ema(
+                perf.draw_ms,
+                static_cast<double>(SDL_GetPerformanceCounter() -
+                                    perf_draw_start) /
+                    freq * 1000.0);
+        }
+        const uint64_t perf_present_start = SDL_GetPerformanceCounter();
+#endif
+        screen->present(argb.data(), Framebuffer::W, Framebuffer::H);
+#ifdef JILL_PS4
+        if (opt.debug) {
+            const uint64_t perf_now = SDL_GetPerformanceCounter();
+            perf.present_ms = perf_ema(
+                perf.present_ms,
+                static_cast<double>(perf_now - perf_present_start) / freq *
+                    1000.0);
+            if (static_cast<double>(perf_now - perf_log_at) / freq >= 5.0) {
+                perf_log_at = perf_now;
+                jill_paths::trace(
+                    "perf: fps=%.1f frame=%.1f tick=%.1f draw=%.1f "
+                    "present=%.1f audio=%.1f/%.1f ms",
+                    perf.fps, perf.frame_ms, perf.tick_ms, perf.draw_ms,
+                    perf.present_ms, music_player.mix_ms(),
+                    music_player.mix_budget_ms());
+            }
+        }
+#endif
 
         if (SDL_GetTicks() - title_timer >= 500) {
             title_timer = SDL_GetTicks();
@@ -4268,7 +4528,7 @@ int run_sdl(const Options& opt, Engine& engine,
             std::snprintf(title, sizeof(title), "Jill  %s  %s  hp=%d  %.1f fps",
                           engine.game().id.c_str(), engine.board_name().c_str(),
                           engine.health(), 1.0 / step);
-            SDL_SetWindowTitle(window, title);
+            screen->set_title(title);
         }
         // Presentation pacing.  The world still advances at `step` (18.2065 Hz);
         // HIGH FRAMERATE presents the current frame at up to 144 Hz.
@@ -4279,16 +4539,20 @@ int run_sdl(const Options& opt, Engine& engine,
             static_cast<double>(SDL_GetPerformanceCounter() - frame_start) / freq;
         const double remain = present_time - spent;
         if (remain >= 0.001) {
-            // Coarse sleep, then a short spin so SDL_Delay's millisecond
-            // quantisation does not drag the rate below the chosen value.
             const double remain_ms = remain * 1000.0;
             if (remain_ms > 1.0) {
                 SDL_Delay(static_cast<Uint32>(remain_ms - 0.5));
             }
+#ifndef JILL_PS4
+            // Coarse sleep, then a short spin so SDL_Delay's millisecond
+            // quantisation does not drag the rate below the chosen value.
+            // PS4 skips the spin: it burns a whole core for tens of
+            // milliseconds each frame and starves the audio thread.
             while (static_cast<double>(
                        SDL_GetPerformanceCounter() - frame_start) /
                        freq < present_time) {
             }
+#endif
         }
     }
 
@@ -4375,13 +4639,16 @@ int run_sdl(const Options& opt, Engine& engine,
                 save_bindings_ini(ini, kv.second, sec);
             }
         }
-        ini.save("jill.ini");
+        ini.save(jill_paths::resolve("jill.ini"));
     }
 
     close_pads();
-    SDL_DestroyTexture(texture);
-    SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
+#ifdef JILL_PS4
+    ps4_pad_shutdown();
+#endif
+    jill_paths::trace("shutdown: closing display");
+    screen->shutdown();
+    jill_paths::trace("startup: main loop exited");
     return 0;
 }
 
@@ -4393,6 +4660,7 @@ int run_app(const Options& opt) {
     std::string err;
     const std::string profiles_dir =
         opt.profiles_dir.empty() ? std::string("profiles") : opt.profiles_dir;
+    jill_paths::trace("startup: profiles from %s", profiles_dir.c_str());
     const int profile_files = load_profile_dir(profiles_dir, err);
     if (!err.empty()) {
         std::fprintf(stderr, "%s\n", err.c_str());
@@ -4403,6 +4671,8 @@ int run_app(const Options& opt) {
                     profiles_dir.c_str());
     }
     std::vector<GameDef> games = load_game_list(opt.games_dir, err);
+    jill_paths::trace("startup: games=%d dir=%s",
+                      static_cast<int>(games.size()), opt.games_dir.c_str());
     if (!err.empty()) {
         std::fprintf(stderr, "%s\n", err.c_str());
     }
@@ -4426,10 +4696,14 @@ int run_app(const Options& opt) {
     // keys are game ids (jill1, jill2, jill3, onesimus), so deleting the local
     // copies only needs one line per game in jill.ini.
     for (GameDef& g : games) {
+        // PS4 has no usable process working directory (shadPS4 stubs chdir),
+        // so make every asset directory absolute before it reaches the engine.
+        g.data_dir = jill_paths::resolve(g.data_dir);
+        g.palette = jill_paths::resolve(g.palette);
         const auto it = opt.data_paths.find(g.id);
         if (it != opt.data_paths.end() && !it->second.empty() &&
             it->first != "games" && it->first != "profiles") {
-            g.data_dir = it->second;
+            g.data_dir = jill_paths::resolve(it->second);
         }
     }
 
@@ -4508,22 +4782,24 @@ int run_app(const Options& opt) {
         // [paths] data key is the fallback for manifests without one.
         IniFile ini;
         std::string ini_err;
-        if (ini.load("jill.ini", ini_err)) {
+        if (ini.load(jill_paths::resolve("jill.ini"), ini_err)) {
             std::string data = ini.get("paths", game.id);
             if (data.empty()) {
                 data = ini.get("paths", "data");
             }
             if (!data.empty()) {
-                game.data_dir = data;
+                game.data_dir = jill_paths::resolve(data);
             }
         }
     }
     if (!opt.data_dir.empty()) {
-        game.data_dir = opt.data_dir;
+        game.data_dir = jill_paths::resolve(opt.data_dir);
     }
     if (!opt.palette.empty()) {
-        game.palette = opt.palette;
+        game.palette = jill_paths::resolve(opt.palette);
     }
+    game.data_dir = jill_paths::resolve(game.data_dir);
+    game.palette = jill_paths::resolve(game.palette);
     run_opt.data_dir = game.data_dir;
     run_opt.palette = game.palette;
     run_opt.menu_theme = std::min(opt.menu_theme, static_cast<int>(games.size()));
@@ -4538,10 +4814,14 @@ int run_app(const Options& opt) {
     }
 
     Engine engine;
+    jill_paths::trace("startup: engine init game=%s data=%s palette=%s",
+                      game.id.c_str(), game.data_dir.c_str(),
+                      game.palette.c_str());
     if (!engine.init(game, err)) {
         std::fprintf(stderr, "%s\n", err.c_str());
         return 2;
     }
+    jill_paths::trace("startup: engine ready");
     // Display/dialog options first: load_board derives the caption timing from
     // the dialog speed.
     engine.set_hud_classic(opt.hud_classic);

@@ -62,6 +62,11 @@ public:
     // produced (used by --audio-check).
     int sample_rate() const { return rate_; }
     int channels() const { return channels_; }
+#ifdef JILL_PS4
+    // Audio thread profiling (exposed to the PS4 debug overlay).
+    float mix_ms() const { return mix_ms_; }
+    float mix_budget_ms() const { return mix_budget_ms_; }
+#endif
     float peak_level() const { return peak_; }
     unsigned long long frames_mixed() const { return frames_mixed_; }
 
@@ -73,6 +78,22 @@ public:
 private:
     static void callback(void* user, uint8_t* stream, int len);
     void mix(uint8_t* stream, int len);
+
+#ifdef JILL_PS4
+    // Native audio output.  SDL2's PS4 audio driver waits for the previous
+    // buffer to finish *before* mixing the next one, so every callback's CPU
+    // time is added to the playback period and the music runs slow.  This path
+    // keeps a second buffer mixing while the first one plays.
+    static int ps4_audio_thread(void* user);
+    void ps4_audio_loop();
+    bool ps4_open(std::string& err);
+    void* ps4_lock_ = nullptr;    // SDL_mutex*
+    void* ps4_thread_ = nullptr;  // SDL_Thread*
+    int ps4_handle_ = 0;          // sceAudioOut handle
+    bool ps4_run_ = false;
+    float mix_ms_ = 0.0f;
+    float mix_budget_ms_ = 42.6667f;
+#endif
 
     unsigned device_ = 0;
     int rate_ = 0;

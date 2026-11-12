@@ -29,6 +29,8 @@ struct Options {
     int high_fps = 60;          // presentation rate: 0 = 18.2 Hz, else 60..144
     bool interpolate = true;    // --no-interpolate: no high-fps smoothing
     int filter = 0;             // --filter N: 0 none, 1 smooth, 2 CRT
+    std::string renderer = "auto";  // PS4 display: auto, gl or sdl
+    bool debug = false;         // PS4 only: FPS/profiler overlay (--debug)
     int stereo = 0;             // --stereo MODE: 0 off, 1 interlaced, 2 SBS
     int stereo_depth = 2;       // --stereo-depth N: eye separation in pixels
     int stereo_convergence = 0; // --stereo-convergence N: pull both eyes inward

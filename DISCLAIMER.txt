@@ -1,0 +1,24 @@
+Jill-EX - legal notice
+======================
+
+Jill-EX is an unofficial, non-commercial fan project.  It is not affiliated
+with, endorsed by, or licensed by Epic Games.
+
+"Jill of the Jungle", "Jill Goes Underground", "Jill Saves the Prince",
+"Onesimus" and the associated character names are trademarks of Epic Games.
+
+No original game data or artwork is included in this package or repository.
+The PS4 application icon (port/ps4/sce_sys/icon0.png, also embedded in the
+.pkg) is derived from the original game's artwork.  It remains the property of
+its owner, is included only to identify this fan port, and is not covered by
+the project's licence.
+
+The only extracted byte sequence in the source distribution is the 768-byte
+Onesimus palette (profiles/onesimus.pal), used as runtime configuration.
+
+You must supply your own legally obtained copy of the games.  Extracted,
+edited or rendered assets remain the property of their respective owners.
+
+Source code, tools and documentation are licensed under the PolyForm
+Noncommercial License 1.0.0 - see LICENSE.md.  Third-party components and
+their notices are listed in THIRD_PARTY_NOTICES.md.

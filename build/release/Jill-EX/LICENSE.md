@@ -82,10 +82,13 @@ of Jill-EX. It does not apply to:
 
 * original Jill of the Jungle / Jill Goes Underground / Jill Saves the Prince /
   Onesimus game data, levels, artwork, music or other assets;
-* assets or archives extracted, rendered or rebuilt from those games;
+* assets or archives extracted, rendered or rebuilt from those games, including
+  the PS4 application icon (`port/ps4/sce_sys/icon0.png`);
 * third-party components listed in THIRD_PARTY_NOTICES.md;
 * the game titles, character names and other trademarks, which belong to
   their respective owners.
 
-No game data is distributed with this repository. Users must supply their own
-legally obtained copy of the original games.
+No original game data is distributed with this repository, apart from the
+768-byte Onesimus palette used as runtime configuration (`profiles/onesimus.pal`,
+called out in the README).  Users must supply their own legally obtained copy of
+the original games.

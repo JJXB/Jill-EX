@@ -3,7 +3,7 @@
 A standalone attempt at reverse engineering and recreating the Jill of the Jungle engine.
 
 ## AI
-This did use Deepseek 4.1 Flash to construct and make. Disclaimer Over.
+This did use Deepseek 4.1 Flash to construct and make. Disclaimer over.
 
 ## Supported Games
 
@@ -12,9 +12,14 @@ This did use Deepseek 4.1 Flash to construct and make. Disclaimer Over.
 * Jill Saves The Prince
 * Onesimus: A Quest for Freedom
 
-No copyright assets shipped, provide your own.
+No game data or artwork is shipped on PC (PS4 Icon uses Jill portrait, see DISCLAIMER.txt) - supply your own legally obtained copy of the games (see Legal / trademarks).
 
 ## Features
+
+### Platforms
+* Windows 32bit
+* Windows 64bit
+* PlayStation 4 (Tested on 13.52 GoldHEN and shadPS4. Crashes on exit and loading external assets - Working on it)
 
 ### Modernization
 * Modern HUD and Menus with Customization
@@ -59,7 +64,34 @@ No copyright assets shipped, provide your own.
 * Xargon Port based on this and it's own source
 
 ## License
-[See LICENSE](LICENSE.md)
+[See LICENSE](LICENSE.md) - PolyForm Noncommercial 1.0.0 for the port, tools and
+documentation.  Third-party components are listed in
+[THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md).
+
+## Legal / trademarks
+
+This is an unofficial, non-commercial fan project.  It is **not** affiliated
+with, endorsed by or licensed by Epic Games.
+
+* "Jill of the Jungle", "Jill Goes Underground", "Jill Saves the Prince",
+  "Onesimus" and the associated character names are trademarks of Epic Games.
+* No original game data or artwork is distributed in this repository.  The
+  `games/` and `profiles/` folders contain reconstructed engine configuration
+  (tables, board lists, manifests); `profiles/onesimus.pal` is a 768-byte
+  palette taken from the original Onesimus executable and is included only so
+  the game can use its intended colours.  It is not covered by this project's
+  licence.
+* The PS4 package icon (`port\ps4\sce_sys\icon0.png`) uses artwork derived from
+  the original game.  It stays the property of its owner, is used only to
+  identify this fan port, and is not covered by this project's licence.
+* `DISCLAIMER.txt` repeats the notice for binary/data distributions; the build
+  copies it next to the `.pkg` and into `JillEX-data.zip`.
+* Reverse-engineering scratch output (extracted executables, Ghidra projects,
+  decompiled code, disassembly listings, string dumps and rendered game art)
+  is excluded from the repository by `.gitignore` and must not be
+  redistributed.
+* You must supply your own legally obtained copy of the games.  Extracted,
+  edited or rendered assets remain the property of their respective owners.
 
 ## Engine and gameplay Info
 [See ENGINE](ENGINE.md)

@@ -2,6 +2,7 @@
   * Neaten up Classic Menus/HUD
 * Near goals
   * Stereo Rendering - SBS, Interlaced - Code Disabled,
+  * Fix PS4 Crashes
 * Least Important Ideas
   * Other Games
     * Xargon Support? - no. Separate Project. Use this and xargon's own source code as a base for it.
@@ -15,7 +16,8 @@
     * Mac
     * Linux
     * Android? - NDK?
-    * PS4? - Already have toolkit. 
+    * PS4
+      * Builds, Runs, Crashes on exit or loading external data
     * Vita? - Look into SDK's
     * PSP? - Look into PSPSDK
     * XBOX - OpenXDK?

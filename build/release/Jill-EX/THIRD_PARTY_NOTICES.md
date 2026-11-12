@@ -164,6 +164,37 @@ M4A/AAC decoding uses the Media Foundation APIs that ship with Windows
 (`mfplat`, `mfreadwrite`, `mfuuid`, `ole32`).  These are operating-system
 components; no Microsoft code is redistributed with this project.
 
+## PS4 build (OpenOrbis)
+
+The optional PS4 target is built with the OpenOrbis PS4 Toolchain, which is
+licensed under **GPL-3.0**.  It is a build-time tool: no toolchain source is
+copied into this repository, and the linked runtime is its freestanding CRT,
+libc and NID stubs for Sony system libraries.  This notice does not relicense
+the toolchain; see its own `LICENSE` in the installed toolkit.
+
+The toolchain's SDL2 is a static library (SDL 2.0.9, same zlib licence as
+above), so no DLL is shipped; the notice above still applies.  The build links
+against PS4 system libraries and loads `libScePigletv2VSH.sprx` (OpenGL
+ES/EGL) and `libScePrecompiledShaders.sprx` (the `texmap` shaders) from the
+console firmware at runtime.  No Sony code is stored in this repository.
+
+FluidSynth is **not** used by this project.  It is LGPL-2.1-or-later and depends
+on GLib; the PS4 plan keeps the built-in OPL2/CMF synthesiser instead.  If a
+General MIDI option is added later it should use an MIT-licensed synth
+(TinySoundFont) with a user-supplied SoundFont.
+
+The PS4 package must not contain the original Jill/Onesimus game data.  Users
+copy their own `jillt`/`ONESIM` folders to `/data/JillEX`.  The application icon
+(`port/ps4/sce_sys/icon0.png`) is derived from the original game's artwork; it
+is not covered by this project's licence and is included only to identify the
+fan port.  The build copies
+`sce_module/libc.prx`, `sce_module/libSceFios2.prx` and
+`sce_sys/about/right.sprx` from the installed OpenOrbis toolkit into the
+package; those are **Sony system components**, not part of this project, and
+are not covered by its licence.  Distributing a built `.pkg` therefore also
+distributes those modules.  Build from source, or use the loose `eboot.bin`
+with a loader, if that is not acceptable.
+
 ## Used by the Python tools
 
 The extractor and importer import these packages; they are installed

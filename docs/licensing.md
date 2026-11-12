@@ -16,9 +16,10 @@ It is an engineering assessment, not legal advice.
 | Extracted `.sha`/`.dma`/`.vcl`/board data, rendered screenshots, `intro_full.png`, `intro_panel.png` | derived from Epic's game data | **no** - these remain Epic's |
 | Game titles and character names ("Jill of the Jungle", "Jill", "Onesimus") | Epic trademarks | no trademark licence is granted |
 
-The README already states that no copyright assets are shipped and users must
-provide their own data [verified]. Any licence must repeat that and must not
-pretend to cover extracted or rendered game content.
+The README states that no game data or artwork is shipped and that users must
+supply their own copy; the only extracted byte sequence in the repository is
+`profiles/onesimus.pal`, which the README calls out.  Any licence must repeat
+that and must not pretend to cover extracted or rendered game content.
 
 ## 2. Dependency audit
 
@@ -39,6 +40,18 @@ No GPL, LGPL or AGPL code is present [verified]. That matters because
 copyleft licences forbid adding a non-commercial restriction on top. The
 current dependency set therefore puts **no obstacle** in the way of a
 non-commercial licence.
+
+The optional PS4 build adds a build-time dependency on the **OpenOrbis PS4
+Toolchain**, which is GPL-3.0.  It is used the same way as a compiler: no
+toolchain source is copied into this repository and the linked runtime is the
+toolchain's freestanding CRT/libc plus NID stubs for Sony system libraries.
+Published homebrew built with it is not treated as a derivative of the
+toolchain.  The packaging step also copies Sony's `libc.prx`,
+`libSceFios2.prx` and `right.sprx` from the installed toolkit into the `.pkg`;
+those files are console system components, are not stored in this repository,
+and are not covered by the project licence.  Distributing a built `.pkg`
+therefore also distributes Sony code - users who are not comfortable with that
+should build their own or use the loose `eboot.bin` with a loader.
 
 If a GPL/AGPL library is added later (a codec, a GUI toolkit, a sound
 library), a non-commercial licence on the combined work is not possible for
@@ -93,25 +106,44 @@ Downsides to accept:
    test renders of Epic's art and are currently untracked [verified]. The same
    applies to any generated `reference_pack` containing game art.
 
-## 5. Current files [verified]
+## 5. Current state [verified]
 
 * `LICENSE.md` - PolyForm Noncommercial 1.0.0, with a scope note excluding game
   data, third-party code and trademarks.  The `Required Notice` line reads
-  `Copyright 2026 Jill-EX contributors`; replace the holder if a different
-  name should appear.
-* `THIRD_PARTY_NOTICES.md` - SDL2, stb_image, stb_vorbis, dr_mp3, miniz and
-  the Python tool dependencies, plus the game-content disclaimer.
+  `Copyright 2026 JJXB`.
+* `THIRD_PARTY_NOTICES.md` - SDL2, stb_image, stb_vorbis, dr_mp3, miniz, the
+  Python tool dependencies, the PS4/OpenOrbis notes and the game-content
+  disclaimer.
+* `README.md` - has a Legal/trademarks section with the Epic disclaimer and the
+  "supply your own game data" statement.  `DISCLAIMER.txt` repeats it for
+  binary/data distributions and is copied beside the `.pkg` and into
+  `JillEX-data.zip`.
+* The PS4 application icon (`port/ps4/sce_sys/icon0.png`) is rendered from the
+  original game's artwork.  It is excluded from the project licence, called out
+  in the README/notices, and the port also prints a two-line notice on every
+  splash page.
+* Reverse-engineering scratch output is no longer tracked:
+  `re/img*.bin` (extracted executable images), `re/proj/` (Ghidra project),
+  `re/export/` (decompiled C, symbol/data dumps), `re/*.txt` (disassembly and
+  string listings), `re/*.asm`, `re/*.png` (rendered game art) and
+  `hiscores_panel.png` (screenshot).  They remain on disk and are excluded by
+  `.gitignore`.  Deleting them from history requires a `git filter-repo` pass;
+  until then they are still reachable through old commits.
+* `profiles/` and `games/` contain reconstructed engine configuration.  The one
+  extracted byte sequence is `profiles/onesimus.pal` (768-byte palette from
+  `ONESIMUS.EXE`), called out in the README and not covered by the licence.
+  `tools/mkprofile.py --data` regenerates it from the user's own executable.
 
-## 6. Open points
+## 6. Open points (reduced)
 
-* Whether the generated data tables in `profiles/` and `re/` are verbatim
-  copies of the original executable's tables or independently reconstructed
-  facts [open]. Verbatim tables weaken the claim that the whole repository is
-  the author's work.
-* Whether disassembly listings quoted in `docs/` count as copied code in the
-  relevant jurisdiction [open].
-* The project name and game names need a trademark disclaimer regardless of
-  the code licence [verified that no such disclaimer exists today].
+* Whether the generated profile tables are "facts" or a substantial extraction
+  of the original data.  They are reconstructed from addresses and behaviour,
+  but this is a judgement call in some jurisdictions.
+* Verbatim strings and disassembly quoted inside the analysis `docs/*.md`
+  files.  The scratch listings are gone, but prose still cites addresses and
+  short strings.
+* Whether including Sony system modules in a fake-signed `.pkg` is acceptable
+  for redistribution; documented above, not solved here.
 
 ## 7. Bottom line [inferred]
 
