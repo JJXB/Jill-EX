@@ -1224,6 +1224,18 @@ std::string font_name(const std::string& name) {
     return name.empty() ? "ORIGINAL" : upper_ascii(name.c_str());
 }
 
+std::string midi_device_label(const MusicPlayer& audio) {
+    const int index = audio.midi_device();
+    if (index >= 0) {
+        const std::vector<std::string> names = MusicPlayer::midi_devices();
+        if (index < static_cast<int>(names.size())) {
+            return upper_ascii(names[static_cast<size_t>(index)].c_str());
+        }
+    }
+    const std::vector<std::string> names = MusicPlayer::midi_devices();
+    return names.empty() ? "OFF (NO DEVICE)" : "OFF (OPL2)";
+}
+
 const GameDef* frame_source_game(int src,
                                  const std::vector<GameDef>& games) {
     if (src <= 0 || src > static_cast<int>(games.size())) {
@@ -1352,6 +1364,7 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                         std::to_string(m.sfx_volume) + "%",
                     std::string("PC SPEAKER: ") +
                         (m.pc_speaker ? "ON" : "OFF"),
+                    std::string("MIDI OUT: ") + midi_device_label(audio),
                     "NOISEMAKER",
                     "BACK"};
         case MenuScreen::Hud:
@@ -2530,6 +2543,12 @@ int run_sdl(const Options& opt, Engine& engine,
             std::fprintf(stderr, "%s\n", audio_err.c_str());
         }
     }
+    if (opt.midi_device >= 0) {
+        std::string midi_err;
+        if (!music_player.set_midi_device(opt.midi_device, midi_err)) {
+            std::fprintf(stderr, "midi: %s\n", midi_err.c_str());
+        }
+    }
     if (!engine.game().pages_file.empty()) {
         std::string sfx_err;
         if (!music_player.load_sfx(
@@ -3185,13 +3204,37 @@ int run_sdl(const Options& opt, Engine& engine,
                 }
                 break;
             case MenuScreen::Audio:
-                if (nav == 5 && sel == 5) {
+                if (nav == 5 && sel == 6) {
                     select_noise_set(menu.noise_set);
                     menu.noise_sel = 0;
                     music_player.set_enabled(false);
                     menu.screen = MenuScreen::Noisemaker;
-                } else if (nav == 5 && sel == 6) {
+                } else if (nav == 5 && sel == 7) {
                     menu.screen = MenuScreen::Options;
+                } else if (sel == 5 && (nav == 3 || nav == 4 || nav == 5)) {
+                    const int count =
+                        static_cast<int>(MusicPlayer::midi_devices().size());
+                    if (count > 0) {
+                        int next = music_player.midi_device();
+                        if (nav == 3) {
+                            --next;
+                            if (next < -1) {
+                                next = count - 1;
+                            }
+                        } else {
+                            ++next;
+                            if (next >= count) {
+                                next = -1;
+                            }
+                        }
+                        if (next != music_player.midi_device()) {
+                            std::string midi_err;
+                            if (!music_player.set_midi_device(next, midi_err)) {
+                                std::fprintf(stderr, "midi: %s\n",
+                                             midi_err.c_str());
+                            }
+                        }
+                    }
                 } else if (sel == 0 && (nav == 5 || nav == 3 || nav == 4)) {
                     menu.music_on = !menu.music_on;
                     music_player.set_enabled(menu.music_on);
@@ -3220,7 +3263,7 @@ int run_sdl(const Options& opt, Engine& engine,
                     restore_game_sfx();
                     music_player.set_enabled(menu.music_on);
                     menu.screen = MenuScreen::Audio;
-                    menu.audio_sel = 5;
+                    menu.audio_sel = 6;
                 } else if (sel == 0 && (nav == 3 || nav == 4)) {
                     select_noise_set(menu.noise_set + (nav == 3 ? -1 : 1));
                 } else if (sel == 1 && (nav == 3 || nav == 4)) {
@@ -4004,6 +4047,7 @@ int run_sdl(const Options& opt, Engine& engine,
         ini.set_bool("audio", "sfx", menu.sfx_on);
         ini.set_int("audio", "sfx_volume", menu.sfx_volume);
         ini.set_bool("audio", "pc_speaker", menu.pc_speaker);
+        ini.set_int("audio", "midi_device", music_player.midi_device());
         ini.set_bool("hud", "classic", engine.hud_classic());
         ini.set_bool("hud", "portrait", engine.hud_portrait());
         ini.set_int("hud", "frame", menu.hud_frame);
@@ -4080,6 +4124,18 @@ int run_app(const Options& opt) {
     std::vector<GameDef> games = load_game_list(opt.games_dir, err);
     if (!err.empty()) {
         std::fprintf(stderr, "%s\n", err.c_str());
+    }
+    if (opt.list_midi) {
+        const std::vector<std::string> devices = MusicPlayer::midi_devices();
+        if (devices.empty()) {
+            std::printf("no MIDI output devices\n");
+        } else {
+            for (size_t i = 0; i < devices.size(); ++i) {
+                std::printf("%2d  %s\n", static_cast<int>(i),
+                            devices[i].c_str());
+            }
+        }
+        return 0;
     }
     if (games.empty()) {
         std::fprintf(stderr, "no games found\n");

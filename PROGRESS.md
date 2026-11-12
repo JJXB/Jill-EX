@@ -1,5 +1,17 @@
 # Progress
 
+## 2026-11-12 (system MIDI output)
+
+* Added `port/src/midi.*`: a WinMM `midiOut` wrapper plus a CMF sequencer that
+  sends note on/off, program changes, volume/pan/expression/sustain and GM
+  percussion (CMF channels 11..15 -> channel 10) to a selected system MIDI
+  device.  The normal OPL2 path remains the default.
+* `OPTIONS > SOUND > MIDI OUT` cycles `OFF (OPL2)` and every installed MIDI
+  output.  The choice is stored as `[audio] midi_device`; `--midi N` starts on
+  a device and `--list-midi` prints the available indices.
+* Switching devices restarts the current CMF track on the new output.  Sampled
+  SFX still use the SDL audio device, so MIDI music and effects can mix.
+
 ## 2026-11-12 (autoload, named visual sets, turtle mode)
 
 * Added `external/autoload/`: everything in that folder is always mounted under

@@ -21,6 +21,7 @@ add_executable(jill
     src/cmf.cpp
     src/opl2.cpp
     src/music.cpp
+    src/midi.cpp
     src/sfx.cpp
     src/audio.cpp
     src/extaudio.cpp
@@ -34,7 +35,7 @@ add_executable(jill
 
 # Media Foundation (M4A/AAC decoding) is a Windows system component.
 if(WIN32)
-    target_link_libraries(jill PRIVATE mfplat mfreadwrite mfuuid ole32)
+    target_link_libraries(jill PRIVATE mfplat mfreadwrite mfuuid ole32 winmm)
 endif()
 
 target_compile_definitions(jill PRIVATE SDL_MAIN_HANDLED)

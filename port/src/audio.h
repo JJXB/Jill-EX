@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "cmf.h"
+#include "midi.h"
 #include "music.h"
 #include "sfx.h"
 
@@ -33,6 +34,13 @@ public:
     bool pc_speaker() const { return pc_speaker_; }
     void set_volume(float volume);  // 0..1 (music)
     float volume() const { return volume_; }
+
+    // System MIDI output.  `set_midi_device(-1)` returns to the OPL2 core.
+    static std::vector<std::string> midi_devices();
+    bool set_midi_device(int index, std::string& err);
+    int midi_device() const { return midi_device_; }
+    const std::string& midi_device_name() const { return midi_device_name_; }
+    bool midi_active() const { return midi_active_; }
 
     // Sampled effects (`.vcl`).  Load once after selecting a game.
     bool load_sfx(const std::string& path, std::string& err);
@@ -87,4 +95,10 @@ private:
     std::shared_ptr<const DecodedAudio> ext_music_;
     double ext_pos_ = 0.0;
     std::shared_ptr<const SfxOverrides> sfx_overrides_;
+    MidiOut midi_out_;
+    MidiMusic midi_music_;
+    bool midi_active_ = false;
+    int midi_device_ = -1;
+    std::string midi_device_name_;
+    std::shared_ptr<const CmfSong> last_song_;
 };

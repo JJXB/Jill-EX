@@ -9,7 +9,6 @@
     * Vinyl Goddess? - no. Separate Project, Check compatibility.
     * Alien Rampage - no. Separate Project, Check compatibility.
   * Sound
-    * Add Midi?
     * Retool Noisemaker?
   * Demo
     * Playback Editor (backwards compatible with original exe if applicable)?
@@ -22,3 +21,4 @@
     * PS4? - Already have toolkit. 
     * Vita? - Look into SDK's
     * PSP? - Look into PSPSDK
+    * XBOX 

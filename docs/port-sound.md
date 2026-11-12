@@ -12,8 +12,20 @@ Files:
 * `port/src/opl2.h`, `port/src/opl2.cpp` - YM3812 core
 * `port/src/cmf.h`, `port/src/cmf.cpp` - CMF parser
 * `port/src/music.h`, `port/src/music.cpp` - sequencer (MIDI to OPL)
+* `port/src/midi.h`, `port/src/midi.cpp` - system MIDI output (WinMM)
 * `port/src/sfx.h`, `port/src/sfx.cpp` - `.vcl` bank and effect voice
 * `port/src/audio.h`, `port/src/audio.cpp` - SDL device, volume, WAV render
+
+## MIDI output
+
+The same parsed CMF events can instead be sent to a system MIDI device through
+WinMM (`midiOutOpen` / `midiOutShortMsg`).  `OPTIONS > SOUND > MIDI OUT` lists
+`OFF (OPL2)` plus every installed output; `--list-midi` prints the indices and
+`--midi N` selects one at start-up.  CMF rhythm channels 11..15 map to GM
+percussion on channel 10, and the CMF program index is sent as the GM program.
+The OPL2 core is bypassed while MIDI output is selected, but sampled SFX still
+use the SDL audio device.  **[verified: device enumeration]**
+
 
 ## Music data **[verified]**
 

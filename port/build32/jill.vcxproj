@@ -138,7 +138,7 @@ exit /b %1
 if %errorlevel% neq 0 goto :VCEnd</Command>
     </PostBuildEvent>
     <Link>
-      <AdditionalDependencies>mfplat.lib;mfreadwrite.lib;mfuuid.lib;ole32.lib;C:\vcpkg\installed\x86-windows\debug\lib\SDL2d.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalDependencies>mfplat.lib;mfreadwrite.lib;mfuuid.lib;ole32.lib;winmm.lib;C:\vcpkg\installed\x86-windows\debug\lib\SDL2d.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalOptions>%(AdditionalOptions) /machine:X86</AdditionalOptions>
       <DataExecutionPrevention></DataExecutionPrevention>
@@ -209,7 +209,7 @@ exit /b %1
 if %errorlevel% neq 0 goto :VCEnd</Command>
     </PostBuildEvent>
     <Link>
-      <AdditionalDependencies>mfplat.lib;mfreadwrite.lib;mfuuid.lib;ole32.lib;C:\vcpkg\installed\x86-windows\lib\SDL2.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalDependencies>mfplat.lib;mfreadwrite.lib;mfuuid.lib;ole32.lib;winmm.lib;C:\vcpkg\installed\x86-windows\lib\SDL2.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalOptions>%(AdditionalOptions) /machine:X86</AdditionalOptions>
       <DataExecutionPrevention></DataExecutionPrevention>
@@ -280,7 +280,7 @@ exit /b %1
 if %errorlevel% neq 0 goto :VCEnd</Command>
     </PostBuildEvent>
     <Link>
-      <AdditionalDependencies>mfplat.lib;mfreadwrite.lib;mfuuid.lib;ole32.lib;C:\vcpkg\installed\x86-windows\lib\SDL2.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalDependencies>mfplat.lib;mfreadwrite.lib;mfuuid.lib;ole32.lib;winmm.lib;C:\vcpkg\installed\x86-windows\lib\SDL2.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalOptions>%(AdditionalOptions) /machine:X86</AdditionalOptions>
       <DataExecutionPrevention></DataExecutionPrevention>
@@ -350,7 +350,7 @@ exit /b %1
 if %errorlevel% neq 0 goto :VCEnd</Command>
     </PostBuildEvent>
     <Link>
-      <AdditionalDependencies>mfplat.lib;mfreadwrite.lib;mfuuid.lib;ole32.lib;C:\vcpkg\installed\x86-windows\lib\SDL2.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalDependencies>mfplat.lib;mfreadwrite.lib;mfuuid.lib;ole32.lib;winmm.lib;C:\vcpkg\installed\x86-windows\lib\SDL2.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalOptions>%(AdditionalOptions) /machine:X86</AdditionalOptions>
       <DataExecutionPrevention></DataExecutionPrevention>
@@ -440,6 +440,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\cmf.cpp" />
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\opl2.cpp" />
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\music.cpp" />
+    <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\midi.cpp" />
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\sfx.cpp" />
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\audio.cpp" />
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\extaudio.cpp" />

@@ -132,6 +132,8 @@ void usage() {
         "  --no-sfx       disable sampled sound effects\n"
         "  --sfx-volume N  effect volume 0-100 (default 80)\n"
         "  --pc-speaker   play effects as 1-bit PC-speaker square waves\n"
+        "  --midi N       play music through system MIDI device N (-1 = OPL2)\n"
+        "  --list-midi    print the system MIDI output devices and exit\n"
         "  --music-file NAME track for --dump-music (default: the game title track)\n"
         "  --music-seconds N seconds to render with --dump-music (default 10)\n"
         "  --dump-music FILE  render the current title track to a WAV and exit\n"
@@ -210,6 +212,8 @@ int main(int argc, char** argv) {
         opt.sfx = ini.get_bool("audio", "sfx", opt.sfx);
         opt.sfx_volume = ini.get_int("audio", "sfx_volume", opt.sfx_volume);
         opt.pc_speaker = ini.get_bool("audio", "pc_speaker", opt.pc_speaker);
+        opt.midi_device =
+            ini.get_int("audio", "midi_device", opt.midi_device);
         opt.fire_crouched = ini.get_bool("gameplay", "fire_crouched",
                                          opt.fire_crouched);
         opt.max_knives = ini.get_int("gameplay", "max_knives", opt.max_knives);
@@ -436,6 +440,13 @@ int main(int argc, char** argv) {
             opt.sfx_volume = std::atoi(value("--sfx-volume"));
         } else if (a == "--pc-speaker") {
             opt.pc_speaker = true;
+        } else if (a == "--midi") {
+            opt.midi_device = std::atoi(value("--midi"));
+            if (opt.midi_device < -1) {
+                opt.midi_device = -1;
+            }
+        } else if (a == "--list-midi") {
+            opt.list_midi = true;
         } else if (a == "--music-file") {
             opt.music_file = value("--music-file");
         } else if (a == "--music-seconds") {

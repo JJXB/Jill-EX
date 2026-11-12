@@ -47,6 +47,12 @@ CLASSIC/MODERN style (ORIGINAL, or any `hud/classic_<name>` /
 the CLASSIC HUD (CURRENT, or another installed game).  It is stored as
 `[hud] frame` and can also be set with `--hud-frame N`.
 
+`OPTIONS > SOUND > MIDI OUT` selects a system MIDI output device (such as
+Microsoft GS Wavetable Synth or VirtualMIDISynth) for the CMF/MIDI tracks;
+`OFF (OPL2)` keeps the built-in OPL2 emulation.  The selection is stored as
+`[audio] midi_device` (the device index from `--list-midi`; `-1` = OPL2) and
+can be started with `--midi N`.  MIDI music and sampled SFX can play together.
+
 `OPTIONS > GAMEPLAY > TURTLE MODE` reproduces Jill 3's original TURTLE option:
 the simulation advances at half speed (about 9.1 Hz).  High-framerate
 interpolation stretches each update across two 18.2 Hz ticks, so movement stays

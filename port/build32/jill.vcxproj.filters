@@ -46,6 +46,9 @@
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\music.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\midi.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\sfx.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

@@ -69,12 +69,25 @@ bool MusicPlayer::open(std::string& err) {
 }
 
 void MusicPlayer::close() {
-#ifdef JILL_HAVE_SDL
+#if defined(JILL_HAVE_SDL)
+    if (device_ != 0) {
+        SDL_LockAudioDevice(device_);
+    }
+#endif
+    midi_music_.stop();
+#if defined(JILL_HAVE_SDL)
+    if (device_ != 0) {
+        SDL_UnlockAudioDevice(device_);
+    }
     if (device_ != 0) {
         SDL_CloseAudioDevice(device_);
         device_ = 0;
     }
 #endif
+    midi_out_.close();
+    midi_active_ = false;
+    midi_device_ = -1;
+    midi_device_name_.clear();
     music_.stop();
     playing_ = false;
 }
@@ -85,12 +98,20 @@ void MusicPlayer::play(std::shared_ptr<const CmfSong> song) {
         SDL_LockAudioDevice(device_);
     }
 #endif
-    pending_ = std::move(song);
-    has_pending_ = true;
+    last_song_ = song;
+    if (midi_active_) {
+        midi_music_.start(std::move(song));
+        pending_.reset();
+        has_pending_ = false;
+        music_.stop();
+    } else {
+        pending_ = std::move(song);
+        has_pending_ = true;
+    }
     ext_music_.reset();
     ext_pos_ = 0.0;
-    title_ = pending_ ? pending_->title : std::string();
-    playing_ = pending_ != nullptr;
+    title_ = last_song_ ? last_song_->title : std::string();
+    playing_ = last_song_ != nullptr;
     peak_ = 0.0f;
     frames_mixed_ = 0;
 #ifdef JILL_HAVE_SDL
@@ -106,6 +127,8 @@ void MusicPlayer::play_pcm(std::shared_ptr<const DecodedAudio> audio) {
         SDL_LockAudioDevice(device_);
     }
 #endif
+    midi_music_.stop();
+    last_song_.reset();
     pending_.reset();
     has_pending_ = false;
     ext_music_ = std::move(audio);
@@ -127,11 +150,84 @@ void MusicPlayer::stop() {
 
 void MusicPlayer::set_enabled(bool on) {
     // Keep the device running: effects have their own switch and volume.
+#ifdef JILL_HAVE_SDL
+    if (device_ != 0) {
+        SDL_LockAudioDevice(device_);
+    }
+#endif
     enabled_ = on;
+    midi_music_.set_enabled(on);
+#ifdef JILL_HAVE_SDL
+    if (device_ != 0) {
+        SDL_UnlockAudioDevice(device_);
+    }
+#endif
 }
 
 void MusicPlayer::set_volume(float volume) {
     volume_ = std::max(0.0f, std::min(1.0f, volume));
+#ifdef JILL_HAVE_SDL
+    if (device_ != 0) {
+        SDL_LockAudioDevice(device_);
+    }
+#endif
+    midi_music_.set_volume(volume_);
+#ifdef JILL_HAVE_SDL
+    if (device_ != 0) {
+        SDL_UnlockAudioDevice(device_);
+    }
+#endif
+}
+
+std::vector<std::string> MusicPlayer::midi_devices() {
+    return MidiOut::devices();
+}
+
+bool MusicPlayer::set_midi_device(int index, std::string& err) {
+#ifdef JILL_HAVE_SDL
+    if (device_ != 0) {
+        SDL_LockAudioDevice(device_);
+    }
+#endif
+    midi_music_.stop();
+    midi_out_.close();
+    midi_active_ = false;
+    midi_device_ = -1;
+    midi_device_name_.clear();
+
+    bool ok = true;
+    if (index >= 0) {
+        ok = midi_out_.open(index, err);
+        if (ok) {
+            midi_active_ = true;
+            midi_device_ = index;
+            const std::vector<std::string> names = MidiOut::devices();
+            if (index < static_cast<int>(names.size())) {
+                midi_device_name_ = names[static_cast<size_t>(index)];
+            }
+            midi_music_.set_out(&midi_out_);
+            midi_music_.set_volume(volume_);
+            midi_music_.set_enabled(enabled_);
+            if (last_song_ && !ext_music_) {
+                midi_music_.start(last_song_);
+            }
+            // The OPL sequencer is not advanced while MIDI is selected.
+            music_.stop();
+            pending_.reset();
+            has_pending_ = false;
+        }
+    }
+    if (!midi_active_ && last_song_ && !ext_music_) {
+        // Back to the OPL2 core: restart the current track from the top.
+        pending_ = last_song_;
+        has_pending_ = true;
+    }
+#ifdef JILL_HAVE_SDL
+    if (device_ != 0) {
+        SDL_UnlockAudioDevice(device_);
+    }
+#endif
+    return ok;
 }
 
 bool MusicPlayer::load_sfx(const std::string& path, std::string& err) {
@@ -279,7 +375,11 @@ void MusicPlayer::mix(uint8_t* stream, int len) {
         return;
     }
     if (has_pending_) {
-        music_.start(pending_);
+        if (midi_active_) {
+            midi_music_.start(pending_);
+        } else {
+            music_.start(pending_);
+        }
         pending_.reset();
         has_pending_ = false;
     }
@@ -320,6 +420,10 @@ void MusicPlayer::mix(uint8_t* stream, int len) {
                 }
             }
         }
+    } else if (midi_active_) {
+        // Events are timestamped by the same sequencer ticks as the OPL path;
+        // the device receives them as the audio callback advances.
+        midi_music_.advance(frames, rate_);
     } else {
         music_.render(scratch_.data(), frames);
     }
