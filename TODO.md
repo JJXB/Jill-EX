@@ -2,7 +2,7 @@
   * Neaten up Classic Menus/HUD
 
 * Near goals
-  * Stereo Rendering - SBS, Interlaced
+  * Stereo Rendering - SBS, Interlaced - Code Disabled,
 * Least Important Ideas
   * Other Games
     * Xargon Support? - no. Separate Project. Use this and xargon's own source code as a base for it.
