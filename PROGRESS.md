@@ -1,5 +1,15 @@
 # Progress
 
+## 2026-11-12 (Jill 3 map return)
+
+* Fixed the Jill 3 hub spawn after finishing `1.jn3`.  Leaving the map through
+  a CHECKPT moved the TINY avatar to the checkpoint's `dx/dy` respawn cache,
+  but the shipped map boards leave those fields at `(0,0)`, so the hub was
+  stashed with Jill at the non-walkable top-left corner.  Restoring that copy
+  made her appear in the wrong place and `tiny_update` could not move her.
+  A map CHECKPT now only honours a populated cache; otherwise the avatar keeps
+  its current position.  Hub restores also update the map respawn point.
+
 ## 2026-11-12 (system MIDI output)
 
 * Added `port/src/midi.*`: a WinMM `midiOut` wrapper plus a CMF sequencer that

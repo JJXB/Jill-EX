@@ -175,6 +175,13 @@ so completed entrances and any other map changes are preserved instead of
 reloading `map.jnX` from disk.  The finished level's entrance is still consumed
 after the restore. **[inferred from the original temp-save flow]**
 
+Map CHECKPTs are respawn caches.  The shipped `map.jn3` / `MAP.ONE` boards
+leave that cache at `(0,0)`, so the port only moves the TINY avatar when the
+cache was actually populated; otherwise she stays where she touched the
+checkpoint.  This prevents the hub copy from being stashed at the non-walkable
+top-left corner (Jill appeared in the wrong place and could not move after
+returning from `1.jn3`).
+
 ## 11. SPIKE animation (Jill 1 board 2)
 
 Tile `0xA6` SPIKE is drawn by the mode-0 tile repaint path as

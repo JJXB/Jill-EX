@@ -1949,8 +1949,14 @@ bool Engine::on_hit(int a, int b) {
             }
             BoardObject& p = objects_[0];
             if (p.kind == 0x17) {
-                // Map Jill: the checkpoint carries the map position in dx/dy.
-                set_origin(0, sx, sy);
+                // Map Jill: checkpoint dx/dy is a respawn cache.  The shipped
+                // map boards leave it (0,0) until it is filled, so only honour
+                // a populated value; otherwise the avatar was being moved to
+                // (0,0), which is not map-walkable and left her stuck there
+                // after returning from a level.
+                if (sx != 0 || sy != 0) {
+                    set_origin(0, sx, sy);
+                }
             } else {
                 p.x = cx;
                 p.y = cy - 0x10;
@@ -5240,6 +5246,8 @@ void Engine::process_pending_warp() {
         // music trigger, not an entrance, so running place_at_checkpoint(0)
         // here teleported Jill to (0,0) - the "glitchy map spawn".
         const BoardObject& p = objects_[0];
+        spawn_x_ = p.x;
+        spawn_y_ = p.y;
         cam_x_ = std::max(0, std::min(p.x + 8 - view_center_x(),
                                      Board::kCols * 16 - view_w()));
         cam_y_ = std::max(0, std::min(p.y + 16 - view_center_y(),
