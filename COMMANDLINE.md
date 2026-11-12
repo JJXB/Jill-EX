@@ -43,9 +43,6 @@ run.cmd [options]
 | `--high-fps N` | Presentation rate: `0` (18.2 Hz), 60, 90, 120 or 144 |
 | `--no-interpolate` | Disable high-framerate sprite smoothing |
 | `--filter NAME` | `0`/none, `1`/smooth, `2`/crt |
-| `--stereo MODE` | Stereo 3D: `off` or `interlaced` (SBS is disabled) |
-| `--stereo-depth N` | Interlaced eye separation in pixels, 1..8 (default 2) |
-| `--stereo-convergence N` | Pull both eye images inward, 0..8 (default 0) |
 | `--fullscreen` | Exclusive fullscreen |
 | `--windowed` | Windowed (default) |
 | `--borderless` | Borderless fullscreen |

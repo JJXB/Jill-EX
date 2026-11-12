@@ -1,21 +1,11 @@
 # Progress
 
-## 2026-11-12 (stereo 3D)
+## 2026-11-12 (stereo 3D paused)
 
-* Added stereo rendering with `OPTIONS > VIDEO > STEREO 3D`: `OFF` and
-  `INTERLACED` (even lines = left eye, odd lines = right).  Two eye views are
-  rendered with a small horizontal separation: the full-board backdrop is the
-  far plane, tiles come half the distance forward and objects come the full
-  distance forward, while the HUD/UI stay at zero parallax.  Menus, the
-  level-select panel and the save-name prompt remain 2D.
-* SBS output is disabled and its depth/convergence rows are hidden from the
-  menu.  The settings remain for interlaced via `[video] stereo`,
-  `[video] stereo_depth` (1..8, default 2) and `[video] stereo_convergence`
-  (0..8, default 0), plus `--stereo off|interlaced`, `--stereo-depth N` and
-  `--stereo-convergence N`.  The eye order is corrected so the backdrop is the
-  far plane and tiles/objects come forward; the old sign put the scene
-  inside-out (objects diverged behind the background).  Headless `--dump`
-  supports the same controls for testing.
+* The stereo display is disabled entirely for now: no `STEREO 3D` row, no
+  stereo config keys or CLI flags, and the runtime forces stereo off.  The eye
+  separation/composition code remains in place behind an internal disabled
+  constant for a future revisit.
 
 ## 2026-11-12 (Jill 3 map return)
 

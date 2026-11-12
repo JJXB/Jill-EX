@@ -84,9 +84,6 @@ void usage() {
         "  --high-fps N   presentation rate: 0 (18.2 Hz), 60, 90, 120 or 144\n"
         "  --no-interpolate  disable high-framerate sprite smoothing\n"
         "  --filter N     display filter: 0 none, 1 smooth, 2 CRT\n"
-        "  --stereo MODE  stereo 3D: off or interlaced (SBS disabled)\n"
-        "  --stereo-depth N  per-eye separation in pixels, 1..8 (default 2)\n"
-        "  --stereo-convergence N  pull both eyes inward, 0..8 (default 0)\n"
         "  --fullscreen   start in exclusive fullscreen\n"
         "  --windowed     start windowed (default)\n"
         "  --borderless   start in borderless fullscreen\n"
@@ -185,13 +182,6 @@ int main(int argc, char** argv) {
                 opt.filter = 0;
             }
         }
-        opt.stereo = ini.get_int("video", "stereo", opt.stereo);
-        if (opt.stereo > 1) {
-            opt.stereo = 0;  // SBS output is disabled
-        }
-        opt.stereo_depth = ini.get_int("video", "stereo_depth", opt.stereo_depth);
-        opt.stereo_convergence = ini.get_int("video", "stereo_convergence",
-                                             opt.stereo_convergence);
         opt.hud_classic = ini.get_bool("hud", "classic", opt.hud_classic);
         opt.hud_portrait = ini.get_bool("hud", "portrait", opt.hud_portrait);
         opt.hud_frame = ini.get_int("hud", "frame", opt.hud_frame);
@@ -319,30 +309,6 @@ int main(int argc, char** argv) {
             }
             if (opt.filter < 0 || opt.filter > 2) {
                 opt.filter = 0;
-            }
-        } else if (a == "--stereo") {
-            const std::string v = ini_lower(value("--stereo"));
-            if (v == "interlaced" || v == "interlace") {
-                opt.stereo = 1;
-            } else {
-                opt.stereo = std::atoi(v.c_str());
-            }
-            if (opt.stereo < 0 || opt.stereo > 1) {
-                opt.stereo = 0;  // SBS output is disabled
-            }
-        } else if (a == "--stereo-depth") {
-            opt.stereo_depth = std::atoi(value("--stereo-depth"));
-            if (opt.stereo_depth < 1) {
-                opt.stereo_depth = 1;
-            } else if (opt.stereo_depth > 8) {
-                opt.stereo_depth = 8;
-            }
-        } else if (a == "--stereo-convergence") {
-            opt.stereo_convergence = std::atoi(value("--stereo-convergence"));
-            if (opt.stereo_convergence < 0) {
-                opt.stereo_convergence = 0;
-            } else if (opt.stereo_convergence > 8) {
-                opt.stereo_convergence = 8;
             }
         } else if (a == "--fullscreen") {
             opt.fullscreen = true;
@@ -502,5 +468,6 @@ int main(int argc, char** argv) {
     if (opt.scale < 1 || opt.scale > 10) {
         opt.scale = 3;
     }
+    opt.stereo = 0;  // stereo display is currently disabled
     return run_app(opt);
 }

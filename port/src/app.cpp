@@ -26,6 +26,10 @@
 
 namespace {
 
+// Stereo output is currently disabled entirely.  The rendering code is kept
+// for a future revisit, but no menu/CLI/config path can turn it on.
+constexpr bool kStereoEnabled = false;
+
 std::string upper_ascii(const char* s);
 std::string player_look_name(const std::vector<GameDef>& games, int look);
 std::string player_suit_name(int suit);
@@ -276,7 +280,7 @@ int run_headless(Engine& engine, const Options& opt) {
         uint8_t palette[768];
         load_palette(opt.palette, palette);
         Framebuffer fb;
-        if (opt.stereo == 1) {
+        if (kStereoEnabled && opt.stereo == 1) {
             Framebuffer left;
             Framebuffer right;
             const int shift = std::max(1, opt.stereo_depth);
@@ -1074,17 +1078,6 @@ const char* message_box_name(int style) {
 
 int filter_next(int filter) { return (filter + 1) % 3; }
 
-// SBS output is currently disabled; only OFF and row-interlaced are exposed.
-const char* stereo_name(int stereo) {
-    return stereo == 1 ? "INTERLACED" : "OFF";
-}
-
-int stereo_next(int stereo, int step) {
-    const int cur = stereo == 1 ? 1 : 0;
-    int v = (cur + step) % 2;
-    return (v < 0) ? v + 2 : v;
-}
-
 struct ResolutionOption {
     const char* label;
     int w;
@@ -1411,7 +1404,6 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                     std::string("MESSAGE BOX: ") +
                         message_box_name(engine.message_box()),
                     std::string("FILTER: ") + filter_name(video.filter),
-                    std::string("STEREO 3D: ") + stereo_name(video.stereo),
                     "BACK"};
         }
         case MenuScreen::Audio:
@@ -2525,7 +2517,7 @@ int run_sdl(const Options& opt, Engine& engine,
     video.splash = opt.splash;
     video.interpolate = opt.interpolate;
     video.filter = opt.filter;
-    video.stereo = opt.stereo == 1 ? 1 : 0;
+    video.stereo = kStereoEnabled && opt.stereo == 1 ? 1 : 0;
     video.stereo_depth = opt.stereo_depth;
     video.stereo_convergence = opt.stereo_convergence;
 
@@ -3358,7 +3350,7 @@ int run_sdl(const Options& opt, Engine& engine,
                 break;
             }
             case MenuScreen::Video:
-                if (nav == 5 && sel == 8) {
+                if (nav == 5 && sel == 7) {
                     menu.screen = MenuScreen::Options;
                 } else if (sel == 4) {
                     if (nav == 5 || nav == 3 || nav == 4) {
@@ -3372,11 +3364,6 @@ int run_sdl(const Options& opt, Engine& engine,
                 } else if (sel == 6) {
                     if (nav == 5 || nav == 3 || nav == 4) {
                         video.filter = filter_next(video.filter);
-                    }
-                } else if (sel == 7) {
-                    if (nav == 5 || nav == 3 || nav == 4) {
-                        video.stereo =
-                            stereo_next(video.stereo, nav == 3 ? -1 : 1);
                     }
                 } else if (nav == 3) {
                     video_step(-1);
@@ -4012,8 +3999,8 @@ int run_sdl(const Options& opt, Engine& engine,
             // overlays; render them on the normal frame instead of splitting
             // them across the eyes.
             const bool stereo_view =
-                video.stereo != 0 && !menu_open(menu) && !select.open &&
-                !score_entry.active;
+                kStereoEnabled && video.stereo != 0 && !menu_open(menu) &&
+                !select.open && !score_entry.active;
             if (stereo_view) {
                 const int shift = std::max(1, video.stereo_depth);
                 engine.set_stereo_convergence(video.stereo_convergence);
@@ -4131,10 +4118,6 @@ int run_sdl(const Options& opt, Engine& engine,
         ini.set_int("video", "splash", video.splash);
         ini.set_bool("video", "interpolate", video.interpolate);
         ini.set_int("video", "filter", video.filter);
-        ini.set_int("video", "stereo", video.stereo);
-        ini.set_int("video", "stereo_depth", video.stereo_depth);
-        ini.set_int("video", "stereo_convergence",
-                    video.stereo_convergence);
         ini.set_bool("audio", "music", menu.music_on);
         ini.set_int("audio", "volume", menu.music_volume);
         ini.set_bool("audio", "sfx", menu.sfx_on);
