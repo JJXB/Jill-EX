@@ -778,18 +778,23 @@ There is **no file header** - byte 0 is already the first record.
 
 ```
 rec[0]    : u8 mask, then one byte per set bit of mask
-rec[n>0]  : time, u8 mask, then one byte per set bit of mask
+rec[n>0]  : time (varint), u8 mask, one byte per set bit of mask
 ```
 
-`time` is an **absolute** timestamp in ticks of DGROUP:`0xBE3A`, counted from the
-start of playback (rec[0] is implicitly 0). It is a base-128 varint:
+`time` is an **absolute** timestamp in ticks of DGROUP:`0xBE3A`. Record 0
+takes effect at tick 0. The recorder writes the time *before* each record
+(except the first) but the replayer reads it *after* the previous record, so
+the value after record N is the deadline at which record N+1 takes effect.
+The varint is base-128:
 
 ```
 v < 0x80 : one byte v
-else     : ((v & 0x7F) | 0x80), (v >> 7)
+else     : (v & 0x7F) | (next_byte << 7)
 ```
 
-Mask bits, in the order their values appear in the stream:
+A record only updates the inputs named by its mask; bits that are clear keep
+the previous state. This is why mask-0 records act as pure time markers in
+`end1.mac`. Mask bits, in the order their values appear in the stream:
 
 | bit | DGROUP | contents |
 |---|---|---|
@@ -800,9 +805,10 @@ Mask bits, in the order their values appear in the stream:
 | 4 | `0x3C86` | last ASCII key code (special keys, menus) |
 
 Only bits 0-4 ever occur in the shipped files, which is a good parser self-check.
-A record is only emitted when the change mask is non-zero, so every record changes at
-least one input. `jn1demo.mac` is 519 records and ends at tick 4295 (~4 min at
-18.2 Hz); `jn2dem1.mac` 102 records / 984 ticks.
+Mask-0 records are legal time markers (the recorder itself only writes records
+when the mask is non-zero). `end1.mac` is 138 records / 735 ticks (~40 s);
+`end2.mac` is 34 records / 219 ticks; `jn1demo.mac` ends at tick 4295
+(~4 min at 18.2 Hz).
 
 **Playback**: linear `0x1474D` (symbol map: `_recordmac`, `0415:05fd`) opens the file,
 gets its length, `malloc`s that many bytes, reads the whole file, sets playback flag

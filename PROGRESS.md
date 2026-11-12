@@ -1,5 +1,26 @@
 # Progress
 
+## 2026-11-11 (ending `.mac` macros)
+
+* Fixed the `*.mac` parser.  Record 0 is `mask, one signed byte per set mask
+  bit`; later records start with the absolute tick (base-128 varint) and then
+  the mask + values.  A record only updates the inputs named by its mask.  The
+  old code cleared every input on each record, which made `end1.mac` /
+  `end2.mac` play incorrectly.
+* Fixed the ending entrance trigger.  Levels 50.jn1 and 20.jn2 spawn on their
+  `&end1.mac` / `&end2.mac` CHECKPT, whose p13 equals the restored level id;
+  the per-tick CHECKPT handler skips checkpoints with `p13 == level`, so the
+  macro never started.  `place_at_checkpoint` now queues an entrance macro and
+  starts Jill one trigger-width left of the flag.
+* Fixed the bird form's flight: gravity is applied before the flap, a flap
+  keeps the full -6 dy (instead of -5), and either action button flaps, as in
+  1fae:298B.  The ending's phoenix now clears the flooded grove instead of
+  dipping into the water.  The ending's JILL/FOOF token gets a small pickup
+  margin while a macro is running so the recorded path still collects it.
+* Ending slides now render with the full 320x200 board view even when the
+  classic HUD is selected, instead of inheriting the 74..312 viewport offset
+  (which pushed the cards off-screen).
+
 ## 2026-11-11 (original portrait and classic message boxes)
 
 * Tracked the Jill portrait down to shape entry 24: sixteen 16x16 tiles (the

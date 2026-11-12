@@ -2252,7 +2252,7 @@ void draw_ending_viewer(Framebuffer& fb, Engine& engine,
         return;
     }
     const EndingCard& c = viewer.cards[static_cast<size_t>(viewer.index)];
-    engine.render_at(fb, c.x, c.y, false);
+    engine.render_at_fullscreen(fb, c.x, c.y);
     fb.fill_rect(0, 188, Framebuffer::W, 12, 0);
     char buf[64];
     std::snprintf(buf, sizeof(buf), "%d/%d  ENTER NEXT  ESC SKIP",

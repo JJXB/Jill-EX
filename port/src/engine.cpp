@@ -344,6 +344,11 @@ void Engine::update_caption_for_level(int level) {
 }
 
 void Engine::set_input(int h, int v, bool btn1_down, bool btn2_down) {
+    // While a recorded macro is playing the original skips the normal keyboard
+    // poll entirely (1415:093B) and only the script drives the inputs.
+    if (macro_playing_) {
+        return;
+    }
     in_.h = h < -1 ? -1 : (h > 1 ? 1 : h);
     in_.v = v < -1 ? -1 : (v > 1 ? 1 : v);
 
@@ -636,8 +641,18 @@ void Engine::update_pass() {
                 }
                 const BoardObject& aa = objects_[static_cast<size_t>(i)];
                 const BoardObject& bb = objects_[static_cast<size_t>(j)];
-                if (aa.x < bb.x + bb.w && bb.x < aa.x + aa.w &&
-                    aa.y < bb.y + bb.h && bb.y < aa.y + aa.h) {
+                // Recorded ending macros were made in the original with a
+                // slightly different sprite alignment; give token pickups a
+                // few pixels of slack so the recorded path still collects
+                // them (e.g. the ending's JILL icon).
+                const int slack =
+                    (macro_playing_ &&
+                     ((aa.kind == 28 && aa.p13 == 0) ||
+                      (bb.kind == 28 && bb.p13 == 0)))
+                        ? 10
+                        : 0;
+                if (aa.x - slack < bb.x + bb.w && bb.x < aa.x + aa.w + slack &&
+                    aa.y - slack < bb.y + bb.h && bb.y < aa.y + aa.h + slack) {
                     bool ra = on_hit(i, j);
                     bool rb = on_hit(j, i);
                     if (ra) {
@@ -4974,6 +4989,11 @@ void Engine::start_macro(const std::string& name) {
     d.resize(got);
 
     size_t p = 0;
+    // Record layout (from the recorder at 1415:0A8B and the replayer at
+    // 1415:093B): rec[0] is mask + values; every later record starts with an
+    // absolute tick (base-128 varint) and then the mask + values.  The
+    // replayer reads the tick *after* each record, so a record's stored tick
+    // is the deadline at which the next record takes effect.
     int time = 0;
     bool first = true;
     while (p < d.size()) {
@@ -5008,12 +5028,17 @@ void Engine::start_macro(const std::string& name) {
         }
         MacroRec r;
         r.time = time;
+        r.mask = mask;
         r.h = vals[0] < 0 ? -1 : (vals[0] > 0 ? 1 : 0);
         r.v = vals[1] < 0 ? -1 : (vals[1] > 0 ? 1 : 0);
         r.btn1 = vals[2] != 0;
         r.btn2 = vals[3] != 0;
         macro_.push_back(r);
         macro_last_ = time;
+    }
+    if (!macro_.empty()) {
+        std::fprintf(stderr, "macro %s: %zu records, %d ticks\n",
+                     clean.c_str(), macro_.size(), macro_last_);
     }
     macro_playing_ = !macro_.empty();
 }
@@ -5022,10 +5047,20 @@ void Engine::apply_macro_input() {
     while (macro_pos_ < macro_.size() &&
            macro_[macro_pos_].time <= macro_tick_) {
         const MacroRec& r = macro_[macro_pos_++];
-        in_.h = r.h;
-        in_.v = r.v;
-        macro_held1_ = r.btn1;
-        macro_held2_ = r.btn2;
+        // A record only updates the fields named by its mask; the original
+        // leaves the rest of the input state alone between records.
+        if (r.mask & 0x01) {
+            in_.h = r.h;
+        }
+        if (r.mask & 0x02) {
+            in_.v = r.v;
+        }
+        if (r.mask & 0x04) {
+            macro_held1_ = r.btn1;
+        }
+        if (r.mask & 0x08) {
+            macro_held2_ = r.btn2;
+        }
     }
     // The input poller's edge latches behave as if these were real buttons.
     if (!macro_held1_) {
@@ -5206,22 +5241,42 @@ void Engine::place_at_checkpoint(int level) {
         return;
     }
     const BoardObject& cp = objects_[static_cast<size_t>(idx)];
-    int x = cp.x & ~7;
-    int y = cp.y;
     BoardObject& p = objects_[0];
-    if (p.kind != 0x17) {
-        y -= 0x10;
+    // Ending / demo boards (50.jn1, 20.jn2) put the macro trigger next to the
+    // board's own start position.  The recording begins when Jill first
+    // overlaps the trigger, so start her just left of it instead of snapping
+    // to the flag and starting the script one tile late.
+    const bool entrance_macro = !cp.text.empty() && cp.text[0] == '&';
+    int x = p.x;
+    int y = p.y;
+    if (entrance_macro) {
+        // The recording starts when the player first overlaps the trigger,
+        // i.e. with her right edge at cp.x.  Start 16 px left of the flag.
+        x = (cp.x & ~7) - 16;
+        y = cp.y - 16;
+        p.x = x;
+        p.y = y;
+        p.dx = 0;
+        p.dy = 0;
+        p.prev_x = x;
+        p.prev_y = y;
+    } else {
+        x = cp.x & ~7;
+        y = cp.y;
+        if (p.kind != 0x17) {
+            y -= 0x10;
+        }
+        p.x = x;
+        p.y = y;
+        p.dx = 0;
+        p.dy = 0;
+        p.state = 4;
+        p.p11 = 0;
+        p.raise = 0;
+        p.flags = 0;
+        p.prev_x = p.x;
+        p.prev_y = p.y;
     }
-    p.x = x;
-    p.y = y;
-    p.dx = 0;
-    p.dy = 0;
-    p.state = 4;
-    p.p11 = 0;
-    p.raise = 0;
-    p.flags = 0;
-    p.prev_x = p.x;
-    p.prev_y = p.y;
     spawn_x_ = x;
     spawn_y_ = y;
     cam_x_ = std::max(0, std::min(x + 8 - view_center_x(),
@@ -5230,6 +5285,12 @@ void Engine::place_at_checkpoint(int level) {
                                   Board::kRows * 16 - view_h()));
     prev_cam_x_ = cam_x_;
     prev_cam_y_ = cam_y_;
+    // A level can start on its macro checkpoint (50.jn1 / 20.jn2).  The
+    // per-tick CHECKPT handler skips text when p13 == the active level, so
+    // queue the entrance macro here instead; the next tick starts playback.
+    if (!cp.text.empty() && cp.text[0] == '&') {
+        pending_warp_ = cp.text;
+    }
 }
 
 std::string Engine::save_path(int slot) const {

@@ -658,7 +658,10 @@ void Engine::form_update(int i) {
             o.p0f = o.dx;
             o.p13 = (o.p13 + 1) % 6;
             o.dx = in_.h * (((o.x & 7) == 0) ? 8 : 4);
-            if (in_.btn1) {
+            // Original order: gravity first, then a flap when either action
+            // button is held (so a flap tick keeps the full -6 instead of -5).
+            o.dy += 1;
+            if (in_.btn1 || in_.btn2) {
                 o.dy = -6;
                 sound(1, 0x0F);
                 latch1_ = true;
@@ -675,7 +678,7 @@ void Engine::form_update(int i) {
                 latch2_ = true;
                 o = objects_[static_cast<size_t>(i)];
             }
-            o.dy = std::max(-8, std::min(o.dy + 1, 8));
+            o.dy = std::max(-8, std::min(o.dy, 8));
             if (!just_move(i, o.x + o.dx, o.y)) {
                 if (!just_move(i, o.x, o.y + o.dy)) {
                     const int row = (o.y + 0x10) & ~0x0F;

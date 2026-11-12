@@ -62,6 +62,14 @@ public:
     // Build the draw list for an arbitrary camera and render once.  Used by the
     // menu/splash backdrops, which are not tied to the player's position.
     void render_at(Framebuffer& fb, int x, int y, bool with_hud = false);
+    // Ending slides always use the full 320x200 board view, even when the
+    // in-game HUD is CLASSIC (which otherwise offsets/clips the viewport).
+    void render_at_fullscreen(Framebuffer& fb, int x, int y) {
+        const bool saved = hud_classic_;
+        hud_classic_ = false;
+        render_at(fb, x, y, false);
+        hud_classic_ = saved;
+    }
     // Menu backdrops can use a board as artwork only: hide the TEXT6/TEXT8
     // objects so their captions do not end up baked into the backdrop.
     void set_hide_text_kinds(bool on) { hide_text_kinds_ = on; }
@@ -471,7 +479,8 @@ private:
     // Recorded ending macro (`&end1.mac`): one record per input change.  Time
     // is an absolute tick count from playback start (jill1-engine.md 13.1).
     struct MacroRec {
-        int time = 0;
+        int time = 0;      // tick when this record takes effect
+        int mask = 0;      // which fields below are valid
         int h = 0;
         int v = 0;
         bool btn1 = false;

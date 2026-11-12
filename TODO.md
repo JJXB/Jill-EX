@@ -1,5 +1,6 @@
 * Fixes
   * Neaten up Classic Menus/HUD
+  * Fix ending slides being misaligned when in classic HUD
 * Near goals
   * Stereo Rendering - SBS, Interlaced
   * Add an "autoload" external pack that works along with existing pack (for UI/Menu additions)
