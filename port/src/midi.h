@@ -74,6 +74,7 @@ private:
 
     bool rhythm_ = false;  // controller 0x67: five percussion voices
     uint8_t program_[16] = {};
+    uint8_t gm_program_[128] = {};
     int base_volume_[16] = {};
     float volume_ = 0.8f;
 };

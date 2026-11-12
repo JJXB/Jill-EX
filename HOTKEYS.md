@@ -52,6 +52,9 @@ Microsoft GS Wavetable Synth or VirtualMIDISynth) for the CMF/MIDI tracks;
 `OFF (OPL2)` keeps the built-in OPL2 emulation.  The selection is stored as
 `[audio] midi_device` (the device index from `--list-midi`; `-1` = OPL2) and
 can be started with `--midi N`.  MIDI music and sampled SFX can play together.
+The port maps each CMF/AdLib instrument to a General MIDI program using the
+track's actual note ranges and the OPL patch envelope, rather than sending the
+AdLib instrument index as a GM program.
 
 `OPTIONS > GAMEPLAY > TURTLE MODE` reproduces Jill 3's original TURTLE option:
 the simulation advances at half speed (about 9.1 Hz).  High-framerate

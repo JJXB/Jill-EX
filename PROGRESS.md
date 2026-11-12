@@ -9,6 +9,10 @@
 * `OPTIONS > SOUND > MIDI OUT` cycles `OFF (OPL2)` and every installed MIDI
   output.  The choice is stored as `[audio] midi_device`; `--midi N` starts on
   a device and `--list-midi` prints the available indices.
+* CMF patches are mapped to GM programs per track: a note-range pass finds the
+  register each AdLib instrument plays in, and the OPL envelope/brightness
+  picks a bass, piano, guitar, string/pad, brass/reed, flute or lead.  CMF
+  channels 11..15 still become GM percussion on channel 10.
 * Switching devices restarts the current CMF track on the new output.  Sampled
   SFX still use the SDL audio device, so MIDI music and effects can mix.
 

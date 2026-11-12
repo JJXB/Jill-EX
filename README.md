@@ -33,6 +33,7 @@ No copyright assets shipped, provide your own.
   * Jill Select: play as the Jill 1/2/3 or Custom Colour in any episode. Onesimus Support WIP
 * Keyboard and gamepad input with rebindable movement, jump and throw.
 * SDL Sound Output
+  * OPL2 FM or Midi out (CMF to Midi)
 * Cheat menu:
   * Invincible
   * Debug Fly

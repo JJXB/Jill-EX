@@ -22,9 +22,14 @@ The same parsed CMF events can instead be sent to a system MIDI device through
 WinMM (`midiOutOpen` / `midiOutShortMsg`).  `OPTIONS > SOUND > MIDI OUT` lists
 `OFF (OPL2)` plus every installed output; `--list-midi` prints the indices and
 `--midi N` selects one at start-up.  CMF rhythm channels 11..15 map to GM
-percussion on channel 10, and the CMF program index is sent as the GM program.
-The OPL2 core is bypassed while MIDI output is selected, but sampled SFX still
-use the SDL audio device.  **[verified: device enumeration]**
+percussion on channel 10.  The CMF program index is not sent directly (it is
+an AdLib patch index): a pre-pass scans the track's note-on events, measures
+the register each program plays in, and combines that with the OPL patch
+envelope/brightness to choose a GM program (bass for low parts, strings/pads
+for slow sustained parts, brass/reed for bright sustained parts, piano/mallet
+for plucked parts, and so on).  The OPL2 core is bypassed while MIDI output is
+selected, but sampled SFX still use the SDL audio device.
+**[verified: device enumeration; GM mapping is a heuristic]**
 
 
 ## Music data **[verified]**

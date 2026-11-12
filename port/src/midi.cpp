@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -37,6 +38,126 @@ int gm_drum_note(int chan) {
         case 13: return 45;  // low tom
         case 14: return 49;  // crash cymbal
         default: return 42;  // closed hi-hat
+    }
+}
+
+// Pick a General MIDI program from an OPL2 instrument and the register the
+// part actually plays in.  The CMF program number is only an index into the
+// song's AdLib instrument table, so sending it to a GM synth usually selects
+// an unrelated instrument.
+int choose_gm_program(const uint8_t ins[11], int mean_note, int span) {
+    const int ar = ins[5] >> 4;       // carrier attack rate
+    const int dr = ins[5] & 0x0F;     // carrier decay rate
+    const int sl = ins[7] >> 4;       // carrier sustain level
+    const int rr = ins[7] & 0x0F;     // carrier release rate
+    const int tl_mod = ins[2] & 0x3F;  // modulator level (lower = brighter)
+    const int wave_mod = ins[8] & 3;
+    const int wave_car = ins[9] & 3;
+    const int feedback = (ins[10] >> 1) & 7;
+
+    const bool bright =
+        tl_mod <= 20 || feedback >= 5 || wave_mod != 0 || wave_car != 0;
+    const bool very_bright =
+        tl_mod <= 8 || wave_mod >= 4 || wave_car >= 4;
+    const bool percussive = ar >= 14 && (sl >= 6 || rr >= 9) && dr >= 5;
+    const bool plucked = ar >= 12 && (sl >= 3 || rr >= 8);
+    const bool slow_attack = ar <= 8;
+    const bool long_release = sl <= 3 && rr <= 6;
+    const bool sustained = ar >= 10 && long_release;
+    const bool organ = ar >= 12 && sl <= 2 && rr <= 5 && tl_mod >= 24 &&
+                       wave_mod == 0 && wave_car == 0;
+
+    if (mean_note <= 45) {
+        if (very_bright && !plucked) return 38;  // synth bass 1
+        if (plucked) return 34;                  // pick bass
+        if (slow_attack || long_release) return 35;  // fretless bass
+        return 33;                               // finger bass
+    }
+    if (mean_note <= 52) {
+        if (slow_attack) return 42;  // cello
+        if (span >= 20) return 4;    // wide part: neutral electric piano
+        if (organ) return 19;        // church organ
+        if (plucked) return 45;      // pizzicato strings
+        if (percussive) return 0;    // piano
+        if (bright) return 27;       // electric guitar (clean)
+        return 4;                    // electric piano
+    }
+    if (mean_note <= 60) {
+        if (slow_attack) return 48;  // string ensemble 1
+        if (span >= 24) return 4;    // wide part: neutral electric piano
+        if (organ) return 16;        // drawbar organ
+        if (sustained && bright) return 61;  // brass section
+        if (plucked) return 25;      // acoustic guitar
+        if (percussive) return 4;
+        return 4;
+    }
+    if (mean_note <= 68) {
+        if (slow_attack) return 49;  // string ensemble 2
+        if (organ) return 17;        // percussive organ
+        if (sustained && bright) return 62;  // synth brass 1
+        if (plucked) return 27;      // electric guitar
+        return 5;                    // electric piano 2
+    }
+    if (slow_attack) return bright ? 52 : 73;  // choir / flute
+    if (organ) return 19;
+    if (sustained && bright) return 66;  // tenor sax
+    if (plucked) return 11;              // vibraphone
+    if (very_bright) return 81;          // lead 2 (sawtooth)
+    return 73;                           // flute
+}
+
+// One analysis pass over the track: which note range does each CMF program
+// index actually play?  Collecting this at note-on time lets the map pick a
+// bass for the low parts and a lead/string for the high parts, even though the
+// program change itself happens before the first note.
+void build_gm_program_map(const CmfSong& song, uint8_t out[128]) {
+    struct Stats {
+        int count = 0;
+        int sum = 0;
+        int min_note = 127;
+        int max_note = 0;
+    };
+    Stats stats[128];
+    uint8_t current[16] = {};
+    bool rhythm = false;
+
+    for (const CmfEvent& e : song.events) {
+        if (e.type == 0xC0) {
+            if (e.chan < 16) {
+                current[e.chan] = e.a & 0x7F;
+            }
+            continue;
+        }
+        if (e.type == 0xB0 && e.a == 0x67) {
+            rhythm = e.b != 0;
+            continue;
+        }
+        if (e.type != 0x90 || e.b == 0) {
+            continue;
+        }
+        if (rhythm && e.chan >= 11 && e.chan <= 15) {
+            continue;  // percussion program
+        }
+        const int prog = current[e.chan & 0x0F];
+        Stats& s = stats[prog];
+        s.count += 1;
+        s.sum += e.a;
+        s.min_note = std::min(s.min_note, static_cast<int>(e.a));
+        s.max_note = std::max(s.max_note, static_cast<int>(e.a));
+    }
+
+    for (int i = 0; i < 128; ++i) {
+        if (i >= song.instrument_count) {
+            out[i] = static_cast<uint8_t>(i & 0x7F);
+            continue;
+        }
+        const int mean =
+            stats[i].count > 0 ? stats[i].sum / stats[i].count : 60;
+        const int span = stats[i].count > 0
+                             ? stats[i].max_note - stats[i].min_note
+                             : 0;
+        out[i] = static_cast<uint8_t>(
+            choose_gm_program(song.instruments[i], mean, span));
     }
 }
 
@@ -134,6 +255,14 @@ void MidiMusic::start(std::shared_ptr<const CmfSong> song) {
     next_event_ = 0;
     tick_pos_ = 0.0;
     end_tick_ = std::max<uint32_t>(1, song_->end_tick);
+    build_gm_program_map(*song_, gm_program_);
+    if (std::getenv("JILL_MIDI_DEBUG") != nullptr) {
+        std::fprintf(stderr, "midi map for %s:\n", song_->filename.c_str());
+        for (int i = 0; i < song_->instrument_count; ++i) {
+            std::fprintf(stderr, "  cmf %3d -> gm %3d\n", i,
+                         static_cast<int>(gm_program_[i]));
+        }
+    }
     for (int i = 0; i < 16; ++i) {
         program_[i] = 0;
         base_volume_[i] = 100;
@@ -141,7 +270,7 @@ void MidiMusic::start(std::shared_ptr<const CmfSong> song) {
     out_->all_notes_off();
     for (int ch = 0; ch < 16; ++ch) {
         send_msg(ch, 0xB0, 121, 0);
-        send_msg(ch, 0xC0, 0, 0);
+        send_msg(ch, 0xC0, gm_program_[0], 0);
         apply_volume(ch);
     }
 }
@@ -171,7 +300,7 @@ void MidiMusic::set_enabled(bool on) {
     if (on) {
         for (int ch = 0; ch < 16; ++ch) {
             if (!(rhythm_ && ch >= 11)) {
-                send_msg(output_channel(ch), 0xC0, program_[ch], 0);
+                send_msg(output_channel(ch), 0xC0, gm_program_[program_[ch]], 0);
             }
             apply_volume(ch);
         }
@@ -238,10 +367,9 @@ void MidiMusic::program_change(int chan, int program) {
     if (rhythm_ && chan >= 11) {
         return;  // percussion voices ignore melodic programs
     }
-    // The CMF program is an index into the song's OPL instrument table.  Send
-    // the same number to the MIDI device as a GM program; a bank/port that
-    // understands GM will at least give each part a distinct instrument.
-    send_msg(output_channel(chan), 0xC0, program_[chan], 0);
+    // Translate the song's OPL instrument index through the per-track GM map
+    // built from the patch envelopes and the register each part plays in.
+    send_msg(output_channel(chan), 0xC0, gm_program_[program_[chan]], 0);
 }
 
 void MidiMusic::controller(int chan, int cc, int value) {
