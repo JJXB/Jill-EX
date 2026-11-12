@@ -53,7 +53,6 @@ No copyright assets shipped, provide your own.
 * Classic Menu work
 * Old Style Noisemaker
 * Work on Display Filters to be continued 
-* Stereo Image Rendering (SBS, Interlaced)
 * Mac/Linux/Console builds
 
 ### Future Ideas
