@@ -1,5 +1,16 @@
 # Progress
 
+## 2026-11-12 (stereo 3D)
+
+* Added stereo rendering with `OPTIONS > VIDEO > STEREO 3D`: `OFF`,
+  `INTERLACED` (even lines = left eye, odd lines = right) and `SBS` (half-width
+  side-by-side).  Two eye views are rendered with a small horizontal
+  separation: the full-board backdrop is fixed, tiles move half the distance
+  and objects move the full distance, while the HUD/UI stay at zero parallax.
+  Menus, the level-select panel and the save-name prompt remain 2D.
+* Added `[video] stereo`, `[video] stereo_depth`, `--stereo MODE` and
+  `--stereo-depth N`.  Headless `--dump` supports both modes for testing.
+
 ## 2026-11-12 (Jill 3 map return)
 
 * Fixed the Jill 3 hub spawn after finishing `1.jn3`.  Leaving the map through

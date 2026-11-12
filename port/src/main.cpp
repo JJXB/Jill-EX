@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -83,6 +84,8 @@ void usage() {
         "  --high-fps N   presentation rate: 0 (18.2 Hz), 60, 90, 120 or 144\n"
         "  --no-interpolate  disable high-framerate sprite smoothing\n"
         "  --filter N     display filter: 0 none, 1 smooth, 2 CRT\n"
+        "  --stereo MODE  stereo 3D: off, interlaced or sbs\n"
+        "  --stereo-depth N  per-eye separation in pixels (default 3)\n"
         "  --fullscreen   start in exclusive fullscreen\n"
         "  --windowed     start windowed (default)\n"
         "  --borderless   start in borderless fullscreen\n"
@@ -181,6 +184,8 @@ int main(int argc, char** argv) {
                 opt.filter = 0;
             }
         }
+        opt.stereo = ini.get_int("video", "stereo", opt.stereo);
+        opt.stereo_depth = ini.get_int("video", "stereo_depth", opt.stereo_depth);
         opt.hud_classic = ini.get_bool("hud", "classic", opt.hud_classic);
         opt.hud_portrait = ini.get_bool("hud", "portrait", opt.hud_portrait);
         opt.hud_frame = ini.get_int("hud", "frame", opt.hud_frame);
@@ -308,6 +313,25 @@ int main(int argc, char** argv) {
             }
             if (opt.filter < 0 || opt.filter > 2) {
                 opt.filter = 0;
+            }
+        } else if (a == "--stereo") {
+            const std::string v = ini_lower(value("--stereo"));
+            if (v == "interlaced" || v == "interlace") {
+                opt.stereo = 1;
+            } else if (v == "sbs" || v == "side-by-side") {
+                opt.stereo = 2;
+            } else {
+                opt.stereo = std::atoi(v.c_str());
+            }
+            if (opt.stereo < 0 || opt.stereo > 2) {
+                opt.stereo = 0;
+            }
+        } else if (a == "--stereo-depth") {
+            opt.stereo_depth = std::atoi(value("--stereo-depth"));
+            if (opt.stereo_depth < 1) {
+                opt.stereo_depth = 1;
+            } else if (opt.stereo_depth > 16) {
+                opt.stereo_depth = 16;
             }
         } else if (a == "--fullscreen") {
             opt.fullscreen = true;

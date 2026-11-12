@@ -62,6 +62,16 @@ interpolation stretches each update across two 18.2 Hz ticks, so movement stays
 continuous instead of stepping.  It is stored as `[gameplay] turtle = 0/1` and
 can be started with `--turtle`.
 
+`OPTIONS > VIDEO > STEREO 3D` cycles `OFF`, `INTERLACED` and `SBS`.  The two
+eye views use a small camera separation: the backdrop stays fixed, tiles move
+half as far and objects move the full distance.  INTERLACED alternates even
+lines from the left eye and odd lines from the right (for line-interleaved
+displays/shutter glasses); SBS stores the left eye in the first half of the
+frame and the right eye in the second half (half-width side-by-side).  Menus
+and the level-select panel stay 2D.  The mode is stored as `[video] stereo`,
+the separation as `[video] stereo_depth`, and can be selected with
+`--stereo MODE` / `--stereo-depth N`.
+
 `OPTIONS > VIDEO > MESSAGE BOX` cycles three styles:
 
 | Style | Behaviour |

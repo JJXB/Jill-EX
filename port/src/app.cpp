@@ -32,6 +32,34 @@ std::string player_suit_name(int suit);
 void apply_player_look(Engine& engine, const std::vector<GameDef>& games,
                        int look, int suit);
 
+// Merge two full-resolution eye views into the 320x200 presentation buffer.
+// Mode 1 = row-interlaced (even = left, odd = right); mode 2 = half-width
+// side-by-side (left in the first 160 columns, right in the last 160).
+void compose_stereo(Framebuffer& out, const Framebuffer& left,
+                    const Framebuffer& right, int mode) {
+    if (mode == 1) {
+        for (int y = 0; y < Framebuffer::H; ++y) {
+            const Framebuffer& src = (y & 1) ? right : left;
+            std::memcpy(out.px.data() + static_cast<size_t>(y) * Framebuffer::W,
+                        src.px.data() + static_cast<size_t>(y) * Framebuffer::W,
+                        Framebuffer::W);
+        }
+    } else if (mode == 2) {
+        constexpr int kHalf = Framebuffer::W / 2;
+        for (int y = 0; y < Framebuffer::H; ++y) {
+            const size_t row = static_cast<size_t>(y) * Framebuffer::W;
+            for (int x = 0; x < kHalf; ++x) {
+                out.px[row + static_cast<size_t>(x)] =
+                    left.px[row + static_cast<size_t>(x * 2)];
+                out.px[row + static_cast<size_t>(kHalf + x)] =
+                    right.px[row + static_cast<size_t>(x * 2)];
+            }
+        }
+    } else {
+        out.px = left.px;
+    }
+}
+
 bool load_palette(const std::string& path, uint8_t rgb[768]) {
     vga_default_palette(rgb);
     if (path.empty()) {
@@ -248,7 +276,20 @@ int run_headless(Engine& engine, const Options& opt) {
         uint8_t palette[768];
         load_palette(opt.palette, palette);
         Framebuffer fb;
-        engine.render(fb);
+        if (opt.stereo != 0) {
+            Framebuffer left;
+            Framebuffer right;
+            const int shift = std::max(1, opt.stereo_depth);
+            engine.set_stereo_shift(-shift);
+            engine.render(left);
+            engine.set_stereo_shift(shift);
+            engine.render(right);
+            engine.set_stereo_shift(0);
+            compose_stereo(fb, left, right, opt.stereo);
+        } else {
+            engine.set_stereo_shift(0);
+            engine.render(fb);
+        }
         std::vector<uint32_t> argb(fb.px.size());
         for (size_t i = 0; i < fb.px.size(); ++i) {
             const uint8_t c = fb.px[i];
@@ -994,6 +1035,8 @@ struct VideoSettings {
     int splash = -1;     // -1 auto, 0 off, N = games[N-1] splash
     bool interpolate = true;  // high-framerate smoothing (needs high_fps > 0)
     int filter = 0;      // 0 none, 1 smooth (light blur), 2 CRT
+    int stereo = 0;      // 0 off, 1 row-interlaced, 2 half-width SBS
+    int stereo_depth = 3;  // per-eye horizontal separation in source pixels
 };
 
 // Presentation rates.  The world always ticks at 18.2065 Hz; these only change
@@ -1026,6 +1069,19 @@ const char* message_box_name(int style) {
 }
 
 int filter_next(int filter) { return (filter + 1) % 3; }
+
+const char* stereo_name(int stereo) {
+    switch (stereo) {
+        case 1: return "INTERLACED";
+        case 2: return "SBS";
+        default: return "OFF";
+    }
+}
+
+int stereo_next(int stereo, int step) {
+    int v = (stereo + step) % 3;
+    return (v < 0) ? v + 3 : v;
+}
 
 struct ResolutionOption {
     const char* label;
@@ -1353,6 +1409,7 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                     std::string("MESSAGE BOX: ") +
                         message_box_name(engine.message_box()),
                     std::string("FILTER: ") + filter_name(video.filter),
+                    std::string("STEREO 3D: ") + stereo_name(video.stereo),
                     "BACK"};
         }
         case MenuScreen::Audio:
@@ -2466,6 +2523,8 @@ int run_sdl(const Options& opt, Engine& engine,
     video.splash = opt.splash;
     video.interpolate = opt.interpolate;
     video.filter = opt.filter;
+    video.stereo = opt.stereo;
+    video.stereo_depth = opt.stereo_depth;
 
     SDL_Window* window = SDL_CreateWindow(
         "Jill (port skeleton)", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
@@ -2512,6 +2571,8 @@ int run_sdl(const Options& opt, Engine& engine,
     }
 
     Framebuffer fb;
+    Framebuffer stereo_left;
+    Framebuffer stereo_right;
     ThemeBackdrop theme_backdrop;
     SplashImage splash_image;
     LevelSelect select;
@@ -3294,7 +3355,7 @@ int run_sdl(const Options& opt, Engine& engine,
                 break;
             }
             case MenuScreen::Video:
-                if (nav == 5 && sel == 7) {
+                if (nav == 5 && sel == 8) {
                     menu.screen = MenuScreen::Options;
                 } else if (sel == 4) {
                     if (nav == 5 || nav == 3 || nav == 4) {
@@ -3308,6 +3369,11 @@ int run_sdl(const Options& opt, Engine& engine,
                 } else if (sel == 6) {
                     if (nav == 5 || nav == 3 || nav == 4) {
                         video.filter = filter_next(video.filter);
+                    }
+                } else if (sel == 7) {
+                    if (nav == 5 || nav == 3 || nav == 4) {
+                        video.stereo =
+                            stereo_next(video.stereo, nav == 3 ? -1 : 1);
                     }
                 } else if (nav == 3) {
                     video_step(-1);
@@ -3939,7 +4005,24 @@ int run_sdl(const Options& opt, Engine& engine,
                 (!paused && video.interpolate && video.high_fps > 0)
                     ? static_cast<float>(accumulator / step)
                     : 1.0f;
-            engine.render(fb, true, alpha);
+            // Menus, the level-select panel and the save-name prompt are 2D
+            // overlays; render them on the normal frame instead of splitting
+            // them across the eyes.
+            const bool stereo_view =
+                video.stereo != 0 && !menu_open(menu) && !select.open &&
+                !score_entry.active;
+            if (stereo_view) {
+                const int shift = std::max(1, video.stereo_depth);
+                engine.set_stereo_shift(-shift);
+                engine.render(stereo_left, true, alpha);
+                engine.set_stereo_shift(shift);
+                engine.render(stereo_right, true, alpha);
+                engine.set_stereo_shift(0);
+                compose_stereo(fb, stereo_left, stereo_right, video.stereo);
+            } else {
+                engine.set_stereo_shift(0);
+                engine.render(fb, true, alpha);
+            }
             // Temporary debug indicators sit just below the HUD: under the
             // modern top bar, or under the classic side panel.
             const int overlay_y = engine.hud_classic() ? 86 : 14;
@@ -4042,6 +4125,8 @@ int run_sdl(const Options& opt, Engine& engine,
         ini.set_int("video", "splash", video.splash);
         ini.set_bool("video", "interpolate", video.interpolate);
         ini.set_int("video", "filter", video.filter);
+        ini.set_int("video", "stereo", video.stereo);
+        ini.set_int("video", "stereo_depth", video.stereo_depth);
         ini.set_bool("audio", "music", menu.music_on);
         ini.set_int("audio", "volume", menu.music_volume);
         ini.set_bool("audio", "sfx", menu.sfx_on);

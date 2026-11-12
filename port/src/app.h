@@ -29,6 +29,8 @@ struct Options {
     int high_fps = 60;          // presentation rate: 0 = 18.2 Hz, else 60..144
     bool interpolate = true;    // --no-interpolate: no high-fps smoothing
     int filter = 0;             // --filter N: 0 none, 1 smooth, 2 CRT
+    int stereo = 0;             // --stereo MODE: 0 off, 1 interlaced, 2 SBS
+    int stereo_depth = 3;       // --stereo-depth N: eye separation in pixels
     int window_mode = 0;        // 0 windowed, 1 fullscreen, 2 borderless
     int resolution = 0;         // 0 desktop, else index into kResolutions
     int resolution_w = 0;       // --resolution WxH, resolved at start-up

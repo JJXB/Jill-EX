@@ -2591,6 +2591,9 @@ void Engine::render(Framebuffer& fb, bool with_hud, float alpha) {
         fb.px = *bg;
     }
 
+    // Tiles get half the eye separation; the full-board backdrop stays fixed
+    // (infinite distance) and objects below get the full separation.
+    const int tile_shift = stereo_shift_ / 2;
     int c0 = cam_x_ >> 4;
     int c1 = std::min(Board::kCols - 1, (cam_x_ + view_w()) >> 4);
     int r0 = cam_y_ >> 4;
@@ -2613,10 +2616,14 @@ void Engine::render(Framebuffer& fb, bool with_hud, float alpha) {
                     }
                 }
             }
-            draw_shape(fb, shape, c * 16 - cam_x_ + view_x(), r * 16 - cam_y_ + view_y(), bg_ok);
+            draw_shape(fb, shape,
+                       c * 16 - cam_x_ + view_x() + tile_shift,
+                       r * 16 - cam_y_ + view_y(), bg_ok);
         }
     }
 
+    const int object_cam_x = cam_x_;
+    cam_x_ -= stereo_shift_;
     for (int i : order_) {
         const BoardObject& o = objects_[static_cast<size_t>(i)];
         if (hide_text_kinds_ && (o.kind == 20 || o.kind == 21)) {
@@ -2641,6 +2648,7 @@ void Engine::render(Framebuffer& fb, bool with_hud, float alpha) {
             draw_object(i, fb);
         }
     }
+    cam_x_ = object_cam_x;
 
     if (with_hud) {
         if (hud_classic_) {

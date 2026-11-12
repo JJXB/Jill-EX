@@ -59,6 +59,11 @@ public:
     // backdrops, which must not include a HUD bar).  `alpha` blends the
     // previous logic tick into the current one for high-framerate modes.
     void render(Framebuffer& fb, bool with_hud = true, float alpha = 1.0f);
+    // Stereoscopic eye separation.  Only the board layers move: the backdrop
+    // stays fixed and tiles move half as far as objects, so the two views have
+    // a simple depth order.  HUD/UI are unaffected.
+    void set_stereo_shift(int pixels) { stereo_shift_ = pixels; }
+    int stereo_shift() const { return stereo_shift_; }
     // Build the draw list for an arbitrary camera and render once.  Used by the
     // menu/splash backdrops, which are not tied to the player's position.
     void render_at(Framebuffer& fb, int x, int y, bool with_hud = false);
@@ -561,4 +566,5 @@ private:
     bool turtle_ = false;
     bool turtle_skip_ = false;
     int slow_phase_ = 0;  // 0 = first half of a 2-tick move, 1 = second half
+    int stereo_shift_ = 0;
 };
