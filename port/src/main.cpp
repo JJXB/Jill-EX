@@ -85,7 +85,7 @@ void usage() {
         "  --no-interpolate  disable high-framerate sprite smoothing\n"
         "  --filter N     display filter: 0 none, 1 smooth, 2 CRT\n"
         "  --stereo MODE  stereo 3D: off, interlaced or sbs\n"
-        "  --stereo-depth N  per-eye separation in pixels (default 3)\n"
+        "  --stereo-depth N  per-eye separation in pixels, 1..8 (default 2)\n"
         "  --fullscreen   start in exclusive fullscreen\n"
         "  --windowed     start windowed (default)\n"
         "  --borderless   start in borderless fullscreen\n"
@@ -330,8 +330,8 @@ int main(int argc, char** argv) {
             opt.stereo_depth = std::atoi(value("--stereo-depth"));
             if (opt.stereo_depth < 1) {
                 opt.stereo_depth = 1;
-            } else if (opt.stereo_depth > 16) {
-                opt.stereo_depth = 16;
+            } else if (opt.stereo_depth > 8) {
+                opt.stereo_depth = 8;
             }
         } else if (a == "--fullscreen") {
             opt.fullscreen = true;

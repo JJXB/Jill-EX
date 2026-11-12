@@ -68,9 +68,11 @@ half as far and objects move the full distance.  INTERLACED alternates even
 lines from the left eye and odd lines from the right (for line-interleaved
 displays/shutter glasses); SBS stores the left eye in the first half of the
 frame and the right eye in the second half (half-width side-by-side).  Menus
-and the level-select panel stay 2D.  The mode is stored as `[video] stereo`,
-the separation as `[video] stereo_depth`, and can be selected with
-`--stereo MODE` / `--stereo-depth N`.
+and the level-select panel stay 2D.  `OPTIONS > VIDEO > STEREO DEPTH` cycles
+the eye separation from 1 to 8 pixels (default 2; lower this first if the view
+feels too wide).  The mode is stored as `[video] stereo`, the separation as
+`[video] stereo_depth`, and can be selected with `--stereo MODE` /
+`--stereo-depth N`.
 
 `OPTIONS > VIDEO > MESSAGE BOX` cycles three styles:
 

@@ -15,7 +15,9 @@ boxes, the message line and menus stay at zero parallax.
 * `SBS`: left eye in columns 0..159, right eye in columns 160..319 (half-width
   side-by-side for 3D TVs/projectors).
 
-Stored as `[video] stereo = 0/1/2` and `[video] stereo_depth = pixels`;
+`OPTIONS > VIDEO > STEREO DEPTH` cycles the eye separation from 1 to 8 pixels
+(default 2).  Lower it if the two views feel too far apart.  Stored as
+`[video] stereo = 0/1/2` and `[video] stereo_depth = pixels`;
 `--stereo off|interlaced|sbs` and `--stereo-depth N` also work.  Headless
 `--dump` applies the same composition.
 

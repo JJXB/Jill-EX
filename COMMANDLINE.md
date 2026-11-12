@@ -44,7 +44,7 @@ run.cmd [options]
 | `--no-interpolate` | Disable high-framerate sprite smoothing |
 | `--filter NAME` | `0`/none, `1`/smooth, `2`/crt |
 | `--stereo MODE` | Stereo 3D: `off`, `interlaced`, or `sbs` |
-| `--stereo-depth N` | Per-eye separation in pixels (default 3) |
+| `--stereo-depth N` | Per-eye separation in pixels, 1..8 (default 2) |
 | `--fullscreen` | Exclusive fullscreen |
 | `--windowed` | Windowed (default) |
 | `--borderless` | Borderless fullscreen |

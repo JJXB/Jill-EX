@@ -1036,7 +1036,7 @@ struct VideoSettings {
     bool interpolate = true;  // high-framerate smoothing (needs high_fps > 0)
     int filter = 0;      // 0 none, 1 smooth (light blur), 2 CRT
     int stereo = 0;      // 0 off, 1 row-interlaced, 2 half-width SBS
-    int stereo_depth = 3;  // per-eye horizontal separation in source pixels
+    int stereo_depth = 2;  // per-eye horizontal separation in source pixels
 };
 
 // Presentation rates.  The world always ticks at 18.2065 Hz; these only change
@@ -1081,6 +1081,20 @@ const char* stereo_name(int stereo) {
 int stereo_next(int stereo, int step) {
     int v = (stereo + step) % 3;
     return (v < 0) ? v + 3 : v;
+}
+
+std::string stereo_depth_name(int depth) {
+    return std::to_string(depth) + " PX";
+}
+
+int stereo_depth_next(int depth, int step) {
+    int v = depth + step;
+    if (v < 1) {
+        v = 8;
+    } else if (v > 8) {
+        v = 1;
+    }
+    return v;
 }
 
 struct ResolutionOption {
@@ -1410,6 +1424,8 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                         message_box_name(engine.message_box()),
                     std::string("FILTER: ") + filter_name(video.filter),
                     std::string("STEREO 3D: ") + stereo_name(video.stereo),
+                    std::string("STEREO DEPTH: ") +
+                        stereo_depth_name(video.stereo_depth),
                     "BACK"};
         }
         case MenuScreen::Audio:
@@ -3355,7 +3371,7 @@ int run_sdl(const Options& opt, Engine& engine,
                 break;
             }
             case MenuScreen::Video:
-                if (nav == 5 && sel == 8) {
+                if (nav == 5 && sel == 9) {
                     menu.screen = MenuScreen::Options;
                 } else if (sel == 4) {
                     if (nav == 5 || nav == 3 || nav == 4) {
@@ -3374,6 +3390,11 @@ int run_sdl(const Options& opt, Engine& engine,
                     if (nav == 5 || nav == 3 || nav == 4) {
                         video.stereo =
                             stereo_next(video.stereo, nav == 3 ? -1 : 1);
+                    }
+                } else if (sel == 8) {
+                    if (nav == 5 || nav == 3 || nav == 4) {
+                        video.stereo_depth = stereo_depth_next(
+                            video.stereo_depth, nav == 3 ? -1 : 1);
                     }
                 } else if (nav == 3) {
                     video_step(-1);

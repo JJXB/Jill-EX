@@ -9,7 +9,9 @@
   and objects move the full distance, while the HUD/UI stay at zero parallax.
   Menus, the level-select panel and the save-name prompt remain 2D.
 * Added `[video] stereo`, `[video] stereo_depth`, `--stereo MODE` and
-  `--stereo-depth N`.  Headless `--dump` supports both modes for testing.
+  `--stereo-depth N`.  `OPTIONS > VIDEO > STEREO DEPTH` cycles 1..8 pixels;
+  the default separation is 2 (lower it if the view feels too wide).  Headless
+  `--dump` supports both modes for testing.
 
 ## 2026-11-12 (Jill 3 map return)
 
