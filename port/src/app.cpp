@@ -2189,13 +2189,17 @@ void draw_menu(Framebuffer& fb, Engine& engine, Menu& m, bool started,
         fb.fill_rect(bx, by, boxw, boxh, 8);
         fb.fill_rect(bx + 1, by + 1, boxw - 2, boxh - 2, 0);
     }
+    // The nine-slice window has an 8 px top border, unlike the 1 px plain
+    // frame / open tiled panel.  Start text below that border so it does not
+    // clip into the frame on themed or game borders.
+    const int text_top = shape_border ? by + 10 : by + 5;
     for (int i = 0; i < static_cast<int>(items.size()); ++i) {
         char line[96];
         std::snprintf(line, sizeof(line), "%c %s", i == sel ? '>' : ' ',
                       items[static_cast<size_t>(i)].c_str());
         uint8_t colour = (i == sel && m.rebind_action >= 0) ? 6
                           : (i == sel ? 7 : 5);
-        engine.draw_text(fb, bx + 14, by + 5 + i * line_h, colour, line);
+        engine.draw_text(fb, bx + 14, text_top + i * line_h, colour, line);
     }
     if (m.screen == MenuScreen::Hud) {
         // Live background preview: the bar uses the chosen palette index.

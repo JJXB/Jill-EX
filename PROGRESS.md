@@ -1,5 +1,13 @@
 # Progress
 
+## 2026-11-12 (menu text alignment)
+
+* Modern menus with a shape-7 border (CURRENT / a game / an external border)
+  now start their item text below the 8 px top border instead of at `by+5`,
+  which had clipped the first row and pushed the whole list up into the frame.
+  Classic menus, tiled `BORDER: THEME` menus and plain menus already used the
+  correct offsets and are unchanged.
+
 ## 2026-11-12 (classic menu intro artwork)
 
 * `OPTIONS > MENUS > THEME` game themes now also fill the CLASSIC front-end
