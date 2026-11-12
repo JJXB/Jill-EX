@@ -1660,6 +1660,9 @@ struct ThemeTile {
 struct ThemeBackdrop {
     int built = -1;
     std::vector<uint8_t> px;
+    // Classic menu picture section from the intro board: tiles (113,54) to
+    // (127,63), 15x10 cells = 240x160 px.
+    std::vector<uint8_t> classic_px;
     ThemeTile frame;
     ThemeTile fill;
 };
@@ -1878,6 +1881,7 @@ void ensure_theme_backdrop(ThemeBackdrop& tb, int theme,
     }
     tb.built = theme;
     tb.px.clear();
+    tb.classic_px.clear();
     tb.frame = ThemeTile{};
     tb.fill = ThemeTile{};
     const int game_count = static_cast<int>(games.size());
@@ -1917,6 +1921,23 @@ void ensure_theme_backdrop(ThemeBackdrop& tb, int theme,
     Framebuffer fb;
     tmp.render_at(fb, cam_x, cam_y, false);
     tb.px = std::move(fb.px);
+
+    // Classic menu picture: the original intro board section at tiles
+    // (113,54)..(127,63).  Keep TEXT6/TEXT8 visible: this section includes the
+    // "THIS GAME IS SHAREWARE" copy.
+    constexpr int kClassicCol = 113;
+    constexpr int kClassicRow = 54;
+    constexpr int kClassicW = 240;
+    constexpr int kClassicH = 160;
+    tmp.set_hide_text_kinds(false);
+    Framebuffer classic;
+    tmp.render_at(classic, kClassicCol * 16, kClassicRow * 16, false);
+    tb.classic_px.resize(static_cast<size_t>(kClassicW) * kClassicH);
+    for (int y = 0; y < kClassicH; ++y) {
+        std::memcpy(tb.classic_px.data() + static_cast<size_t>(y) * kClassicW,
+                    classic.px.data() + static_cast<size_t>(y) * Framebuffer::W,
+                    kClassicW);
+    }
 
     tb.frame.ok = tmp.tile_pixels(tmp.theme_tile(true), tb.frame.px,
                                   tb.frame.w, tb.frame.h);
@@ -1966,8 +1987,22 @@ void draw_classic_hiscores(Framebuffer& fb, Engine& engine,
 void draw_classic_menu(Framebuffer& fb, Engine& engine, const Menu& m,
                        const char* sub,
                        const std::vector<std::string>& items, int sel,
-                       bool in_game) {
+                       bool in_game,
+                       const std::vector<uint8_t>& classic_px) {
     if (!in_game) {
+        // The classic viewport is the 240x160 intro-board section.  It is
+        // drawn before the frame so the frame edges cover its border.
+        if (classic_px.size() ==
+            static_cast<size_t>(240) * 160) {
+            constexpr int vx = 72;
+            constexpr int vy = 20;
+            for (int y = 0; y < 160; ++y) {
+                for (int x = 0; x < 240; ++x) {
+                    fb.put(vx + x, vy + y,
+                           classic_px[static_cast<size_t>(y) * 240 + x]);
+                }
+            }
+        }
         engine.draw_classic_backdrop(fb, engine.game().title, true);
         if (m.screen != MenuScreen::HighScores) {
             draw_classic_hiscores(fb, engine, m.hi_scores);
@@ -2089,7 +2124,8 @@ void draw_menu(Framebuffer& fb, Engine& engine, Menu& m, bool started,
         sel = 0;
     }
     if (m.classic) {
-        draw_classic_menu(fb, engine, m, sub, items, sel, started);
+        draw_classic_menu(fb, engine, m, sub, items, sel, started,
+                          backdrop.classic_px);
         return;
     }
     menu_title(fb, engine, 16,

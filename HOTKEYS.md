@@ -26,7 +26,7 @@ Movement is held; jump and throw are edge-triggered.  Bindings are stored in
 | --- | --- |
 | STYLE | MODERN or CLASSIC; CLASSIC uses the original frame and shape-7 window |
 | BORDER | THEME, CURRENT, an installed game's shape entry 7 window, or an external border |
-| THEME | Backdrop artwork: port, a game intro board, or a pack/autoload theme |
+| THEME | Backdrop artwork: port, a game intro board, or a pack/autoload theme. In the CLASSIC menu a game theme also fills the 240x160 viewport with the intro-board section at tiles (113,54)..(127,63) |
 | BACKGROUND | THEME, or LIVE GAME to show the paused game behind a modern menu |
 | SPLASH | AUTO, OFF, or a specific game's start-up splash |
 | FONT | ORIGINAL, or any named external `fonts/<name>` set |

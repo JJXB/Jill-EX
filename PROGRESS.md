@@ -1,5 +1,14 @@
 # Progress
 
+## 2026-11-12 (classic menu intro artwork)
+
+* `OPTIONS > MENUS > THEME` game themes now also fill the CLASSIC front-end
+  viewport with the original intro-board section at tiles `(113,54)` to
+  `(127,63)`: 15x10 cells = 240x160 px, including the intro-board Jill and the
+  `THIS GAME IS SHAREWARE` text.  PORT and pack/autoload theme options remain.
+* Fixed the classic HUD viewport to that 240x160 rectangle (`x=72`, `y=20`)
+  instead of the old 238x166 crop.
+
 ## 2026-11-12 (original-board NOISEMAKER and SOUND TEST rename)
 
 * Added `NOISEMAKER` to the main menu.  It first asks which episode to use,

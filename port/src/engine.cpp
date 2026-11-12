@@ -22,10 +22,14 @@ constexpr int kClassicPanelY = kClassicTop;
 constexpr int kClassicPanelW = 64;
 constexpr int kClassicPanelH =
     Framebuffer::H - kClassicTop - kClassicBorder;  // to the bottom border
-constexpr int kClassicViewX = kClassicPanelX + kClassicPanelW + 2;
-constexpr int kClassicViewY = kClassicTop;
-constexpr int kClassicViewW = Framebuffer::W - kClassicViewX - kClassicBorder;
-constexpr int kClassicViewH = Framebuffer::H - kClassicTop - 14;
+// Classic menu/HUD viewport: the intro-board picture section at tiles
+// (113,54)..(127,63) is 15x10 cells, i.e. exactly 240x160 px.  The old 238x166
+// rectangle cropped that section; the panel ends at x=72 and the right border
+// starts at 312, so 240 px is the full available width.
+constexpr int kClassicViewX = kClassicPanelX + kClassicPanelW;  // 72
+constexpr int kClassicViewY = kClassicTop;                     // 20
+constexpr int kClassicViewW = 240;
+constexpr int kClassicViewH = 160;
 
 std::string join(const std::string& dir, const std::string& name) {
     if (dir.empty()) {
@@ -2734,8 +2738,8 @@ void Engine::draw_classic_backdrop(Framebuffer& fb, const std::string& title,
                               y < kClassicBorder ||
                               y >= Framebuffer::H - kClassicBorder;
             const bool left = x < kClassicViewX;
-            const bool top = y < kClassicTop;
-            const bool bottom = y >= Framebuffer::H - 14;
+            const bool top = y < kClassicViewY;
+            const bool bottom = y >= kClassicViewY + kClassicViewH;
             if (!(ring || left || top || bottom)) {
                 continue;
             }
