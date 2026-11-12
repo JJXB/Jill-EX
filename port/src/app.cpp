@@ -2921,8 +2921,11 @@ int run_sdl(const Options& opt, Engine& engine,
         int cy = 0;
         for (const BoardObject& o : nm->objects()) {
             if (o.kind == 12 && o.p13 == 99) {
-                cx = std::max(0, o.x - 32);
-                cy = std::max(0, o.y - 8);
+                // The page-99 CHECKPT sits 8 px right of the visible screen
+                // edge; that placement lines the MEGA logo up at the left and
+                // the text objects at the original 24 px margin.
+                cx = std::max(0, o.x - 8);
+                cy = std::max(0, o.y);
                 break;
             }
         }
@@ -4190,9 +4193,6 @@ int run_sdl(const Options& opt, Engine& engine,
             if (menu.screen == MenuScreen::Noisemaker && noisemaker_engine) {
                 noisemaker_engine->render_at(fb, noisemaker_cam_x,
                                              noisemaker_cam_y, false);
-                const int tw = 8 * 6;
-                engine.draw_text(fb, Framebuffer::W - tw - 4,
-                                 Framebuffer::H - 10, 7, "ESC BACK");
             } else if (menu_open(menu)) {
                 draw_menu(fb, engine, menu, game_started, video, bindings,
                           theme_backdrop, games, music_player, ext_assets);
