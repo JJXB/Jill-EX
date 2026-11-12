@@ -96,7 +96,10 @@ void usage() {
         "  --live-menu    keep the live game visible behind the modern menu\n"
         "  --theme-menu   use the theme backdrop for the modern menu (default)\n"
         "  --hud-frame N  classic HUD art: 0 current, N = N-th game's shapes\n"
+        "  --hud-panel NAME  select an external HUD panel (empty = default)\n"
         "  --menu-frame N menu border: -1 theme, 0 current, N = N-th game\n"
+        "                 N beyond the game list = external border\n"
+        "  --menu-font NAME  select an external font set\n"
         "  --splash N     start-up splash: -1 auto, 0 off, N = game N\n"
         "  --no-splash    disable the start-up splash sequence\n"
         "  --save N       debug: write save slot N after the run / on exit\n"
@@ -110,6 +113,7 @@ void usage() {
         "  --air-jump-buffer keep the original hold-jump-through-a-fall buffer\n"
         "  --minimap      draw a small board overview in the lower-right corner\n"
         "  --center-fish-shot  centre the fish form's shot vertically\n"
+        "  --turtle       Jill 3 TURTLE mode: run the game at half speed\n"
         "  --jill-look N   0 = game default, N = installed game N (Jill Select)\n"
         "  --jill-colour N 0 = look's colours, 1..8 = custom suit presets\n"
         "  --items N      debug: start with N knives in the inventory\n"
@@ -178,7 +182,9 @@ int main(int argc, char** argv) {
         opt.hud_classic = ini.get_bool("hud", "classic", opt.hud_classic);
         opt.hud_portrait = ini.get_bool("hud", "portrait", opt.hud_portrait);
         opt.hud_frame = ini.get_int("hud", "frame", opt.hud_frame);
+        opt.hud_panel = ini.get("hud", "panel", opt.hud_panel);
         opt.menu_frame = ini.get_int("menus", "frame", opt.menu_frame);
+        opt.menu_font = ini.get("menus", "font", opt.menu_font);
         const std::string bg = ini.get("hud", "background");
         if (!bg.empty()) {
             const std::string lb = ini_lower(bg);
@@ -218,6 +224,7 @@ int main(int argc, char** argv) {
         opt.minimap = ini.get_bool("gameplay", "minimap", opt.minimap);
         opt.center_fish_shot = ini.get_bool("gameplay", "center_fish_shot",
                                             opt.center_fish_shot);
+        opt.turtle = ini.get_bool("gameplay", "turtle", opt.turtle);
         opt.player_look = ini.get_int("gameplay", "player_look", opt.player_look);
         opt.player_suit = ini.get_int("gameplay", "player_suit", opt.player_suit);
         opt.data_paths = ini.section("paths");
@@ -345,9 +352,13 @@ int main(int argc, char** argv) {
         } else if (a == "--hud-frame") {
             int n = std::atoi(value("--hud-frame"));
             opt.hud_frame = (n < 0) ? 0 : (n > 16 ? 16 : n);
+        } else if (a == "--hud-panel") {
+            opt.hud_panel = value("--hud-panel");
         } else if (a == "--menu-frame") {
             int n = std::atoi(value("--menu-frame"));
-            opt.menu_frame = (n < -1) ? -1 : (n > 16 ? 16 : n);
+            opt.menu_frame = (n < -1) ? -1 : (n > 79 ? 79 : n);
+        } else if (a == "--menu-font") {
+            opt.menu_font = value("--menu-font");
         } else if (a == "--splash") {
             int n = std::atoi(value("--splash"));
             opt.splash = (n < -1) ? -1 : n;
@@ -375,6 +386,8 @@ int main(int argc, char** argv) {
             opt.minimap = true;
         } else if (a == "--center-fish-shot") {
             opt.center_fish_shot = true;
+        } else if (a == "--turtle") {
+            opt.turtle = true;
         } else if (a == "--jill-look") {
             opt.player_look = std::atoi(value("--jill-look"));
         } else if (a == "--jill-colour") {

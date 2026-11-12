@@ -20,27 +20,37 @@ Movement is held; jump and throw are edge-triggered.  Bindings are stored in
 
 ## Front-end menus
 
-`OPTIONS > MENUS` has five rows:
+`OPTIONS > MENUS` has six rows:
 
 | Row | Meaning |
 | --- | --- |
 | STYLE | MODERN or CLASSIC; CLASSIC uses the original frame and shape-7 window |
-| BORDER | THEME, CURRENT, or any installed game's shape entry 7 window; THEME follows the selected THEME |
-| THEME | Backdrop artwork: port, a game intro board, or a pack theme |
+| BORDER | THEME, CURRENT, an installed game's shape entry 7 window, or an external border |
+| THEME | Backdrop artwork: port, a game intro board, or a pack/autoload theme |
 | BACKGROUND | THEME, or LIVE GAME to show the paused game behind a modern menu |
 | SPLASH | AUTO, OFF, or a specific game's start-up splash |
+| FONT | ORIGINAL, or any named external `fonts/<name>` set |
 
 The style is stored as `[menus] classic = 0/1`, the border source as
-`[menus] frame = -1/0/1/2...` (`-1` = THEME), and the live background as
-`[menus] live_background = 0/1`.  They can be started with
-`--classic-menu` / `--modern-menu` / `--menu-frame N` /
-`--live-menu` / `--theme-menu`.  THEME selects the classic backdrop's shape 3
+`[menus] frame = -1/0/1/2...` (`-1` = THEME), the font as `[menus] font`, and
+the live background as `[menus] live_background = 0/1`.  They can be started
+with `--classic-menu` / `--modern-menu` / `--menu-frame N` / `--menu-font NAME`
+/ `--live-menu` / `--theme-menu`.  THEME selects the classic backdrop's shape 3
 frame; BORDER selects the shape 7 window independently unless it is set to
-THEME.
+THEME.  Border values above the installed-game count select named
+`borders/<name>` assets.
 
-`OPTIONS > HUD > FRAME` selects the shape source used by the CLASSIC HUD
-(CURRENT, or another installed game).  It is stored as `[hud] frame` and can
-also be set with `--hud-frame N`.
+`OPTIONS > HUD > PANEL` selects an external HUD panel matching the current
+CLASSIC/MODERN style (ORIGINAL, or any `hud/classic_<name>` /
+`hud/modern_<name>`); it is stored as `[hud] panel` and can be set with
+`--hud-panel NAME`.  `OPTIONS > HUD > FRAME` selects the shape source used by
+the CLASSIC HUD (CURRENT, or another installed game).  It is stored as
+`[hud] frame` and can also be set with `--hud-frame N`.
+
+`OPTIONS > GAMEPLAY > TURTLE MODE` reproduces Jill 3's original TURTLE option:
+the simulation advances at half speed (about 9.1 Hz) while presentation stays
+smooth.  It is stored as `[gameplay] turtle = 0/1` and can be started with
+`--turtle`.
 
 `OPTIONS > VIDEO > MESSAGE BOX` cycles three styles:
 

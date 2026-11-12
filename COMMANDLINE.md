@@ -25,6 +25,8 @@ run.cmd [options]
 | `--external DIR` | External asset directory (default `external`) |
 | `--pack ID` | Mount a pack folder or `.zip` at start-up |
 | `--list-packs` | Print discovered packs and exit |
+| `--hud-panel NAME` | Select a named external HUD panel (empty = default) |
+| `--menu-font NAME` | Select a named external font set |
 | `--episode N` | N-th installed game, 1-based |
 | `--data DIR` | Override the manifest asset directory |
 | `--board NAME` | Board name without extension (default: game start) |
@@ -57,7 +59,7 @@ run.cmd [options]
 | `--modern-menu` | Use the default modern menu layout |
 | `--live-menu` | Keep the live game screen behind the modern menu |
 | `--theme-menu` | Use the theme backdrop behind the modern menu (default) |
-| `--menu-frame N` | Menu border source: -1 = THEME, 0 = current game, N = installed game N |
+| `--menu-frame N` | Menu border source: -1 = THEME, 0 = current game, N = installed game N, above the game list = external border |
 | `--hud-frame N` | Classic HUD frame source: 0 = current game, N = installed game N |
 | `--hud-bg N` | HUD background palette index, `suit` or `vibrant` |
 | `--hud-text N` | HUD label colour palette index (default 7) |
@@ -76,6 +78,7 @@ run.cmd [options]
 | `--fast-dialogs` | Four characters per tick for captions/pages |
 | `--air-jump-buffer` | Keep the original hold-jump-through-a-fall buffer |
 | `--center-fish-shot` | Centre the fish form's shot vertically |
+| `--turtle` | Jill 3-style TURTLE mode: half-speed game logic |
 | `--max-knives N` | Knife cap: 3 or 5 |
 | `--jill-look N` | `0` = game default, `N` = installed game N (Jill Select) |
 | `--jill-colour N` | `0` = look colours, 1..8 = custom suit presets |

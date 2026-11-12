@@ -32,6 +32,18 @@ Only one pack is mounted at a time.
 
 The port creates `external\` automatically if it is missing.
 
+### Autoload
+
+`external\autoload\` is a special folder that is **always active**.  It is not
+listed as a pack and needs no id.  Drop any of the folders described below
+(`sprites\`, `hud\`, `themes\`, `borders\`, `fonts\`, `sfx\`, ...) straight
+into `external\autoload\` and they are applied at start-up, whether or not a
+pack is selected.
+
+When both provide the same relative file, the selected pack wins; otherwise
+the two layers are combined.  This is useful for a personal HUD, font, menu
+border or a handful of sounds without making a full pack.
+
 ---
 
 ## 2. Quick start
@@ -66,8 +78,9 @@ external\MyPack\
   tiles\              per-tile images
   boards\             whole-level backgrounds
   themes\             extra front-end menu backdrops
-  fonts\              text font sheet / single glyphs
-  hud\                HUD panels
+  borders\            extra shape-7 nine-slice menu borders
+  fonts\              text font sets / single glyphs
+  hud\                HUD panels (default and named variants)
   pages\              text-page backgrounds
   portrait.png        optional dialog portrait (64x84)
   sfx\                sampled sound effects
@@ -186,13 +199,21 @@ scaled to 320x200.  The menu dims them with the usual 50% checkerboard.
 
 | File | Replaces |
 | --- | --- |
-| `fonts\main.<ext>` | the whole text font (shape entry 2) |
-| `fonts\glyph_<code>.<ext>` | one character code |
+| `fonts\main.<ext>` | the default 6 px text font (shape entry 2) |
+| `fonts\main_8.<ext>` | the default 8 px font (shape entry 1) |
+| `fonts\<name>.<ext>` | a selectable 6 px font set |
+| `fonts\<name>_8.<ext>` | the 8 px counterpart of that set |
+| `fonts\glyph_<code>.<ext>` | one character code (all fonts) |
 
-`main` is a horizontal strip of up to 128 glyph cells, in ASCII order
+Each sheet is a horizontal strip of up to 128 glyph cells, in ASCII order
 (0..127).  Cell `i` is width/128 of the image (or width/frame-count if the
 original font has fewer frames).  Each cell is rescaled to the original glyph
 size.
+
+`main` is applied automatically and keeps the old behaviour.  Any other name
+appears as a selectable font in `OPTIONS > MENUS > FONT`; selecting a set
+replaces both text banks, falling back to the game's own glyph when a bank is
+not supplied.  The `_8` file is optional.
 
 The glyph image supplies only the shape; the game draws it in the requested
 text colour.  A white-on-transparent sheet is the easiest starting point.
@@ -205,8 +226,10 @@ hard-edged bitmap font gives the cleanest result.
 
 | File | Replaces | Size |
 | --- | --- | --- |
-| `hud\classic.<ext>` | CLASSIC top-left panel | 64x84 |
-| `hud\modern.<ext>` | MODERN top bar | 320x12 |
+| `hud\classic.<ext>` | default CLASSIC top-left panel | 64x84 |
+| `hud\modern.<ext>` | default MODERN top bar | 320x12 |
+| `hud\classic_<name>.<ext>` | extra CLASSIC panel | 64x84 |
+| `hud\modern_<name>.<ext>` | extra MODERN bar | 320x12 |
 
 Images are scaled to those sizes.  Labels, inventory icons, health pips and
 the score are still drawn on top.  Use PNG alpha if you want the game visible
@@ -214,7 +237,28 @@ through parts of the panel.  `hud\classic.<ext>` keeps the legacy 64x84
 top-left placement; without it the engine draws the full classic frame
 (dithered border, title strip, health bar, level/score and inventory).
 
-### 5.7 Text-page art: `pages\`
+Named panels appear in `OPTIONS > HUD > PANEL`, filtered to the current
+CLASSIC/MODERN style.  An unprefixed `hud\<name>.<ext>` is also accepted and
+classified by its aspect ratio (wider than 96 px and at most 20 px tall is a
+MODERN bar, otherwise CLASSIC).  The manifest form is `classic_<name> = file`
+or `modern_<name> = file`.
+
+### 5.7 Menu borders: `borders\`
+
+| File | Replaces |
+| --- | --- |
+| `borders\<name>.<ext>` | one 3x3 nine-slice border sheet |
+| `borders\<name>\<frame>.<ext>` | individual shape-7 frames (1..9) |
+
+A single image is split into a 3x3 grid: top-left/top-middle/top-right,
+middle-left/centre/middle-right, bottom-left/bottom-middle/bottom-right.
+Each cell is scaled to 8x8.  The centre cell is the checkerboard fill; the
+other eight are the border edges and corners.
+
+Named borders appear after the installed games in `OPTIONS > MENUS > BORDER`.
+The manifest form is `[borders] <name> = file`.
+
+### 5.8 Text-page art: `pages\`
 
 | File | Replaces |
 | --- | --- |
@@ -227,7 +271,7 @@ frame is not drawn.
 Formatting inside the page text (colours, line breaks, scrolling) still comes
 from the original `.vcl` data.
 
-### 5.8 Dialog portrait: `portrait.<ext>`
+### 5.9 Dialog portrait: `portrait.<ext>`
 
 | File | Replaces |
 | --- | --- |
@@ -239,7 +283,7 @@ The default is composed from the player's idle sprite (2x inside a frame);
 a pack image replaces it.  Manifest form: `[portrait] file = art/jill.png`.
 Turn it off with `OPTIONS > HUD > PORTRAIT` or `[hud] portrait = 0`.
 
-### 5.9 Sound effects: `sfx\`
+### 5.10 Sound effects: `sfx\`
 
 | File | Replaces |
 | --- | --- |
@@ -250,7 +294,7 @@ Effects are addressed by the original logical-id table, so replacing raw slot
 `1` is heard wherever that sample is used.  The NOISEMAKER screen in
 `OPTIONS > SOUND` auditions raw slots and is handy for finding the right one.
 
-### 5.10 Music: `music\`
+### 5.11 Music: `music\`
 
 | File | Replaces |
 | --- | --- |
@@ -292,11 +336,18 @@ shape_8_16 = art/jill_torso.png
 
 [fonts]
 main = art/font.png
+main_8 = art/font_8.png
+pixel = art/font_pixel.png
 65 = art/a.png
 
 [hud]
 classic = art/panel_classic.png
 modern = art/panel_modern.png
+classic_gold = art/panel_gold.png
+modern_slim = art/bar_slim.png
+
+[borders]
+vine = art/border_vine.png
 
 [pages]
 1 = art/how_to_play.png
@@ -385,9 +436,16 @@ jill.exe --pack MyPack
 jill.exe --game jill1 --board 3 --ticks 1 --pack MyPack --dump shot.ppm
 ```
 
-`--ticks` runs the headless path, which still applies pack art and writes the
-final frame as a binary PPM.  This is the quickest way to check sprite, tile,
-board, HUD, font and text-page overrides.
+`--ticks` runs the headless path, which still applies pack/autoload art and
+writes the final frame as a binary PPM.  This is the quickest way to check
+sprite, tile, board, HUD, font and text-page overrides.
+
+Named HUD panels and font sets can be selected without opening the menus:
+
+```
+jill.exe --game jill1 --board 3 --ticks 1 --hud --hud-panel gold --dump hud.ppm
+jill.exe --game jill1 --board 3 --ticks 1 --menu-font pixel --dump font.ppm
+```
 
 Use a specific text page:
 

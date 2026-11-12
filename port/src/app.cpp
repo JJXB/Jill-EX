@@ -557,6 +557,10 @@ bool apply_selection(Engine& engine, const std::vector<GameDef>& games,
     const bool center_fish = engine.center_fish_shot();
     const int player_look = engine.player_look();
     const int player_suit = engine.player_suit();
+    const std::string hud_panel = engine.hud_panel();
+    const std::string font_name = engine.font_name();
+    const int menu_border_ext = engine.menu_border_ext();
+    const bool turtle = engine.turtle();
     std::string err;
     if (engine.game().id != g.id) {
         Engine fresh;
@@ -564,8 +568,13 @@ bool apply_selection(Engine& engine, const std::vector<GameDef>& games,
             std::fprintf(stderr, "%s: %s\n", g.id.c_str(), err.c_str());
             return false;
         }
+        fresh.adopt_external_state(engine);
         engine = std::move(fresh);
     }
+    engine.set_hud_panel(hud_panel);
+    engine.set_font_name(font_name);
+    engine.set_menu_border_ext(menu_border_ext);
+    engine.set_turtle(turtle);
     engine.set_fast_dialogs(fast_dialogs);
     engine.set_message_box(message_box);
     engine.set_hud_classic(hud);  // camera centre depends on the HUD style
@@ -780,7 +789,10 @@ struct Menu {
     bool classic = false;  // draw menus with the original frame/window art
     bool live_background = false;  // modern menu over the live game screen
     int hud_frame = 0;     // classic HUD art source (0 = current game)
-    int menu_frame = -1;   // border: -1 theme, 0 current, N = game
+    std::string hud_panel;  // external HUD panel name ("" = default)
+    int menu_frame = -1;   // border: -1 theme, 0 current, N = game,
+                           // > games = external border
+    std::string menu_font;  // external font set ("" = game font)
     int main_sel = 0;
     int ep_sel = 0;
     int opt_sel = 0;
@@ -1123,21 +1135,93 @@ int frame_source_next(int src, int step, int game_count) {
     return (v < 0) ? v + n : v;
 }
 
-// Menu BORDER values: -1 = THEME, 0 = CURRENT, 1..N = installed game.
-std::string menu_border_name(int src, const std::vector<GameDef>& games) {
+int external_border_count(const Engine& engine) {
+    const ExternalVisuals* ext = engine.external_visuals();
+    return ext ? static_cast<int>(ext->border_names().size()) : 0;
+}
+
+// Menu BORDER values: -1 = THEME, 0 = CURRENT, 1..N = installed game,
+// N+1..N+B = external `borders/` assets in discovery order.
+std::string menu_border_name(int src, const std::vector<GameDef>& games,
+                             const ExternalVisuals* ext) {
     if (src < 0) {
         return "THEME";
+    }
+    const int game_count = static_cast<int>(games.size());
+    if (src > game_count && ext) {
+        const int i = src - game_count - 1;
+        if (i >= 0 && i < static_cast<int>(ext->border_names().size())) {
+            return upper_ascii(
+                ext->border_names()[static_cast<size_t>(i)].c_str());
+        }
     }
     return frame_source_name(src, games);
 }
 
-int menu_border_next(int src, int step, int game_count) {
-    const int n = game_count + 2;
+int menu_border_next(int src, int step, int game_count, int ext_borders) {
+    const int n = game_count + 2 + ext_borders;
     int v = ((src + 1) + step) % n;
     if (v < 0) {
         v += n;
     }
     return v - 1;
+}
+
+std::string hud_panel_name(const std::string& name) {
+    return name.empty() ? "ORIGINAL" : upper_ascii(name.c_str());
+}
+
+// The HUD list depends on the current style: classic panels are 64x84, modern
+// ones are the full-width bar.
+std::vector<std::string> hud_panel_names(const ExternalVisuals* ext,
+                                         bool classic) {
+    std::vector<std::string> out;
+    if (!ext) {
+        return out;
+    }
+    for (const ExternalHud& h : ext->huds()) {
+        if (h.classic == classic) {
+            out.push_back(h.name);
+        }
+    }
+    return out;
+}
+
+std::string hud_panel_next(const std::string& current, bool classic,
+                           const ExternalVisuals* ext) {
+    std::vector<std::string> names = hud_panel_names(ext, classic);
+    if (names.empty()) {
+        return std::string();
+    }
+    int idx = -1;
+    for (size_t i = 0; i < names.size(); ++i) {
+        if (names[i] == current) {
+            idx = static_cast<int>(i);
+            break;
+        }
+    }
+    idx = (idx + 1) % static_cast<int>(names.size() + 1);
+    return idx == 0 ? std::string() : names[static_cast<size_t>(idx - 1)];
+}
+
+std::string font_name_next(const std::string& current,
+                           const ExternalVisuals* ext) {
+    const int count =
+        ext ? static_cast<int>(ext->font_names().size()) : 0;
+    int idx = -1;
+    for (int i = 0; i < count; ++i) {
+        if (ext->font_names()[static_cast<size_t>(i)] == current) {
+            idx = i;
+            break;
+        }
+    }
+    idx = (idx + 1) % (count + 1);
+    return idx == 0 ? std::string()
+                    : ext->font_names()[static_cast<size_t>(idx - 1)];
+}
+
+std::string font_name(const std::string& name) {
+    return name.empty() ? "ORIGINAL" : upper_ascii(name.c_str());
 }
 
 const GameDef* frame_source_game(int src,
@@ -1174,11 +1258,13 @@ bool apply_theme_frame(Engine& engine, const std::vector<GameDef>& games,
 
 bool apply_menu_frame(Engine& engine, const std::vector<GameDef>& games,
                       int src, int theme) {
+    const int game_count = static_cast<int>(games.size());
+    engine.set_menu_border_ext(src > game_count ? src - game_count - 1 : -1);
     const GameDef* g = nullptr;
     if (src < 0) {
         // BORDER = THEME follows the selected menu theme's game (plain/external
         // themes fall back to the running game's shape 7).
-        if (theme >= 1 && theme <= static_cast<int>(games.size())) {
+        if (theme >= 1 && theme <= game_count) {
             g = &games[static_cast<size_t>(theme - 1)];
         }
     } else {
@@ -1278,6 +1364,8 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                         hud_health_name(engine.hud_health()),
                     std::string("PORTRAIT: ") +
                         (engine.hud_portrait() ? "ON" : "OFF"),
+                    std::string("PANEL: ") +
+                        hud_panel_name(m.hud_panel),
                     std::string("FRAME: ") +
                         frame_source_name(m.hud_frame, games),
                     "BACK"};
@@ -1285,13 +1373,15 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
             return {std::string("STYLE: ") +
                         (m.classic ? "CLASSIC" : "MODERN"),
                     std::string("BORDER: ") +
-                        menu_border_name(m.menu_frame, games),
+                        menu_border_name(m.menu_frame, games,
+                                         engine.external_visuals()),
                     std::string("THEME: ") +
                         menu_theme_name(engine.menu_theme(), games,
                                         engine.external_visuals()),
                     std::string("BACKGROUND: ") +
                         (m.live_background ? "LIVE GAME" : "THEME"),
                     std::string("SPLASH: ") + splash_name(video.splash, games),
+                    std::string("FONT: ") + font_name(m.menu_font),
                     "BACK"};
         case MenuScreen::Controls: {
             std::vector<std::string> v;
@@ -1392,6 +1482,8 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                         player_look_name(games, engine.player_look()),
                     std::string("JILL COLOUR: ") +
                         player_suit_name(engine.player_suit()),
+                    std::string("TURTLE MODE: ") +
+                        (engine.turtle() ? "ON" : "OFF"),
                     "BACK"};
         case MenuScreen::Noisemaker: {
             std::string set = "SET: ";
@@ -1420,10 +1512,13 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
         }
         case MenuScreen::Assets: {
             std::vector<std::string> v;
-            v.push_back(std::string("PACK: ") +
-                        (assets.mounted()
-                             ? upper_ascii(assets.active()->name.c_str())
-                             : "ORIGINAL ART"));
+            std::string pack_label = "ORIGINAL ART";
+            if (assets.active()) {
+                pack_label = upper_ascii(assets.active()->name.c_str());
+            } else if (assets.autoload()) {
+                pack_label = "AUTOLOAD";
+            }
+            v.push_back(std::string("PACK: ") + pack_label);
             for (const PackInfo& p : assets.packs()) {
                 const bool active =
                     assets.active() && assets.active()->id == p.id;
@@ -2287,6 +2382,10 @@ bool start_game(Engine& engine, const std::vector<GameDef>& games, int index,
     const bool center_fish = engine.center_fish_shot();
     const int player_look = engine.player_look();
     const int player_suit = engine.player_suit();
+    const std::string hud_panel = engine.hud_panel();
+    const std::string font_name = engine.font_name();
+    const int menu_border_ext = engine.menu_border_ext();
+    const bool turtle = engine.turtle();
     std::string err;
     if (engine.game().id != g.id) {
         Engine fresh;
@@ -2294,8 +2393,13 @@ bool start_game(Engine& engine, const std::vector<GameDef>& games, int index,
             std::fprintf(stderr, "%s: %s\n", g.id.c_str(), err.c_str());
             return false;
         }
+        fresh.adopt_external_state(engine);
         engine = std::move(fresh);
     }
+    engine.set_hud_panel(hud_panel);
+    engine.set_font_name(font_name);
+    engine.set_menu_border_ext(menu_border_ext);
+    engine.set_turtle(turtle);
     engine.set_fast_dialogs(fast_dialogs);
     engine.set_message_box(message_box);
     engine.set_hud_classic(hud);  // camera centre depends on the HUD style
@@ -2404,7 +2508,12 @@ int run_sdl(const Options& opt, Engine& engine,
     menu.classic = opt.classic_menu;
     menu.live_background = opt.live_menu_bg;
     menu.hud_frame = opt.hud_frame;
+    menu.hud_panel = opt.hud_panel;
     menu.menu_frame = opt.menu_frame;
+    menu.menu_font = opt.menu_font;
+    engine.set_hud_panel(menu.hud_panel);
+    engine.set_font_name(menu.menu_font);
+    engine.set_turtle(opt.turtle);
     menu.music_on = opt.music;
     menu.music_volume = std::max(0, std::min(100, opt.music_volume));
     menu.sfx_on = opt.sfx;
@@ -2677,7 +2786,8 @@ int run_sdl(const Options& opt, Engine& engine,
             }
             if (used > 0) {
                 std::printf("external: %d effect override(s) from %s\n", used,
-                            ext_assets.active()->name.c_str());
+                            ext_assets.active() ? ext_assets.active()->name.c_str()
+                                                : "autoload");
             }
         }
         music_player.set_sfx_overrides(overrides);
@@ -2685,8 +2795,9 @@ int run_sdl(const Options& opt, Engine& engine,
     auto refresh_external_visuals = [&]() {
         if (ext_assets.mounted()) {
             if (!engine.apply_external(ext_assets, palette)) {
-                std::fprintf(stderr, "external: pack '%s' has no usable art\n",
-                             ext_assets.active()->name.c_str());
+                std::fprintf(stderr, "external: %s has no usable art\n",
+                             ext_assets.active() ? ext_assets.active()->name.c_str()
+                                                 : "autoload");
             }
         } else {
             engine.apply_external(ext_assets, palette);  // clears overrides
@@ -2814,6 +2925,11 @@ int run_sdl(const Options& opt, Engine& engine,
             } else if (menu.screen == MenuScreen::Hud && sel == 4) {
                 engine.set_hud_portrait(!engine.hud_portrait());
             } else if (menu.screen == MenuScreen::Hud && sel == 5) {
+                menu.hud_panel = hud_panel_next(
+                    engine.hud_panel(), engine.hud_classic(),
+                    engine.external_visuals());
+                engine.set_hud_panel(menu.hud_panel);
+            } else if (menu.screen == MenuScreen::Hud && sel == 6) {
                 menu.hud_frame = frame_source_next(
                     menu.hud_frame, 1, static_cast<int>(games.size()));
                 apply_hud_frame(engine, games, menu.hud_frame);
@@ -2821,7 +2937,8 @@ int run_sdl(const Options& opt, Engine& engine,
                 menu.classic = !menu.classic;
             } else if (menu.screen == MenuScreen::Menus && sel == 1) {
                 menu.menu_frame = menu_border_next(
-                    menu.menu_frame, 1, static_cast<int>(games.size()));
+                    menu.menu_frame, 1, static_cast<int>(games.size()),
+                    external_border_count(engine));
                 apply_menu_frame(engine, games, menu.menu_frame,
                                  engine.menu_theme());
             } else if (menu.screen == MenuScreen::Menus && sel == 2) {
@@ -2837,6 +2954,10 @@ int run_sdl(const Options& opt, Engine& engine,
                 menu.live_background = !menu.live_background;
             } else if (menu.screen == MenuScreen::Menus && sel == 4) {
                 video.splash = splash_next(video.splash, 1, games);
+            } else if (menu.screen == MenuScreen::Menus && sel == 5) {
+                menu.menu_font = font_name_next(
+                    engine.font_name(), engine.external_visuals());
+                engine.set_font_name(menu.menu_font);
             } else if (menu.screen == MenuScreen::Enhancements && sel == 0) {
                 engine.set_fire_while_crouched(!engine.fire_while_crouched());
             } else if (menu.screen == MenuScreen::Enhancements && sel == 1) {
@@ -2863,6 +2984,8 @@ int run_sdl(const Options& opt, Engine& engine,
                     suit = 0;
                 }
                 engine.set_player_suit(suit);
+            } else if (menu.screen == MenuScreen::Enhancements && sel == 9) {
+                engine.set_turtle(!engine.turtle());
             }
         };
         auto video_step = [&](int delta) {
@@ -3150,21 +3273,22 @@ int run_sdl(const Options& opt, Engine& engine,
                 }
                 break;
             case MenuScreen::Hud:
-                if (nav == 5 && sel == 6) {
+                if (nav == 5 && sel == 7) {
                     menu.screen = MenuScreen::Options;
-                } else if (sel >= 0 && sel <= 5) {
+                } else if (sel >= 0 && sel <= 6) {
                     toggle_option();
                 }
                 break;
             case MenuScreen::Menus:
-                if (nav == 5 && sel == 5) {
+                if (nav == 5 && sel == 6) {
                     menu.screen = MenuScreen::Options;
                 } else if (sel == 0 && (nav == 5 || nav == 3 || nav == 4)) {
                     menu.classic = !menu.classic;
                 } else if (sel == 1 && (nav == 3 || nav == 4)) {
                     menu.menu_frame = menu_border_next(
                         menu.menu_frame, nav == 3 ? -1 : 1,
-                        static_cast<int>(games.size()));
+                        static_cast<int>(games.size()),
+                        external_border_count(engine));
                     apply_menu_frame(engine, games, menu.menu_frame,
                                      engine.menu_theme());
                 } else if (sel == 2 && (nav == 3 || nav == 4)) {
@@ -3182,6 +3306,10 @@ int run_sdl(const Options& opt, Engine& engine,
                 } else if (sel == 4 && (nav == 5 || nav == 3 || nav == 4)) {
                     video.splash = splash_next(video.splash,
                                                nav == 3 ? -1 : 1, games);
+                } else if (sel == 5 && (nav == 3 || nav == 4)) {
+                    menu.menu_font = font_name_next(
+                        engine.font_name(), engine.external_visuals());
+                    engine.set_font_name(menu.menu_font);
                 }
                 break;
             case MenuScreen::Controls:
@@ -3326,7 +3454,7 @@ int run_sdl(const Options& opt, Engine& engine,
                 break;
             }
             case MenuScreen::Enhancements:
-                if (nav == 5 && sel == 9) {
+                if (nav == 5 && sel == 10) {
                     menu.screen = MenuScreen::Options;
                 } else {
                     toggle_option();
@@ -3879,6 +4007,7 @@ int run_sdl(const Options& opt, Engine& engine,
         ini.set_bool("hud", "classic", engine.hud_classic());
         ini.set_bool("hud", "portrait", engine.hud_portrait());
         ini.set_int("hud", "frame", menu.hud_frame);
+        ini.set("hud", "panel", engine.hud_panel());
         std::string bg_name;
         if (engine.hud_bg() == -2) {
             bg_name = "suit";
@@ -3903,12 +4032,14 @@ int run_sdl(const Options& opt, Engine& engine,
         ini.set_bool("gameplay", "air_jump_buffer", engine.air_jump_buffer());
         ini.set_bool("gameplay", "minimap", engine.minimap());
         ini.set_bool("gameplay", "center_fish_shot", engine.center_fish_shot());
+        ini.set_bool("gameplay", "turtle", engine.turtle());
         ini.set_int("gameplay", "player_look", engine.player_look());
         ini.set_int("gameplay", "player_suit", engine.player_suit());
         ini.set_int("gameplay", "menu_theme", engine.menu_theme());
         ini.set_bool("menus", "classic", menu.classic);
         ini.set_bool("menus", "live_background", menu.live_background);
         ini.set_int("menus", "frame", menu.menu_frame);
+        ini.set("menus", "font", engine.font_name());
         game_bindings[bindings_game] = bindings;
         save_bindings_ini(ini, base_bindings);
         for (const auto& kv : game_bindings) {
@@ -3983,6 +4114,10 @@ int run_app(const Options& opt) {
         }
         std::printf("%s: %d pack(s)\n", opt.external_dir.c_str(),
                     static_cast<int>(assets.packs().size()));
+        if (assets.autoload()) {
+            std::printf("%-24s %-8s %s\n", "autoload", "folder",
+                        assets.autoload_root().c_str());
+        }
         for (const PackInfo& p : assets.packs()) {
             std::printf("%-24s %-8s %s\n", p.id.c_str(),
                         p.is_zip ? "zip" : "folder", p.path.c_str());
@@ -4057,8 +4192,10 @@ int run_app(const Options& opt) {
     run_opt.menu_theme = std::min(opt.menu_theme, static_cast<int>(games.size()));
     run_opt.hud_frame =
         std::min(opt.hud_frame, static_cast<int>(games.size()));
+    // External borders are addressed after the installed games, so the upper
+    // bound is deliberately generous; apply_menu_frame ignores stale indices.
     run_opt.menu_frame =
-        std::max(-1, std::min(opt.menu_frame, static_cast<int>(games.size())));
+        std::max(-1, std::min(opt.menu_frame, static_cast<int>(games.size()) + 63));
     if (opt.resolution_w > 0) {
         run_opt.resolution = match_resolution(opt.resolution_w, opt.resolution_h);
     }
@@ -4089,6 +4226,38 @@ int run_app(const Options& opt) {
     engine.set_hud_health(opt.hud_health);
     apply_hud_frame(engine, games, run_opt.hud_frame);
     apply_theme_frame(engine, games, run_opt.menu_theme);
+    engine.set_hud_panel(run_opt.hud_panel);
+    engine.set_font_name(run_opt.menu_font);
+    engine.set_turtle(run_opt.turtle);
+    // External art (pack + autoload) must be mounted before the menu border
+    // selection is resolved; headless --dump then uses the same overrides.
+    ExternalAssets headless_assets;
+    {
+        std::string ext_err;
+        if (headless_assets.scan(opt.external_dir, ext_err)) {
+            if (!opt.pack.empty()) {
+                const int index = headless_assets.find(opt.pack);
+                if (index < 0) {
+                    std::fprintf(stderr, "external: pack '%s' not found\n",
+                                 opt.pack.c_str());
+                } else if (!headless_assets.mount(index, ext_err)) {
+                    std::fprintf(stderr, "external: %s\n", ext_err.c_str());
+                }
+            }
+            if (headless_assets.mounted()) {
+                uint8_t ext_palette[768];
+                load_palette(game.palette, ext_palette);
+                if (engine.apply_external(headless_assets, ext_palette)) {
+                    std::printf("external: mounted %s\n",
+                                headless_assets.active()
+                                    ? headless_assets.active()->name.c_str()
+                                    : "autoload");
+                }
+            }
+        } else {
+            std::fprintf(stderr, "%s\n", ext_err.c_str());
+        }
+    }
     apply_menu_frame(engine, games, run_opt.menu_frame, run_opt.menu_theme);
     std::string board = opt.board.empty() ? game.first_board : opt.board;
     if (!engine.load_board(board, err)) {
@@ -4096,28 +4265,6 @@ int run_app(const Options& opt) {
         std::fprintf(stderr, "data dir: %s (use --data to point at the game files)\n",
                      game.data_dir.c_str());
         return 2;
-    }
-    // Headless runs honour --pack too, so --dump can compare pack art.
-    ExternalAssets headless_assets;
-    if (opt.ticks > 0 && !opt.pack.empty()) {
-        std::string ext_err;
-        if (headless_assets.scan(opt.external_dir, ext_err)) {
-            const int index = headless_assets.find(opt.pack);
-            if (index < 0) {
-                std::fprintf(stderr, "external: pack '%s' not found\n",
-                             opt.pack.c_str());
-            } else if (!headless_assets.mount(index, ext_err)) {
-                std::fprintf(stderr, "external: %s\n", ext_err.c_str());
-            } else {
-                uint8_t ext_palette[768];
-                load_palette(game.palette, ext_palette);
-                engine.apply_external(headless_assets, ext_palette);
-                std::printf("external: mounted %s\n",
-                            headless_assets.active()->name.c_str());
-            }
-        } else {
-            std::fprintf(stderr, "%s\n", ext_err.c_str());
-        }
     }
     for (int i = 0; i < opt.items; ++i) {
         engine.add_item(2);  // debug: knives

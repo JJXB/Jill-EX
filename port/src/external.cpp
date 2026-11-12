@@ -184,6 +184,18 @@ std::string zip_error(mz_zip_archive* z) {
     return mz_zip_get_error_string(mz_zip_get_last_error(z));
 }
 
+// Add every entry of `src` that `dst` does not already define.  Autoload is
+// the base layer; the mounted pack overrides it key by key.
+void merge_manifest(const IniFile& src, IniFile& dst) {
+    for (const std::string& section : src.sections()) {
+        for (const auto& kv : src.section(section)) {
+            if (dst.get(section, kv.first).empty()) {
+                dst.set(section, kv.first, kv.second);
+            }
+        }
+    }
+}
+
 }  // namespace
 
 const std::vector<std::string>& ExternalAssets::image_exts() {
@@ -208,6 +220,31 @@ bool ExternalAssets::scan(const std::string& base, std::string& err) {
         err = "cannot create " + base + ": " + ec.message();
         return false;
     }
+    // `autoload` is never a selectable pack: its files are always mounted
+    // underneath whichever pack is active.
+    autoload_root_ = (fs::path(base) / "autoload").string();
+    fs::create_directories(autoload_root_, ec);
+    autoload_ = false;
+    if (fs::is_directory(autoload_root_, ec)) {
+        for (const auto& e : fs::recursive_directory_iterator(autoload_root_,
+                                                              ec)) {
+            if (e.is_regular_file()) {
+                autoload_ = true;
+                break;
+            }
+        }
+    }
+    autoload_manifest_ = IniFile{};
+    manifest_ = IniFile{};
+    if (autoload_) {
+        std::vector<uint8_t> data;
+        std::string merr;
+        if (read_autoload("pack.ini", data)) {
+            autoload_manifest_.parse(std::string(data.begin(), data.end()),
+                                      autoload_root_ + ":pack.ini", merr);
+        }
+        manifest_ = autoload_manifest_;
+    }
     std::vector<fs::directory_entry> entries;
     for (const auto& e : fs::directory_iterator(base, ec)) {
         entries.push_back(e);
@@ -225,6 +262,9 @@ bool ExternalAssets::scan(const std::string& base, std::string& err) {
         std::error_code entry_ec;
         PackInfo p;
         p.path = e.path().string();
+        if (lower(e.path().filename().string()) == "autoload") {
+            continue;
+        }
         if (e.is_directory(entry_ec)) {
             p.id = e.path().filename().string();
             p.name = p.id;
@@ -292,16 +332,28 @@ bool ExternalAssets::mount(int index, std::string& err) {
             zip_names_[norm_rel(st.m_filename)] = st.m_filename;
         }
     }
+    manifest_ = autoload_manifest_;
     std::string merr;
     std::vector<uint8_t> data;
-    if (read("pack.ini", data)) {
-        manifest_.parse(std::string(data.begin(), data.end()), p.path + ":pack.ini",
-                        merr);
-        const std::string name = manifest_.get("pack", "name");
+    bool pack_has_manifest = false;
+    if (p.is_zip) {
+        pack_has_manifest = zip_names_.find("pack.ini") != zip_names_.end();
+    } else {
+        std::error_code ec;
+        pack_has_manifest =
+            fs::is_regular_file(fs::path(p.path) / "pack.ini", ec);
+    }
+    if (pack_has_manifest && read("pack.ini", data)) {
+        IniFile pack_manifest;
+        pack_manifest.parse(std::string(data.begin(), data.end()),
+                            p.path + ":pack.ini", merr);
+        merge_manifest(pack_manifest, manifest_);
+        const std::string name = pack_manifest.get("pack", "name");
         if (!name.empty()) {
             packs_[static_cast<size_t>(index)].name = name;
         }
-        packs_[static_cast<size_t>(index)].game = manifest_.get("pack", "game");
+        packs_[static_cast<size_t>(index)].game =
+            pack_manifest.get("pack", "game");
     }
     return true;
 }
@@ -315,52 +367,61 @@ void ExternalAssets::unmount() {
     zip_open_ = false;
     zip_data_.clear();
     zip_names_.clear();
-    manifest_ = IniFile{};
+    manifest_ = autoload_manifest_;
     active_ = -1;
 }
 
 bool ExternalAssets::has(const std::string& rel) const {
-    if (!mounted()) {
-        return false;
-    }
     const std::string key = norm_rel(rel);
-    if (zip_open_) {
-        return zip_names_.find(key) != zip_names_.end();
+    if (active_ >= 0) {
+        if (zip_open_) {
+            if (zip_names_.find(key) != zip_names_.end()) {
+                return true;
+            }
+        } else if (active() != nullptr) {
+            std::error_code ec;
+            if (fs::is_regular_file(fs::path(active()->path) / rel, ec)) {
+                return true;
+            }
+        }
     }
-    if (active() == nullptr) {
+    if (!autoload_) {
         return false;
     }
     std::error_code ec;
-    return fs::is_regular_file(fs::path(active()->path) / rel, ec);
+    return fs::is_regular_file(fs::path(autoload_root_) / rel, ec);
 }
 
 bool ExternalAssets::read(const std::string& rel,
                           std::vector<uint8_t>& out) const {
     out.clear();
-    if (!mounted()) {
-        return false;
+    if (active_ >= 0) {
+        if (zip_open_) {
+            const std::string key = norm_rel(rel);
+            auto it = zip_names_.find(key);
+            if (it != zip_names_.end()) {
+                auto* z = static_cast<mz_zip_archive*>(zip_);
+                const int idx =
+                    mz_zip_reader_locate_file(z, it->second.c_str(), nullptr, 0);
+                if (idx >= 0) {
+                    mz_zip_archive_file_stat st;
+                    if (mz_zip_reader_file_stat(z, static_cast<mz_uint>(idx),
+                                                &st)) {
+                        out.resize(static_cast<size_t>(st.m_uncomp_size));
+                        if (out.empty() ||
+                            mz_zip_reader_extract_to_mem(
+                                z, static_cast<mz_uint>(idx), out.data(),
+                                out.size(), 0) != 0) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        } else if (read_folder(rel, out)) {
+            return true;
+        }
     }
-    const std::string key = norm_rel(rel);
-    if (zip_open_) {
-        auto it = zip_names_.find(key);
-        if (it == zip_names_.end()) {
-            return false;
-        }
-        auto* z = static_cast<mz_zip_archive*>(zip_);
-        const int idx = mz_zip_reader_locate_file(z, it->second.c_str(), nullptr, 0);
-        if (idx < 0) {
-            return false;
-        }
-        mz_zip_archive_file_stat st;
-        if (!mz_zip_reader_file_stat(z, static_cast<mz_uint>(idx), &st)) {
-            return false;
-        }
-        out.resize(static_cast<size_t>(st.m_uncomp_size));
-        return out.empty() ||
-               mz_zip_reader_extract_to_mem(z, static_cast<mz_uint>(idx),
-                                            out.data(), out.size(), 0) != 0;
-    }
-    return read_folder(rel, out);
+    return read_autoload(rel, out);
 }
 
 bool ExternalAssets::read_folder(const std::string& rel,
@@ -379,31 +440,52 @@ bool ExternalAssets::read_folder(const std::string& rel,
     return true;
 }
 
+bool ExternalAssets::read_autoload(const std::string& rel,
+                                   std::vector<uint8_t>& out) const {
+    out.clear();
+    if (!autoload_) {
+        return false;
+    }
+    std::ifstream in(fs::path(autoload_root_) / rel, std::ios::binary);
+    if (!in) {
+        return false;
+    }
+    out.assign(std::istreambuf_iterator<char>(in),
+               std::istreambuf_iterator<char>());
+    return true;
+}
+
 std::vector<std::string> ExternalAssets::files(const std::string& prefix) const {
     std::vector<std::string> out;
-    if (!mounted()) {
-        return out;
-    }
     const std::string want = norm_rel(prefix);
-    if (zip_open_) {
-        for (const auto& kv : zip_names_) {
-            if (kv.first.compare(0, want.size(), want) == 0) {
-                out.push_back(kv.first);
-            }
-        }
-    } else if (const PackInfo* p = active()) {
+    auto add_folder = [&](const std::string& root) {
         std::error_code ec;
-        const fs::path dir = fs::path(p->path) / prefix;
-        if (fs::is_directory(dir, ec)) {
-            for (const auto& e : fs::recursive_directory_iterator(dir, ec)) {
-                if (!e.is_regular_file()) {
-                    continue;
-                }
-                std::string rel = fs::relative(e.path(), p->path).string();
-                std::replace(rel.begin(), rel.end(), '\\', '/');
-                out.push_back(lower(rel));
-            }
+        const fs::path dir = fs::path(root) / prefix;
+        if (!fs::is_directory(dir, ec)) {
+            return;
         }
+        for (const auto& e : fs::recursive_directory_iterator(dir, ec)) {
+            if (!e.is_regular_file()) {
+                continue;
+            }
+            std::string rel = fs::relative(e.path(), root).string();
+            std::replace(rel.begin(), rel.end(), '\\', '/');
+            out.push_back(lower(rel));
+        }
+    };
+    if (active_ >= 0) {
+        if (zip_open_) {
+            for (const auto& kv : zip_names_) {
+                if (kv.first.compare(0, want.size(), want) == 0) {
+                    out.push_back(kv.first);
+                }
+            }
+        } else if (const PackInfo* p = active()) {
+            add_folder(p->path);
+        }
+    }
+    if (autoload_) {
+        add_folder(autoload_root_);
     }
     std::sort(out.begin(), out.end());
     out.erase(std::unique(out.begin(), out.end()), out.end());
@@ -502,6 +584,11 @@ void ExternalVisuals::clear() {
     hud_modern_ = ExternalPicture{};
     has_hud_classic_ = false;
     has_hud_modern_ = false;
+    huds_.clear();
+    borders_.clear();
+    border_names_.clear();
+    fonts_.clear();
+    font_names_.clear();
     portrait_ = ExternalPicture{};
     has_portrait_ = false;
     pages_.clear();
@@ -516,6 +603,45 @@ const std::vector<uint8_t>* ExternalVisuals::board(
     const std::string& name) const {
     auto it = boards_.find(lower(name));
     return it == boards_.end() ? nullptr : &it->second;
+}
+
+const ExternalPicture* ExternalVisuals::hud(const std::string& name,
+                                            bool classic) const {
+    if (name.empty()) {
+        return classic ? hud_classic() : hud_modern();
+    }
+    const std::string want = lower(name);
+    for (const ExternalHud& h : huds_) {
+        if (h.classic == classic && h.name == want) {
+            return &h.picture;
+        }
+    }
+    return nullptr;
+}
+
+const ShapeFrame* ExternalVisuals::border_shape(int index, int frame) const {
+    if (index < 0 || index >= static_cast<int>(borders_.size())) {
+        return nullptr;
+    }
+    const auto& m = borders_[static_cast<size_t>(index)].frames;
+    auto it = m.find(frame);
+    return it == m.end() ? nullptr : &it->second;
+}
+
+const ShapeFrame* ExternalVisuals::font_shape(const std::string& name, int entry,
+                                              int code) const {
+    if (name.empty()) {
+        return nullptr;
+    }
+    const std::string want = lower(name);
+    for (const ExternalFont& f : fonts_) {
+        if (f.name != want) {
+            continue;
+        }
+        auto it = f.frames.find((entry << 8) | (code & 0xFF));
+        return it == f.frames.end() ? nullptr : &it->second;
+    }
+    return nullptr;
 }
 
 namespace {
@@ -631,12 +757,19 @@ bool add_picture(ExternalAssets& ext, const uint8_t palette[768], PaletteMap& pm
 
 bool add_overlay(ExternalAssets& ext, const uint8_t palette[768],
                  PaletteMap& pm, const std::string& rel, int w, int h,
-                 ExternalPicture& out) {
+                 ExternalPicture& out, int* src_w = nullptr,
+                 int* src_h = nullptr) {
     ExternalImage img;
     std::string err;
     if (!ext.load_image(rel, img, err)) {
         std::fprintf(stderr, "external: %s\n", err.c_str());
         return false;
+    }
+    if (src_w) {
+        *src_w = img.w;
+    }
+    if (src_h) {
+        *src_h = img.h;
     }
     std::vector<uint8_t> scaled;
     resize_rgba(img.rgba.data(), img.w, img.h, scaled, w, h);
@@ -673,10 +806,10 @@ void add_font_glyph(ExternalAssets& ext, ShapeBank& shapes,
 }
 
 void add_font_sheet(ExternalAssets& ext, ShapeBank& shapes,
-                    const uint8_t palette[768], PaletteMap& pm,
+                    const uint8_t palette[768], PaletteMap& pm, int entry,
                     const std::string& rel,
                     std::unordered_map<int, ShapeFrame>& out) {
-    const ShapeEntry* e = shapes.entry(2);
+    const ShapeEntry* e = shapes.entry(entry);
     if (!e || e->frames.empty()) {
         return;
     }
@@ -690,7 +823,7 @@ void add_font_sheet(ExternalAssets& ext, ShapeBank& shapes,
     if (n == 1) {
         ShapeFrame f;
         if (make_frame(img, e->frames[0].w, e->frames[0].h, palette, pm, f)) {
-            out[(2 << 8) | 0] = std::move(f);
+            out[(entry << 8) | 0] = std::move(f);
         }
         return;
     }
@@ -712,9 +845,128 @@ void add_font_sheet(ExternalAssets& ext, ShapeBank& shapes,
         ShapeFrame f;
         if (make_frame(sub, e->frames[static_cast<size_t>(i)].w,
                        e->frames[static_cast<size_t>(i)].h, palette, pm, f)) {
-            out[(2 << 8) | i] = std::move(f);
+            out[(entry << 8) | i] = std::move(f);
         }
     }
+}
+
+void set_hud(std::vector<ExternalHud>& huds, const std::string& name,
+             bool classic, ExternalPicture pic) {
+    const std::string key = lower(name);
+    for (ExternalHud& h : huds) {
+        if (h.classic == classic && h.name == key) {
+            h.picture = std::move(pic);
+            return;
+        }
+    }
+    huds.push_back(ExternalHud{key, classic, std::move(pic)});
+}
+
+ExternalImage crop_image(const ExternalImage& src, int x, int y, int w, int h) {
+    ExternalImage out;
+    out.w = w;
+    out.h = h;
+    if (w <= 0 || h <= 0) {
+        return out;
+    }
+    out.rgba.assign(static_cast<size_t>(w) * h * 4, 0);
+    for (int sy = 0; sy < h; ++sy) {
+        const int src_y = y + sy;
+        if (src_y < 0 || src_y >= src.h) {
+            continue;
+        }
+        for (int sx = 0; sx < w; ++sx) {
+            const int src_x = x + sx;
+            if (src_x < 0 || src_x >= src.w) {
+                continue;
+            }
+            std::memcpy(out.rgba.data() + (static_cast<size_t>(sy) * w + sx) * 4,
+                        src.rgba.data() +
+                            (static_cast<size_t>(src_y) * src.w + src_x) * 4,
+                        4);
+        }
+    }
+    return out;
+}
+
+void set_border(std::vector<ExternalBorder>& borders,
+                std::vector<std::string>& names, const std::string& name,
+                ExternalBorder border) {
+    const std::string key = lower(name);
+    border.name = key;
+    for (ExternalBorder& b : borders) {
+        if (b.name == key) {
+            b = std::move(border);
+            return;
+        }
+    }
+    borders.push_back(std::move(border));
+    names.push_back(key);
+}
+
+// A border sheet is a 3x3 grid of cells.  Cell (0,0)..(2,2) map onto shape
+// entry 7's frames in the original scan order, with the centre as the fill.
+void add_border_sheet(ExternalAssets& ext, const uint8_t palette[768],
+                      PaletteMap& pm, const std::string& rel,
+                      const std::string& name,
+                      std::vector<ExternalBorder>& borders,
+                      std::vector<std::string>& names) {
+    ExternalImage img;
+    std::string err;
+    if (!ext.load_image(rel, img, err)) {
+        std::fprintf(stderr, "external: %s\n", err.c_str());
+        return;
+    }
+    if (img.w < 3 || img.h < 3) {
+        return;
+    }
+    static const int kMap[3][3] = {{1, 2, 3}, {4, 9, 5}, {6, 7, 8}};
+    ExternalBorder border;
+    const int cw = img.w / 3;
+    const int ch = img.h / 3;
+    for (int row = 0; row < 3; ++row) {
+        for (int col = 0; col < 3; ++col) {
+            ExternalImage cell =
+                crop_image(img, col * cw, row * ch, cw, ch);
+            ShapeFrame f;
+            if (!make_frame(cell, 8, 8, palette, pm, f)) {
+                continue;
+            }
+            border.frames[kMap[row][col]] = std::move(f);
+        }
+    }
+    if (!border.frames.empty()) {
+        set_border(borders, names, name, std::move(border));
+    }
+}
+
+void add_border_frame(ExternalAssets& ext, const uint8_t palette[768],
+                      PaletteMap& pm, const std::string& rel,
+                      const std::string& name, int frame,
+                      std::vector<ExternalBorder>& borders,
+                      std::vector<std::string>& names) {
+    ExternalImage img;
+    std::string err;
+    if (!ext.load_image(rel, img, err)) {
+        std::fprintf(stderr, "external: %s\n", err.c_str());
+        return;
+    }
+    ShapeFrame f;
+    if (!make_frame(img, 8, 8, palette, pm, f)) {
+        return;
+    }
+    const std::string key = lower(name);
+    for (ExternalBorder& b : borders) {
+        if (b.name == key) {
+            b.frames[frame] = std::move(f);
+            return;
+        }
+    }
+    ExternalBorder border;
+    border.name = key;
+    border.frames[frame] = std::move(f);
+    borders.push_back(std::move(border));
+    names.push_back(key);
 }
 
 }  // namespace
@@ -846,37 +1098,114 @@ bool ExternalVisuals::build(const ExternalAssets& ext, ShapeBank& shapes,
         }
     }
     // Fonts: `fonts/main.<ext>` replaces the whole 6x? text glyph bank (shape
-    // entry 2), split horizontally like a kind sheet.  `fonts/glyph_<code>`
-    // replaces one character.
+    // entry 2), split horizontally like a kind sheet.  `fonts/<name>.<ext>`
+    // adds a selectable 6 px set, `fonts/<name>_8.<ext>` its 8 px counterpart.
+    // `fonts/glyph_<code>` replaces one character globally.
+    auto font_set = [&](const std::string& name) -> ExternalFont& {
+        const std::string key = lower(name);
+        for (ExternalFont& f : fonts_) {
+            if (f.name == key) {
+                return f;
+            }
+        }
+        fonts_.push_back(ExternalFont{key, {}});
+        if (key != "main" && key != "font") {
+            font_names_.push_back(key);
+        }
+        return fonts_.back();
+    };
+    auto add_font_auto = [&](const std::string& rel) {
+        const std::string stem = stem_of(rel);
+        long code = 0;
+        if (stem.rfind("glyph_", 0) == 0 &&
+            parse_int(stem.substr(6), code)) {
+            add_font_glyph(mutable_ext, shapes, palette, pm,
+                           static_cast<int>(code), rel, shapes_);
+            return;
+        }
+        int entry = 2;
+        std::string name = stem;
+        if (name.size() > 2 && name.compare(name.size() - 2, 2, "_8") == 0) {
+            entry = 1;
+            name.resize(name.size() - 2);
+        }
+        if (name == "main" || name == "font") {
+            add_font_sheet(mutable_ext, shapes, palette, pm, entry, rel, shapes_);
+            return;
+        }
+        if (name.empty()) {
+            return;
+        }
+        add_font_sheet(mutable_ext, shapes, palette, pm, entry, rel,
+                       font_set(name).frames);
+    };
     for (const std::string& rel : ext.files("fonts/")) {
         if (std::find(ExternalAssets::image_exts().begin(),
                       ExternalAssets::image_exts().end(),
                       ext_of(rel)) == ExternalAssets::image_exts().end()) {
             continue;
         }
-        const std::string stem = stem_of(rel);
-        long code = 0;
-        if (stem == "main" || stem == "font") {
-            add_font_sheet(mutable_ext, shapes, palette, pm, rel, shapes_);
-        } else if (stem.rfind("glyph_", 0) == 0 &&
-                   parse_int(stem.substr(6), code)) {
-            add_font_glyph(mutable_ext, shapes, palette, pm,
-                           static_cast<int>(code), rel, shapes_);
-        }
+        add_font_auto(rel);
     }
     for (const auto& kv : ext.manifest().section("fonts")) {
         long code = 0;
-        if (kv.first == "main" || kv.first == "font") {
-            add_font_sheet(mutable_ext, shapes, palette, pm, kv.second,
-                           shapes_);
-        } else if (parse_int(kv.first, code)) {
+        if (parse_int(kv.first, code)) {
             add_font_glyph(mutable_ext, shapes, palette, pm,
                            static_cast<int>(code), kv.second, shapes_);
+            continue;
+        }
+        int entry = 2;
+        std::string name = lower(kv.first);
+        if (name.size() > 2 && name.compare(name.size() - 2, 2, "_8") == 0) {
+            entry = 1;
+            name.resize(name.size() - 2);
+        }
+        if (name == "main" || name == "font") {
+            add_font_sheet(mutable_ext, shapes, palette, pm, entry, kv.second,
+                           shapes_);
+        } else if (!name.empty()) {
+            add_font_sheet(mutable_ext, shapes, palette, pm, entry, kv.second,
+                           font_set(name).frames);
         }
     }
+    std::sort(font_names_.begin(), font_names_.end());
+    font_names_.erase(std::unique(font_names_.begin(), font_names_.end()),
+                      font_names_.end());
 
     // HUD panels: `hud/classic.<ext>` (64x84) and `hud/modern.<ext>`
-    // (320x12).  Labels, icons and pips are still drawn on top.
+    // (320x12) are the defaults.  `hud/classic_<name>` and
+    // `hud/modern_<name>` add more selectable panels; an unprefixed image is
+    // classified by its source aspect.  Labels/icons/pips are still drawn on
+    // top.
+    auto set_hud_pic = [&](const std::string& rel, const std::string& raw_name,
+                           bool forced_classic, bool forced_style) {
+        const std::string name = lower(raw_name);
+        bool classic = forced_classic;
+        if (!forced_style) {
+            ExternalImage probe;
+            std::string probe_err;
+            if (!mutable_ext.load_image(rel, probe, probe_err)) {
+                std::fprintf(stderr, "external: %s\n", probe_err.c_str());
+                return;
+            }
+            classic = !(probe.w > 96 && probe.h > 0 && probe.h <= 20);
+        }
+        ExternalPicture pic;
+        if (!add_overlay(mutable_ext, palette, pm, rel, classic ? 64 : 320,
+                         classic ? 84 : 12, pic)) {
+            return;
+        }
+        if (classic) {
+            if (name == "classic") {
+                hud_classic_ = pic;
+                has_hud_classic_ = true;
+            }
+        } else if (name == "modern") {
+            hud_modern_ = pic;
+            has_hud_modern_ = true;
+        }
+        set_hud(huds_, name, classic, std::move(pic));
+    };
     for (const std::string& rel : ext.files("hud/")) {
         if (std::find(ExternalAssets::image_exts().begin(),
                       ExternalAssets::image_exts().end(),
@@ -884,29 +1213,59 @@ bool ExternalVisuals::build(const ExternalAssets& ext, ShapeBank& shapes,
             continue;
         }
         const std::string stem = stem_of(rel);
-        ExternalPicture pic;
-        if (stem == "classic" &&
-            add_overlay(mutable_ext, palette, pm, rel, 64, 84, pic)) {
-            hud_classic_ = std::move(pic);
-            has_hud_classic_ = true;
-        } else if (stem == "modern" &&
-                   add_overlay(mutable_ext, palette, pm, rel, 320, 12, pic)) {
-            hud_modern_ = std::move(pic);
-            has_hud_modern_ = true;
+        if (stem == "classic" || stem == "modern") {
+            set_hud_pic(rel, stem, stem == "classic", true);
+        } else if (stem.rfind("classic_", 0) == 0) {
+            set_hud_pic(rel, stem.substr(8), true, true);
+        } else if (stem.rfind("modern_", 0) == 0) {
+            set_hud_pic(rel, stem.substr(7), false, true);
+        } else {
+            set_hud_pic(rel, stem, false, false);
         }
     }
     for (const auto& kv : ext.manifest().section("hud")) {
-        ExternalPicture pic;
-        if (kv.first == "classic" &&
-            add_overlay(mutable_ext, palette, pm, kv.second, 64, 84, pic)) {
-            hud_classic_ = std::move(pic);
-            has_hud_classic_ = true;
-        } else if (kv.first == "modern" &&
-                   add_overlay(mutable_ext, palette, pm, kv.second, 320, 12,
-                               pic)) {
-            hud_modern_ = std::move(pic);
-            has_hud_modern_ = true;
+        const std::string key = lower(kv.first);
+        if (key == "classic" || key == "modern") {
+            set_hud_pic(kv.second, key, key == "classic", true);
+        } else if (key.rfind("classic_", 0) == 0) {
+            set_hud_pic(kv.second, key.substr(8), true, true);
+        } else if (key.rfind("modern_", 0) == 0) {
+            set_hud_pic(kv.second, key.substr(7), false, true);
+        } else {
+            set_hud_pic(kv.second, key, false, false);
         }
+    }
+
+    // Menu borders: a `borders/<name>.<ext>` 3x3 sheet, or individual
+    // `borders/<name>/<1..9>.<ext>` frames.  They replace shape entry 7's
+    // nine-slice, so they work with the classic and modern menu styles.
+    for (const std::string& rel : ext.files("borders/")) {
+        if (std::find(ExternalAssets::image_exts().begin(),
+                      ExternalAssets::image_exts().end(),
+                      ext_of(rel)) == ExternalAssets::image_exts().end()) {
+            continue;
+        }
+        std::string sub = rel;
+        const std::string prefix = "borders/";
+        if (sub.compare(0, prefix.size(), prefix) == 0) {
+            sub = sub.substr(prefix.size());
+        }
+        const size_t slash = sub.find('/');
+        if (slash == std::string::npos) {
+            add_border_sheet(mutable_ext, palette, pm, rel, stem_of(rel),
+                             borders_, border_names_);
+        } else {
+            long frame = 0;
+            if (parse_int(stem_of(sub), frame) && frame >= 1 && frame <= 9) {
+                add_border_frame(mutable_ext, palette, pm, rel,
+                                 sub.substr(0, slash), static_cast<int>(frame),
+                                 borders_, border_names_);
+            }
+        }
+    }
+    for (const auto& kv : ext.manifest().section("borders")) {
+        add_border_sheet(mutable_ext, palette, pm, kv.second, kv.first,
+                         borders_, border_names_);
     }
 
     // Text-page art: `pages/page_<n>.<ext>` or `pages/<n>.<ext>` (320x200).

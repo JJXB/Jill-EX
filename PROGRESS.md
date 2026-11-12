@@ -1,5 +1,25 @@
 # Progress
 
+## 2026-11-12 (autoload, named visual sets, turtle mode)
+
+* Added `external/autoload/`: everything in that folder is always mounted under
+  the selected pack (pack files win on a name collision), and it is not listed
+  as a selectable pack.  Headless `--dump` applies autoload too.
+* HUD panels, menu themes, borders and fonts can now provide several named
+  variants from a pack or from autoload:
+  * `hud/classic_<name>` and `hud/modern_<name>` appear in `OPTIONS > HUD >
+    PANEL`; unprefixed `hud/<name>` files are classified by aspect.
+  * `borders/<name>.png` is a 3x3 nine-slice sheet; `borders/<name>/<1..9>.png`
+    also works.  Named borders join the `OPTIONS > MENUS > BORDER` cycle after
+    the installed games.
+  * `fonts/<name>` and `fonts/<name>_8` add selectable 6 px/8 px font sets;
+    `main`/`main_8` still apply automatically.  Selection is `OPTIONS > MENUS >
+    FONT`.
+* Added TURTLE MODE (`OPTIONS > GAMEPLAY`, `[gameplay] turtle`, `--turtle`),
+  the original Jill 3 half-speed option.
+* Documented the new pack layout and flags in `EXTASSETS.md`, `HOTKEYS.md`,
+  `COMMANDLINE.md`, `jill.ini`.
+
 ## 2026-11-11 (ending `.mac` macros)
 
 * Fixed the `*.mac` parser.  Record 0 is `mask, one signed byte per set mask

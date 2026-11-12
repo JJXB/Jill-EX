@@ -7,7 +7,9 @@ generate an editable reference pack from any installed game.
 The port can replace artwork and audio at runtime from a user-supplied
 "pack".  Packs live under `<base folder>\external`, i.e. the directory that
 holds `jill.ini` (the port changes to it at start-up).  A pack is either a
-sub-folder or a `.zip` file.  One pack is mounted at a time.
+sub-folder or a `.zip` file.  One pack is mounted at a time.  In addition,
+`external/autoload/` is always active under the selected pack and is never
+listed as a pack; a pack file of the same relative name wins.
 
 * `OPTIONS > ASSETS` lists the packs and mounts/unmounts them.
 * `--pack ID` mounts a pack at start-up; `[external] pack` in `jill.ini`
@@ -42,8 +44,9 @@ external/
     tiles/                per-tile images
     boards/               whole-level backgrounds
     themes/               extra front-end menu backdrops
-    fonts/                text font sheet / single glyphs
-    hud/                  classic and modern HUD panels
+    borders/              named nine-slice menu borders
+    fonts/                selectable font sets / glyphs
+    hud/                  default and named HUD panels
     pages/                text-page backgrounds
     portrait.png          optional dialog portrait (64x84)
     sfx/                  per-slot sampled effects
@@ -93,22 +96,36 @@ the same 50% checkerboard as the built-in intro-board themes [verified].
 
 ### fonts/
 
-* `fonts/main.<ext>` replaces the whole text font (shape entry 2).  The image
-  is a horizontal strip of up to 128 glyph cells (ASCII 0..127), each scaled
-  to the original glyph size.  Glyph pixels are used as a mask and drawn in
-  the requested text colour, so a white-on-transparent sheet works best
+* `fonts/main.<ext>` replaces the default 6 px text font (shape entry 2);
+  `fonts/main_8.<ext>` the 8 px font.  Each image is a horizontal strip of up
+  to 128 glyph cells (ASCII 0..127), each scaled to the original glyph size.
+  Glyph pixels are used as a mask and drawn in the requested text colour
   [verified].
+* `fonts/<name>.<ext>` / `fonts/<name>_8.<ext>` add a selectable font set,
+  listed in `OPTIONS > MENUS > FONT`.  A missing bank falls back to the game's
+  own glyphs.
 * `fonts/glyph_<code>.<ext>` replaces one character code [verified].
 
 ### hud/
 
-* `hud/classic.<ext>` replaces the legacy 64x84 CLASSIC panel.  It keeps the
-  old top-left placement; the engine's new full-frame classic HUD is used when
-  no pack panel is present.
-* `hud/modern.<ext>` replaces the 320x12 MODERN bar (top).
+* `hud/classic.<ext>` replaces the default 64x84 CLASSIC panel.  It keeps the
+  old top-left placement; the engine's full-frame classic HUD is used when no
+  panel is present.
+* `hud/modern.<ext>` replaces the default 320x12 MODERN bar.
+* `hud/classic_<name>.<ext>` / `hud/modern_<name>.<ext>` add named panels,
+  selectable in `OPTIONS > HUD > PANEL`.  An unprefixed `hud/<name>.<ext>` is
+  accepted and classified by aspect (wide and short = MODERN).
 * The image is scaled to the panel size.  Labels, inventory icons, health
   pips and score are still drawn on top; transparent pixels let the game
   show through [verified].
+
+### borders/
+
+* `borders/<name>.<ext>` is a 3x3 nine-slice sheet, scaled to 8x8 cells.  The
+  centre cell fills the window; the other eight are corners/edges.
+* `borders/<name>/<1..9>.<ext>` supplies individual shape-7 frames.
+* Named borders appear after the installed games in
+  `OPTIONS > MENUS > BORDER`.
 
 ### pages/
 
@@ -160,11 +177,17 @@ funky = audio/title.mp3
 
 [fonts]
 main = art/font.png
+main_8 = art/font_8.png
+pixel = art/font_pixel.png
 65 = art/a.png
 
 [hud]
 classic = art/panel_classic.png
 modern = art/panel_modern.png
+classic_gold = art/panel_gold.png
+
+[borders]
+vine = art/border_vine.png
 
 [pages]
 1 = art/help_page.png

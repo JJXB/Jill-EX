@@ -3,9 +3,6 @@
 
 * Near goals
   * Stereo Rendering - SBS, Interlaced
-  * Add an "autoload" external pack that works along with existing pack (for UI/Menu additions)
-  * Support loading multiple UI additions (i.e. multiple Modern/classic HUD backgrounds)
-  * Turtle Mode?
 * Least Important Ideas
   * Other Games
     * Xargon Support? - no. Separate Project. Use this and xargon's own source code as a base for it.

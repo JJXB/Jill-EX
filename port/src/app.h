@@ -45,7 +45,10 @@ struct Options {
     int hud_text = 7;           // --hud-text: HUD label colour palette index
     int hud_health = -1;        // --hud-health: -1 original pips, else palette
     int hud_frame = 0;          // --hud-frame: 0 current, N = games[N-1] art
+    std::string hud_panel;      // --hud-panel NAME: external HUD panel
     int menu_frame = -1;        // --menu-frame: -1 theme, 0 current, N = game
+                                // N > game count = external border N-games-1
+    std::string menu_font;      // --menu-font NAME: external font set
     bool music = true;          // --no-music: keep the CMF player silent
     int music_volume = 80;      // --music-volume N: 0..100
     bool sfx = true;            // --no-sfx: keep sampled effects silent
@@ -73,6 +76,7 @@ struct Options {
     bool air_jump_buffer = false; // --air-jump-buffer: hold jump through a fall
     bool minimap = false;       // --minimap: board overview overlay
     bool center_fish_shot = false; // --center-fish-shot: vertical fish shot
+    bool turtle = false;       // --turtle: Jill 3-style half-speed mode
     int player_look = 0;       // --jill-look N: 0 game default, N = games[N-1]
     int player_suit = 0;       // --jill-colour N: 0 default, 1..8 presets
 };

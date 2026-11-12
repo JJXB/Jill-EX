@@ -33,17 +33,22 @@ struct PackInfo {
 class ExternalAssets {
 public:
     // `base` is the `external` directory next to jill.ini.  Missing folders
-    // are created empty so pack authors have somewhere to drop files.
+    // (including `autoload`) are created empty so pack authors have somewhere
+    // to drop files.  Everything inside `autoload` is always active, under the
+    // mounted pack; a pack file of the same name wins.
     bool scan(const std::string& base, std::string& err);
     const std::vector<PackInfo>& packs() const { return packs_; }
     int find(const std::string& id) const;
     int active_index() const { return active_; }
     const PackInfo* active() const;
+    bool autoload() const { return autoload_; }
+    const std::string& autoload_root() const { return autoload_root_; }
 
     // Mount/unmount a pack.  Mounting a zip parses its central directory.
+    // With no pack mounted the autoload folder still supplies files.
     bool mount(int index, std::string& err);
     void unmount();
-    bool mounted() const { return active_ >= 0; }
+    bool mounted() const { return active_ >= 0 || autoload_; }
     const std::string& root() const { return root_; }
 
     bool has(const std::string& rel) const;
@@ -71,11 +76,15 @@ public:
 
 private:
     bool read_folder(const std::string& rel, std::vector<uint8_t>& out) const;
+    bool read_autoload(const std::string& rel, std::vector<uint8_t>& out) const;
 
     std::string root_;
+    std::string autoload_root_;
+    bool autoload_ = false;
     std::vector<PackInfo> packs_;
     int active_ = -1;
     IniFile manifest_;
+    IniFile autoload_manifest_;
 
     // Zip state (valid while a zip pack is mounted).
     bool zip_open_ = false;
@@ -93,6 +102,28 @@ struct ExternalPicture {
     std::vector<uint8_t> mask;
 };
 
+// One selectable HUD panel.  `classic` is the 64x84 top-left panel, otherwise
+// it is the 320x12 modern bar.  The name comes from `hud/<name>.png` (or
+// `hud/classic_<name>.png` / `hud/modern_<name>.png`).
+struct ExternalHud {
+    std::string name;
+    bool classic = true;
+    ExternalPicture picture;
+};
+
+// A complete font set built from `fonts/<name>.png` (6 px bank 2) and/or
+// `fonts/<name>_8.png` (8 px bank 1).
+struct ExternalFont {
+    std::string name;
+    std::unordered_map<int, ShapeFrame> frames;  // (entry << 8) | code
+};
+
+// One selectable menu border: shape entry 7's nine-slice frames, keyed 1..9.
+struct ExternalBorder {
+    std::string name;
+    std::unordered_map<int, ShapeFrame> frames;
+};
+
 // Palette-indexed overrides ready for the engine's 8-bit framebuffer.
 class ExternalVisuals {
 public:
@@ -104,7 +135,8 @@ public:
                const uint8_t palette[768], int board_w, int board_h);
     bool empty() const {
         return shapes_.empty() && boards_.empty() && !has_hud_classic_ &&
-               !has_hud_modern_ && pages_.empty() && !has_portrait_;
+               !has_hud_modern_ && huds_.empty() && borders_.empty() &&
+               fonts_.empty() && pages_.empty() && !has_portrait_;
     }
 
     const ShapeFrame* shape(int id) const;
@@ -117,6 +149,16 @@ public:
     const ExternalPicture* hud_modern() const {
         return has_hud_modern_ ? &hud_modern_ : nullptr;
     }
+    // Named HUD panels, in discovery order.  `classic` filters to the style.
+    const std::vector<ExternalHud>& huds() const { return huds_; }
+    const ExternalPicture* hud(const std::string& name, bool classic) const;
+    const std::vector<std::string>& border_names() const {
+        return border_names_;
+    }
+    const ShapeFrame* border_shape(int index, int frame) const;
+    const std::vector<std::string>& font_names() const { return font_names_; }
+    const ShapeFrame* font_shape(const std::string& name, int entry,
+                                 int code) const;
     const ExternalPicture* text_page(int number) const {
         auto it = pages_.find(number);
         return it == pages_.end() ? nullptr : &it->second;
@@ -134,6 +176,11 @@ private:
     ExternalPicture hud_modern_;
     bool has_hud_classic_ = false;
     bool has_hud_modern_ = false;
+    std::vector<ExternalHud> huds_;
+    std::vector<ExternalBorder> borders_;
+    std::vector<std::string> border_names_;
+    std::vector<ExternalFont> fonts_;
+    std::vector<std::string> font_names_;
     ExternalPicture portrait_;
     bool has_portrait_ = false;
     std::unordered_map<int, ExternalPicture> pages_;

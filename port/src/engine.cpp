@@ -379,6 +379,16 @@ void Engine::tick() {
     if (page_open_) {
         return;  // the original blocks in the text viewer
     }
+    if (turtle_) {
+        // Jill 3's TURTLE option slows the whole simulation: one full update
+        // every other 18.2 Hz tick (about 9.1 Hz).  Presentation/interpolation
+        // keeps running, so the picture stays smooth while everything moves
+        // at half speed.
+        turtle_skip_ = !turtle_skip_;
+        if (turtle_skip_) {
+            return;
+        }
+    }
     compact_objects();
     // Snapshot for high-framerate interpolation (previous logic tick).
     prev_cam_x_ = cam_x_;
@@ -2814,7 +2824,11 @@ void Engine::render_hud_classic(Framebuffer& fb) {
     const int hp = std::max(0, std::min(8, health()));
 
     if (ext_visuals_) {
-        if (const ExternalPicture* panel = ext_visuals_->hud_classic()) {
+        const ExternalPicture* panel = ext_visuals_->hud(hud_panel_, true);
+        if (!panel && !hud_panel_.empty()) {
+            panel = ext_visuals_->hud(std::string(), true);
+        }
+        if (panel) {
             // A pack supplies the original 64x84 panel.  Keep the legacy
             // placement so existing HUD packs still line up.
             blit_external_picture(fb, 0, 0, *panel);
@@ -2934,7 +2948,11 @@ void Engine::render_hud_modern(Framebuffer& fb) {
     constexpr int kBarH = 12;
 
     if (ext_visuals_) {
-        if (const ExternalPicture* panel = ext_visuals_->hud_modern()) {
+        const ExternalPicture* panel = ext_visuals_->hud(hud_panel_, false);
+        if (!panel && !hud_panel_.empty()) {
+            panel = ext_visuals_->hud(std::string(), false);
+        }
+        if (panel) {
             blit_external_picture(fb, 0, 0, *panel);
         } else {
             fb.fill_rect(0, 0, Framebuffer::W, kBarH,
@@ -3792,6 +3810,14 @@ void Engine::cycle_text_page(int dir) {
 
 const ShapeFrame* Engine::shape_frame(int entry, int index) {
     if (ext_visuals_) {
+        // A selected font set replaces only the two text banks (1 and 2), so
+        // sprites/tiles keep using the normal pack overrides.
+        if (!font_name_.empty() && (entry == 1 || entry == 2)) {
+            if (const ShapeFrame* f =
+                    ext_visuals_->font_shape(font_name_, entry, index)) {
+                return f;
+            }
+        }
         if (const ShapeFrame* f = ext_visuals_->shape((entry << 8) | index)) {
             return f;
         }
@@ -3858,6 +3884,12 @@ const ShapeFrame* Engine::classic_frame_shape(int entry, int index) {
 }
 
 const ShapeFrame* Engine::classic_menu_shape(int entry, int index) {
+    if (entry == 7 && menu_border_ext_ >= 0 && ext_visuals_) {
+        if (const ShapeFrame* f =
+                ext_visuals_->border_shape(menu_border_ext_, index)) {
+            return f;
+        }
+    }
     if (menu_frame_custom_) {
         if (const ShapeFrame* f = menu_frame_shapes_.frame(entry, index)) {
             return f;

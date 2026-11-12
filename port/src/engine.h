@@ -81,6 +81,14 @@ public:
     const ExternalVisuals* external_visuals() const {
         return ext_visuals_.get();
     }
+    // Carry packed art/palette over when swapping to a fresh Engine for a
+    // different episode.
+    void adopt_external_state(const Engine& other) {
+        ext_visuals_ = other.ext_visuals_;
+        for (int i = 0; i < 768; ++i) {
+            ext_palette_[i] = other.ext_palette_[i];
+        }
+    }
     // Palette used to quantise external art (0..255 per channel, 768 bytes).
     void set_external_palette(const uint8_t rgb[768]);
     // Rebuild `ext_visuals_` for a pack.  Returns false when nothing applied.
@@ -104,6 +112,18 @@ public:
     // the port keeps its minimal pip strip unless this is enabled.
     void set_hud_classic(bool on) { hud_classic_ = on; }
     bool hud_classic() const { return hud_classic_; }
+    // Selected external HUD panel (empty = the pack's classic/modern default).
+    void set_hud_panel(const std::string& name) { hud_panel_ = name; }
+    const std::string& hud_panel() const { return hud_panel_; }
+    // Selected external menu border (index into ExternalVisuals::borders()).
+    void set_menu_border_ext(int index) { menu_border_ext_ = index; }
+    int menu_border_ext() const { return menu_border_ext_; }
+    // Selected external font set (empty = the game's own font).
+    void set_font_name(const std::string& name) { font_name_ = name; }
+    const std::string& font_name() const { return font_name_; }
+    // Original Jill 3 TURTLE option: run the game logic at half speed.
+    void set_turtle(bool on) { turtle_ = on; }
+    bool turtle() const { return turtle_; }
     // Draw the character portrait beside level-title dialogs (HUD option).
     void set_hud_portrait(bool on) { hud_portrait_ = on; }
     bool hud_portrait() const { return hud_portrait_; }
@@ -527,4 +547,9 @@ private:
     bool has_player_ = false;
     std::shared_ptr<const ExternalVisuals> ext_visuals_;
     uint8_t ext_palette_[768] = {};
+    std::string hud_panel_;
+    std::string font_name_;
+    int menu_border_ext_ = -1;
+    bool turtle_ = false;
+    bool turtle_skip_ = false;
 };
