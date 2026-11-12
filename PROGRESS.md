@@ -1,5 +1,11 @@
 # Progress
 
+## 2026-11-12 (modern HUD suit shadow)
+
+* The modern HUD with `BACKGROUND: SUIT` now draws a two-row drop shadow under
+  the 12 px bar: a solid dark edge plus a 50% checker row.  Pack-supplied
+  modern HUD panels are unchanged and keep their own transparency/shadow art.
+
 ## 2026-11-12 (menu text alignment)
 
 * Modern menus with a shape-7 border (CURRENT / a game / an external border)

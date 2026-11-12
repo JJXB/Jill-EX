@@ -2989,6 +2989,7 @@ void Engine::render_hud_modern(Framebuffer& fb) {
     const uint8_t kLabel = static_cast<uint8_t>(hud_text_);
     constexpr int kBarH = 12;
 
+    bool external_panel = false;
     if (ext_visuals_) {
         const ExternalPicture* panel = ext_visuals_->hud(hud_panel_, false);
         if (!panel && !hud_panel_.empty()) {
@@ -2996,6 +2997,7 @@ void Engine::render_hud_modern(Framebuffer& fb) {
         }
         if (panel) {
             blit_external_picture(fb, 0, 0, *panel);
+            external_panel = true;
         } else {
             fb.fill_rect(0, 0, Framebuffer::W, kBarH,
                          static_cast<uint8_t>(hud_bg_colour()));
@@ -3003,6 +3005,16 @@ void Engine::render_hud_modern(Framebuffer& fb) {
     } else {
         fb.fill_rect(0, 0, Framebuffer::W, kBarH,
                      static_cast<uint8_t>(hud_bg_colour()));
+    }
+
+    // The SUIT background is the only solid-colour modern bar, so give it a
+    // drop shadow: a hard dark edge plus a 50% checker row that lets the board
+    // show through.  Pack-supplied HUD panels keep their own art untouched.
+    if (hud_bg_ == -2 && !external_panel) {
+        fb.fill_rect(0, kBarH, Framebuffer::W, 1, 0);
+        for (int x = 1; x < Framebuffer::W; x += 2) {
+            fb.put(x, kBarH + 1, 0);
+        }
     }
 
     char buf[32];

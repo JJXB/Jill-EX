@@ -47,6 +47,10 @@ CLASSIC/MODERN style (ORIGINAL, or any `hud/classic_<name>` /
 the CLASSIC HUD (CURRENT, or another installed game).  It is stored as
 `[hud] frame` and can also be set with `--hud-frame N`.
 
+`OPTIONS > HUD > BACKGROUND: SUIT` gives the modern bar a two-row drop shadow
+(one solid dark edge plus a 50% checker row) so it reads as a raised strip over
+the board.  Pack-supplied modern panels keep their own shadow/artwork.
+
 `OPTIONS > SOUND > MIDI OUT` selects a system MIDI output device (such as
 Microsoft GS Wavetable Synth or VirtualMIDISynth) for the CMF/MIDI tracks;
 `OFF (OPL2)` keeps the built-in OPL2 emulation.  The selection is stored as
