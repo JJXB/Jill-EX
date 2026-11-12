@@ -21,7 +21,7 @@ No copyright assets shipped, provide your own.
 * High framerate support - 60/90/120/144 Hz - Interpolation as a separate option - Logic still at 18.2hz
 * Expanded Limits (Board Obj Cap = 384, KIND Limit = 138, Visible/Active Obj Cap = 384)
 * Windowed, exclusive fullscreen and borderless modes; resolution presets and 1x-6x window scaling.
-* Noisemaker Menu in Options/Sound
+* Noisemaker Menu in Options/Sound (Old Style Noisemaker TBD)
 * Extra Features (All Optional)
   * Minimap
   * Centred fish shot
@@ -33,6 +33,7 @@ No copyright assets shipped, provide your own.
   * Jill Select: play as the Jill 1/2/3 or Custom Colour in any episode. Onesimus Support WIP
 * Keyboard and gamepad input with rebindable movement, jump and throw.
 * SDL Sound Output
+  * OPL2 FM or Midi out (CMF to Midi)
 * Cheat menu:
   * Invincible
   * Debug Fly
@@ -49,16 +50,13 @@ No copyright assets shipped, provide your own.
 ## TODO
 
 ### Remaining Realistic Goals
-* Splash screens to be fixed.
 * Classic Menu work
+* Old Style Noisemaker
 * Work on Display Filters to be continued 
-* Character portraits.
-* Stereo Image Rendering (SBS, Interlaced)
 * Mac/Linux/Console builds
-* 32 Bit Builds
 
 ### Future Ideas
-* 
+* Xargon Port based on this and it's own source
 
 ## License
 [See LICENSE](LICENSE.md)

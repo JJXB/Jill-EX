@@ -1,6 +1,5 @@
 * Fixes
   * Neaten up Classic Menus/HUD
-
 * Near goals
   * Stereo Rendering - SBS, Interlaced - Code Disabled,
 * Least Important Ideas
@@ -8,8 +7,6 @@
     * Xargon Support? - no. Separate Project. Use this and xargon's own source code as a base for it.
     * Vinyl Goddess? - no. Separate Project, Check compatibility.
     * Alien Rampage - no. Separate Project, Check compatibility.
-  * Sound
-    * Retool Noisemaker?
   * Demo
     * Playback Editor (backwards compatible with original exe if applicable)?
     * Dedicated Demo Playback mode (*.mac and *.pbk?) - May help with ending key macros.
