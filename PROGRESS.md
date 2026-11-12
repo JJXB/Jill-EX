@@ -1,5 +1,16 @@
 # Progress
 
+## 2026-11-12 (original-board NOISEMAKER and SOUND TEST rename)
+
+* Added `NOISEMAKER` to the main menu.  It first asks which episode to use,
+  then opens that episode's original front-end page 99 on the intro board: a
+  private `Engine` renders the board at the page-99 CHECKPT, showing the large
+  `NOISE` title, Jill portrait and `NOISE BLASTER ... PRESS THE QWERTY KEYS`
+  text.  QWERTY keys in the original `2cff:1246` order play raw slots 1..45
+  from the selected episode's `.vcl` bank; Esc/pad B returns to the menu.
+* Renamed the existing `OPTIONS > SOUND > NOISEMAKER` raw-slot audition screen
+  to `SOUND TEST`.
+
 ## 2026-11-12 (stereo 3D paused)
 
 * The stereo display is disabled entirely for now: no `STEREO 3D` row, no

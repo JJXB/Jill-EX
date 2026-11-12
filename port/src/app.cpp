@@ -64,6 +64,34 @@ void compose_stereo(Framebuffer& out, const Framebuffer& left,
     }
 }
 
+#ifdef JILL_HAVE_SDL
+// The original NOISEMAKER maps this QWERTY scan order to raw sound slots 1..45
+// (the string at 2cff:1246 in the Jill executables).
+int noisemaker_slot(SDL_Scancode sc) {
+    static const SDL_Scancode kKeys[] = {
+        SDL_SCANCODE_1, SDL_SCANCODE_2, SDL_SCANCODE_3, SDL_SCANCODE_4,
+        SDL_SCANCODE_5, SDL_SCANCODE_6, SDL_SCANCODE_7, SDL_SCANCODE_8,
+        SDL_SCANCODE_9, SDL_SCANCODE_0, SDL_SCANCODE_MINUS, SDL_SCANCODE_EQUALS,
+        SDL_SCANCODE_Q, SDL_SCANCODE_W, SDL_SCANCODE_E, SDL_SCANCODE_R,
+        SDL_SCANCODE_T, SDL_SCANCODE_Y, SDL_SCANCODE_U, SDL_SCANCODE_I,
+        SDL_SCANCODE_O, SDL_SCANCODE_P, SDL_SCANCODE_LEFTBRACKET,
+        SDL_SCANCODE_RIGHTBRACKET, SDL_SCANCODE_A, SDL_SCANCODE_S,
+        SDL_SCANCODE_D, SDL_SCANCODE_F, SDL_SCANCODE_G, SDL_SCANCODE_H,
+        SDL_SCANCODE_J, SDL_SCANCODE_K, SDL_SCANCODE_L, SDL_SCANCODE_SEMICOLON,
+        SDL_SCANCODE_APOSTROPHE, SDL_SCANCODE_Z, SDL_SCANCODE_X,
+        SDL_SCANCODE_C, SDL_SCANCODE_V, SDL_SCANCODE_B, SDL_SCANCODE_N,
+        SDL_SCANCODE_M, SDL_SCANCODE_COMMA, SDL_SCANCODE_PERIOD,
+        SDL_SCANCODE_SLASH};
+    for (int i = 0; i < static_cast<int>(sizeof(kKeys) / sizeof(kKeys[0]));
+         ++i) {
+        if (kKeys[i] == sc) {
+            return i + 1;
+        }
+    }
+    return 0;
+}
+#endif
+
 bool load_palette(const std::string& path, uint8_t rgb[768]) {
     vga_default_palette(rgb);
     if (path.empty()) {
@@ -828,7 +856,9 @@ enum class MenuScreen {
     SaveGame,
     LoadGame,
     HighScores,
-    Noisemaker,
+    NoisemakerSelect,  // choose which episode's board noisemaker to open
+    Noisemaker,        // original board page 99 "NOISE BLASTER" screen
+    SoundTest,         // OPTIONS > SOUND raw-slot audition screen
     Assets
 };
 
@@ -858,6 +888,8 @@ struct Menu {
     int hi_game = -1;              // episode shown on HIGH SCORES
     HiScores hi_scores;
     int noise_sel = 0;       // front-end sound-test row
+    int nm_sel = 0;          // NOISEMAKER episode selector
+    int nm_game = 0;         // episode whose board page 99 is open
     int assets_sel = 0;      // external pack row
     int noise_set = 0;       // installed game whose .vcl is auditioned
     int noise_sound = 1;     // raw sample slot 0..49
@@ -924,7 +956,10 @@ int& menu_sel(Menu& m) {
             return m.save_sel;
         case MenuScreen::HighScores:
             return m.hi_sel;
+        case MenuScreen::NoisemakerSelect:
         case MenuScreen::Noisemaker:
+            return m.nm_sel;
+        case MenuScreen::SoundTest:
             return m.noise_sel;
         case MenuScreen::Assets:
             return m.assets_sel;
@@ -1358,6 +1393,7 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                 v.push_back("START GAME");
                 v.push_back("HIGH SCORES");
                 v.push_back("OPTIONS");
+                v.push_back("NOISEMAKER");
                 v.push_back("QUIT TO MAIN MENU");
                 v.push_back("QUIT");
             } else {
@@ -1365,10 +1401,21 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                 v.push_back("RESTORE GAME");
                 v.push_back("HIGH SCORES");
                 v.push_back("OPTIONS");
+                v.push_back("NOISEMAKER");
                 v.push_back("QUIT");
             }
             return v;
         }
+        case MenuScreen::NoisemakerSelect: {
+            std::vector<std::string> v;
+            for (const GameDef& g : games) {
+                v.push_back(upper_ascii(g.title.c_str()));
+            }
+            v.push_back("BACK");
+            return v;
+        }
+        case MenuScreen::Noisemaker:
+            return {};
         case MenuScreen::Episodes: {
             std::vector<std::string> v;
             for (const GameDef& g : games) {
@@ -1416,7 +1463,7 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                     std::string("PC SPEAKER: ") +
                         (m.pc_speaker ? "ON" : "OFF"),
                     std::string("MIDI OUT: ") + midi_device_label(audio),
-                    "NOISEMAKER",
+                    "SOUND TEST",
                     "BACK"};
         case MenuScreen::Hud:
             return {std::string("STYLE: ") +
@@ -1549,7 +1596,7 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                     std::string("TURTLE MODE: ") +
                         (engine.turtle() ? "ON" : "OFF"),
                     "BACK"};
-        case MenuScreen::Noisemaker: {
+        case MenuScreen::SoundTest: {
             std::string set = "SET: ";
             if (!games.empty()) {
                 const size_t i = static_cast<size_t>(
@@ -1970,7 +2017,7 @@ void draw_classic_menu(Framebuffer& fb, Engine& engine, const Menu& m,
     const char* hint = "UP/DOWN MOVE   ENTER SELECT   ESC BACK";
     if (m.rebind_action >= 0) {
         hint = "PRESS A KEY OR PAD BUTTON   ESC CANCEL";
-    } else if (m.screen == MenuScreen::Noisemaker) {
+    } else if (m.screen == MenuScreen::SoundTest) {
         hint = "LEFT/RIGHT CHANGE   ENTER PLAY   ESC BACK";
     } else if (m.screen == MenuScreen::LoadGame ||
                m.screen == MenuScreen::HighScores) {
@@ -2029,7 +2076,8 @@ void draw_menu(Framebuffer& fb, Engine& engine, Menu& m, bool started,
         case MenuScreen::SaveGame: sub = "SAVE GAME"; break;
         case MenuScreen::LoadGame: sub = "RESTORE GAME"; break;
         case MenuScreen::HighScores: sub = "HI SCORES"; break;
-        case MenuScreen::Noisemaker: sub = "NOISEMAKER"; break;
+        case MenuScreen::SoundTest: sub = "SOUND TEST"; break;
+        case MenuScreen::NoisemakerSelect: sub = "NOISEMAKER"; break;
         case MenuScreen::Assets: sub = "EXTERNAL ASSETS"; break;
         default: break;
     }
@@ -2132,7 +2180,7 @@ void draw_menu(Framebuffer& fb, Engine& engine, Menu& m, bool started,
     if (m.rebind_action >= 0) {
         menu_title(fb, engine, footer_y, "PRESS A KEY OR PAD BUTTON");
         menu_title(fb, engine, footer_y + 9, "ESC CANCELS");
-    } else if (m.screen == MenuScreen::Noisemaker) {
+    } else if (m.screen == MenuScreen::SoundTest) {
         menu_title(fb, engine, footer_y,
                    "LEFT/RIGHT CHANGE   ENTER PLAY   ESC BACK");
     } else if (m.screen == MenuScreen::LoadGame ||
@@ -2573,6 +2621,9 @@ int run_sdl(const Options& opt, Engine& engine,
     LevelSelect select;
     EndingViewer ending;
     ScoreEntryPrompt score_entry;
+    std::unique_ptr<Engine> noisemaker_engine;
+    int noisemaker_cam_x = 0;
+    int noisemaker_cam_y = 0;
     Menu menu;
     menu.classic = opt.classic_menu;
     menu.live_background = opt.live_menu_bg;
@@ -2841,6 +2892,47 @@ int run_sdl(const Options& opt, Engine& engine,
             menu.noise_loaded = false;
         }
     };
+    // Original front-end NOISEMAKER: open the selected episode's intro board at
+    // its page-99 checkpoint ("NOISE BLASTER ...") and use the QWERTY sound
+    // keyboard there.  The board is rendered by a private Engine so the
+    // running game is untouched.
+    auto start_noisemaker = [&](int index) {
+        if (index < 0 || index >= static_cast<int>(games.size())) {
+            return;
+        }
+        const GameDef& g = games[static_cast<size_t>(index)];
+        auto nm = std::make_unique<Engine>();
+        std::string err;
+        if (!nm->init(g, err)) {
+            std::fprintf(stderr, "%s: %s\n", g.id.c_str(), err.c_str());
+            return;
+        }
+        const std::string board =
+            g.intro_board.empty() ? std::string("intro") : g.intro_board;
+        if (!nm->load_board(board, err)) {
+            std::fprintf(stderr, "noisemaker: %s\n", err.c_str());
+            return;
+        }
+        nm->finish_dialogs();
+        if (ext_assets.mounted()) {
+            nm->apply_external(ext_assets, palette);
+        }
+        int cx = 0;
+        int cy = 0;
+        for (const BoardObject& o : nm->objects()) {
+            if (o.kind == 12 && o.p13 == 99) {
+                cx = std::max(0, o.x - 32);
+                cy = std::max(0, o.y - 8);
+                break;
+            }
+        }
+        noisemaker_engine = std::move(nm);
+        noisemaker_cam_x = cx;
+        noisemaker_cam_y = cy;
+        menu.nm_game = index;
+        select_noise_set(index);
+        menu.screen = MenuScreen::Noisemaker;
+    };
 
     // Build the pack's effect overrides (raw 0..49 slots).  Called whenever the
     // pack changes; the bank itself stays the game's own `.vcl`.
@@ -3107,11 +3199,16 @@ int run_sdl(const Options& opt, Engine& engine,
                        menu.screen == MenuScreen::Assets ||
                        menu.screen == MenuScreen::Cheats) {
                 menu.screen = MenuScreen::Options;
-            } else if (menu.screen == MenuScreen::Noisemaker) {
+            } else if (menu.screen == MenuScreen::SoundTest) {
                 restore_game_sfx();
                 music_player.set_enabled(menu.music_on);
                 menu.screen = MenuScreen::Audio;
-                menu.audio_sel = 4;
+                menu.audio_sel = 6;
+            } else if (menu.screen == MenuScreen::Noisemaker) {
+                restore_game_sfx();
+                noisemaker_engine.reset();
+                menu.screen = MenuScreen::Main;
+                menu.main_sel = game_started ? 6 : 4;
             } else {
                 menu.screen = MenuScreen::Main;
             }
@@ -3163,7 +3260,14 @@ int run_sdl(const Options& opt, Engine& engine,
                             break;
                         }
                         case 5: menu.screen = MenuScreen::Options; break;
-                        case 6:
+                        case 6: {
+                            int idx = game_index_for_id(games, engine.game().id);
+                            if (idx < 0) idx = 0;
+                            menu.nm_sel = idx;
+                            menu.screen = MenuScreen::NoisemakerSelect;
+                            break;
+                        }
+                        case 7:
                             if (!begin_hiscore_entry(
                                     score_entry, menu.hi_scores,
                                     engine.game().id,
@@ -3208,6 +3312,13 @@ int run_sdl(const Options& opt, Engine& engine,
                             break;
                         }
                         case 3: menu.screen = MenuScreen::Options; break;
+                        case 4: {
+                            int idx = game_index_for_id(games, engine.game().id);
+                            if (idx < 0) idx = 0;
+                            menu.nm_sel = idx;
+                            menu.screen = MenuScreen::NoisemakerSelect;
+                            break;
+                        }
                         default: running = false; break;
                     }
                 }
@@ -3234,6 +3345,29 @@ int run_sdl(const Options& opt, Engine& engine,
                 }
                 break;
             }
+            case MenuScreen::NoisemakerSelect: {
+                const int count = static_cast<int>(games.size());
+                if (count <= 0) {
+                    menu.screen = MenuScreen::Main;
+                    break;
+                }
+                if (nav == 3 || nav == 4) {
+                    menu.nm_sel =
+                        (menu.nm_sel + (nav == 3 ? count - 1 : 1)) % count;
+                } else if (nav == 5 && sel < count) {
+                    start_noisemaker(sel);
+                } else if (nav == 5) {
+                    menu.screen = MenuScreen::Main;
+                }
+                break;
+            }
+            case MenuScreen::Noisemaker:
+                if (nav == 6) {
+                    restore_game_sfx();
+                    noisemaker_engine.reset();
+                    menu.screen = MenuScreen::Main;
+                }
+                break;
             case MenuScreen::Options:
                 if (nav == 5 && sel == 0) {
                     menu.screen = MenuScreen::Hud;
@@ -3264,7 +3398,7 @@ int run_sdl(const Options& opt, Engine& engine,
                     select_noise_set(menu.noise_set);
                     menu.noise_sel = 0;
                     music_player.set_enabled(false);
-                    menu.screen = MenuScreen::Noisemaker;
+                    menu.screen = MenuScreen::SoundTest;
                 } else if (nav == 5 && sel == 7) {
                     menu.screen = MenuScreen::Options;
                 } else if (sel == 5 && (nav == 3 || nav == 4 || nav == 5)) {
@@ -3314,7 +3448,7 @@ int run_sdl(const Options& opt, Engine& engine,
                     music_player.set_pc_speaker(menu.pc_speaker);
                 }
                 break;
-            case MenuScreen::Noisemaker:
+            case MenuScreen::SoundTest:
                 if (nav == 5 && sel == 3) {
                     restore_game_sfx();
                     music_player.set_enabled(menu.music_on);
@@ -3684,6 +3818,17 @@ int run_sdl(const Options& opt, Engine& engine,
                 }
             } else if (ev.type == SDL_CONTROLLERBUTTONDOWN) {
                 const int b = ev.cbutton.button;
+                if (menu.screen == MenuScreen::Noisemaker) {
+                    if (b == SDL_CONTROLLER_BUTTON_B ||
+                        b == SDL_CONTROLLER_BUTTON_BACK ||
+                        b == SDL_CONTROLLER_BUTTON_START) {
+                        restore_game_sfx();
+                        noisemaker_engine.reset();
+                        menu.screen = MenuScreen::Main;
+                        menu.main_sel = game_started ? 6 : 4;
+                    }
+                    continue;
+                }
                 if (engine.text_page_open()) {
                     switch (b) {
                         case SDL_CONTROLLER_BUTTON_DPAD_UP:
@@ -3760,6 +3905,20 @@ int run_sdl(const Options& opt, Engine& engine,
                             engine.close_text_page();
                             break;
                         default: break;
+                    }
+                    continue;
+                }
+                if (menu.screen == MenuScreen::Noisemaker) {
+                    if (sc == SDL_SCANCODE_ESCAPE) {
+                        restore_game_sfx();
+                        noisemaker_engine.reset();
+                        menu.screen = MenuScreen::Main;
+                        menu.main_sel = game_started ? 6 : 4;
+                    } else {
+                        const int slot = noisemaker_slot(sc);
+                        if (slot > 0) {
+                            music_player.play_sfx_sample(6, slot);
+                        }
                     }
                     continue;
                 }
@@ -4028,7 +4187,13 @@ int run_sdl(const Options& opt, Engine& engine,
             if (select.open) {
                 draw_select(fb, engine, games, select);
             }
-            if (menu_open(menu)) {
+            if (menu.screen == MenuScreen::Noisemaker && noisemaker_engine) {
+                noisemaker_engine->render_at(fb, noisemaker_cam_x,
+                                             noisemaker_cam_y, false);
+                const int tw = 8 * 6;
+                engine.draw_text(fb, Framebuffer::W - tw - 4,
+                                 Framebuffer::H - 10, 7, "ESC BACK");
+            } else if (menu_open(menu)) {
                 draw_menu(fb, engine, menu, game_started, video, bindings,
                           theme_backdrop, games, music_player, ext_assets);
             }

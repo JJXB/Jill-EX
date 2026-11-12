@@ -175,7 +175,9 @@ Cards also advance automatically after seven seconds.
 
 Gamepad: D-pad/stick scrolls, left/right changes pages, A/B/Start/Back close.
 
-## Front-end NOISEMAKER
+## Front-end SOUND TEST
+
+`OPTIONS > SOUND > SOUND TEST` is the raw-slot audition screen.
 
 | Key | Action |
 | --- | --- |
@@ -183,6 +185,17 @@ Gamepad: D-pad/stick scrolls, left/right changes pages, A/B/Start/Back close.
 | Left / Right | Change the selected value |
 | Enter | Play the selected raw SFX slot, or leave via BACK |
 | Esc | Back to SOUND |
+
+## Front-end NOISEMAKER
+
+`NOISEMAKER` on the main menu opens the original board page-99 sound keyboard.
+The next screen selects the episode whose bank is used; choosing a game loads
+its `intro` board at the `NOISE BLASTER` page.
+
+| Key | Action |
+| --- | --- |
+| QWERTY row, digits, `-`, `=`, brackets, punctuation | Play raw sound slots 1..45 |
+| Esc / pad B / Back | Return to the main menu |
 
 ## Extractor viewer
 

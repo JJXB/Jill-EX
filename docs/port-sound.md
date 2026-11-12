@@ -136,10 +136,10 @@ The original also had a PC-speaker synthesis path for machines without a
 Sound Blaster.  The port only implements the DSP/PCM behaviour, which is what
 the sampled data was authored for.
 
-### NOISEMAKER (sound test)
+### SOUND TEST
 
-`OPTIONS > SOUND > NOISEMAKER` is the port's version of the front end's `N`
-page: it auditions the raw sample slots instead of the logical effect ids.
+`OPTIONS > SOUND > SOUND TEST` auditions the raw sample slots instead of the
+logical effect ids.
 
 * `SET` cycles every installed game and loads that game's `.vcl` bank, so all
   episodes and packs can be compared without restarting.
@@ -152,9 +152,24 @@ page: it auditions the raw sample slots instead of the logical effect ids.
   even when gameplay SFX are switched off.  Leaving the screen restores the
   selected game's bank and the music switch.
 
-The original's page 99 `_noisemaker` is the same idea, but it drives the
-PC-speaker driver; the port plays the sampled bank because that is the data
-every shipped release actually contains.
+### NOISEMAKER (original board screen)
+
+`NOISEMAKER` on the main menu opens the original front-end page 99 instead of
+a port-drawn list.  It asks which episode to use, then loads that episode's
+`intro` board with its own private `Engine` and shows the board around the
+page-99 CHECKPT (`x - 32`, `y - 8`), including the large `NOISE` title, Jill
+portrait and `NOISE BLASTER ... PRESS THE QWERTY KEYS` text.  The running game
+is untouched.
+
+The QWERTY scan order comes from the string at `2cff:1246` in the original:
+
+```
+1234567890-=QWERTYUIOP[]ASDFGHJKL;'ZXCVBNM,./
+```
+
+Pressing those keys plays raw `.vcl` slots 1..45 through the selected
+episode's bank.  Esc, pad B/Back or Start leaves the screen and restores the
+running game's sound bank.
 
 ## Integration
 
