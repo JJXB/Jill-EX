@@ -48,9 +48,10 @@ the CLASSIC HUD (CURRENT, or another installed game).  It is stored as
 `[hud] frame` and can also be set with `--hud-frame N`.
 
 `OPTIONS > GAMEPLAY > TURTLE MODE` reproduces Jill 3's original TURTLE option:
-the simulation advances at half speed (about 9.1 Hz) while presentation stays
-smooth.  It is stored as `[gameplay] turtle = 0/1` and can be started with
-`--turtle`.
+the simulation advances at half speed (about 9.1 Hz).  High-framerate
+interpolation stretches each update across two 18.2 Hz ticks, so movement stays
+continuous instead of stepping.  It is stored as `[gameplay] turtle = 0/1` and
+can be started with `--turtle`.
 
 `OPTIONS > VIDEO > MESSAGE BOX` cycles three styles:
 

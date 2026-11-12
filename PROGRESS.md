@@ -16,7 +16,8 @@
     `main`/`main_8` still apply automatically.  Selection is `OPTIONS > MENUS >
     FONT`.
 * Added TURTLE MODE (`OPTIONS > GAMEPLAY`, `[gameplay] turtle`, `--turtle`),
-  the original Jill 3 half-speed option.
+  the original Jill 3 half-speed option.  High-framerate interpolation spans
+  the two-tick slow update, so turtle movement no longer stutters.
 * Documented the new pack layout and flags in `EXTASSETS.md`, `HOTKEYS.md`,
   `COMMANDLINE.md`, `jill.ini`.
 

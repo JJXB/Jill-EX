@@ -381,14 +381,16 @@ void Engine::tick() {
     }
     if (turtle_) {
         // Jill 3's TURTLE option slows the whole simulation: one full update
-        // every other 18.2 Hz tick (about 9.1 Hz).  Presentation/interpolation
-        // keeps running, so the picture stays smooth while everything moves
-        // at half speed.
+        // every other 18.2 Hz tick (about 9.1 Hz).  `slow_phase_` tells
+        // render() to interpolate the previous/current pair over two ticks,
+        // so movement stays continuous instead of move-hold-move-hold.
         turtle_skip_ = !turtle_skip_;
         if (turtle_skip_) {
+            slow_phase_ = 1;
             return;
         }
     }
+    slow_phase_ = 0;
     compact_objects();
     // Snapshot for high-framerate interpolation (previous logic tick).
     prev_cam_x_ = cam_x_;
@@ -2544,7 +2546,12 @@ void Engine::render_at(Framebuffer& fb, int x, int y, bool with_hud) {
 }
 
 void Engine::render(Framebuffer& fb, bool with_hud, float alpha) {
-    const float a = std::max(0.0f, std::min(1.0f, alpha));
+    float a = std::max(0.0f, std::min(1.0f, alpha));
+    if (turtle_) {
+        // A turtle update covers two 18.2 Hz periods: the first presentation
+        // tick blends 0..0.5, the skipped one 0.5..1.
+        a = (slow_phase_ ? 0.5f : 0.0f) + a * 0.5f;
+    }
     const bool blend = a < 0.999f;
     std::vector<std::pair<int, int>> saved;
     const int saved_cam_x = cam_x_;

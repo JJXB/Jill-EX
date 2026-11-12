@@ -121,8 +121,16 @@ public:
     // Selected external font set (empty = the game's own font).
     void set_font_name(const std::string& name) { font_name_ = name; }
     const std::string& font_name() const { return font_name_; }
-    // Original Jill 3 TURTLE option: run the game logic at half speed.
-    void set_turtle(bool on) { turtle_ = on; }
+    // Original Jill 3 TURTLE option: run the game logic at half speed.  The
+    // first tick after enabling runs a normal update so interpolation starts
+    // on a fresh prev/current pair.
+    void set_turtle(bool on) {
+        if (on && !turtle_) {
+            turtle_skip_ = true;
+            slow_phase_ = 0;
+        }
+        turtle_ = on;
+    }
     bool turtle() const { return turtle_; }
     // Draw the character portrait beside level-title dialogs (HUD option).
     void set_hud_portrait(bool on) { hud_portrait_ = on; }
@@ -552,4 +560,5 @@ private:
     int menu_border_ext_ = -1;
     bool turtle_ = false;
     bool turtle_skip_ = false;
+    int slow_phase_ = 0;  // 0 = first half of a 2-tick move, 1 = second half
 };
