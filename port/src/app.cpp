@@ -276,7 +276,7 @@ int run_headless(Engine& engine, const Options& opt) {
         uint8_t palette[768];
         load_palette(opt.palette, palette);
         Framebuffer fb;
-        if (opt.stereo != 0) {
+        if (opt.stereo == 1) {
             Framebuffer left;
             Framebuffer right;
             const int shift = std::max(1, opt.stereo_depth);
@@ -1074,45 +1074,15 @@ const char* message_box_name(int style) {
 
 int filter_next(int filter) { return (filter + 1) % 3; }
 
+// SBS output is currently disabled; only OFF and row-interlaced are exposed.
 const char* stereo_name(int stereo) {
-    switch (stereo) {
-        case 1: return "INTERLACED";
-        case 2: return "SBS";
-        default: return "OFF";
-    }
+    return stereo == 1 ? "INTERLACED" : "OFF";
 }
 
 int stereo_next(int stereo, int step) {
-    int v = (stereo + step) % 3;
-    return (v < 0) ? v + 3 : v;
-}
-
-std::string stereo_depth_name(int depth) {
-    return std::to_string(depth) + " PX";
-}
-
-int stereo_depth_next(int depth, int step) {
-    int v = depth + step;
-    if (v < 1) {
-        v = 8;
-    } else if (v > 8) {
-        v = 1;
-    }
-    return v;
-}
-
-std::string stereo_convergence_name(int value) {
-    return std::to_string(value) + " PX";
-}
-
-int stereo_convergence_next(int value, int step) {
-    int v = value + step;
-    if (v < 0) {
-        v = 8;
-    } else if (v > 8) {
-        v = 0;
-    }
-    return v;
+    const int cur = stereo == 1 ? 1 : 0;
+    int v = (cur + step) % 2;
+    return (v < 0) ? v + 2 : v;
 }
 
 struct ResolutionOption {
@@ -1442,10 +1412,6 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                         message_box_name(engine.message_box()),
                     std::string("FILTER: ") + filter_name(video.filter),
                     std::string("STEREO 3D: ") + stereo_name(video.stereo),
-                    std::string("STEREO DEPTH: ") +
-                        stereo_depth_name(video.stereo_depth),
-                    std::string("STEREO CONVERGE: ") +
-                        stereo_convergence_name(video.stereo_convergence),
                     "BACK"};
         }
         case MenuScreen::Audio:
@@ -2559,7 +2525,7 @@ int run_sdl(const Options& opt, Engine& engine,
     video.splash = opt.splash;
     video.interpolate = opt.interpolate;
     video.filter = opt.filter;
-    video.stereo = opt.stereo;
+    video.stereo = opt.stereo == 1 ? 1 : 0;
     video.stereo_depth = opt.stereo_depth;
     video.stereo_convergence = opt.stereo_convergence;
 
@@ -3392,7 +3358,7 @@ int run_sdl(const Options& opt, Engine& engine,
                 break;
             }
             case MenuScreen::Video:
-                if (nav == 5 && sel == 10) {
+                if (nav == 5 && sel == 8) {
                     menu.screen = MenuScreen::Options;
                 } else if (sel == 4) {
                     if (nav == 5 || nav == 3 || nav == 4) {
@@ -3411,16 +3377,6 @@ int run_sdl(const Options& opt, Engine& engine,
                     if (nav == 5 || nav == 3 || nav == 4) {
                         video.stereo =
                             stereo_next(video.stereo, nav == 3 ? -1 : 1);
-                    }
-                } else if (sel == 8) {
-                    if (nav == 5 || nav == 3 || nav == 4) {
-                        video.stereo_depth = stereo_depth_next(
-                            video.stereo_depth, nav == 3 ? -1 : 1);
-                    }
-                } else if (sel == 9) {
-                    if (nav == 5 || nav == 3 || nav == 4) {
-                        video.stereo_convergence = stereo_convergence_next(
-                            video.stereo_convergence, nav == 3 ? -1 : 1);
                     }
                 } else if (nav == 3) {
                     video_step(-1);

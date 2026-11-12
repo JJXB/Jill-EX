@@ -2,21 +2,20 @@
 
 ## 2026-11-12 (stereo 3D)
 
-* Added stereo rendering with `OPTIONS > VIDEO > STEREO 3D`: `OFF`,
-  `INTERLACED` (even lines = left eye, odd lines = right) and `SBS` (half-width
-  side-by-side).  Two eye views are rendered with a small horizontal
-  separation: the full-board backdrop is fixed, tiles move half the distance
-  and objects move the full distance, while the HUD/UI stay at zero parallax.
-  Menus, the level-select panel and the save-name prompt remain 2D.
-* Added `[video] stereo`, `[video] stereo_depth`, `--stereo MODE` and
-  `--stereo-depth N`.  `OPTIONS > VIDEO > STEREO DEPTH` cycles 1..8 pixels;
-  the default separation is 2 (lower it if the view feels too wide).
-  `OPTIONS > VIDEO > STEREO CONVERGE` (0..8, default 0) pulls both eye images
-  inward, including the board backdrop, so the left/right views can be lined
-  up without reducing the depth separation.  The eye order is also corrected
-  so the backdrop is the far plane and tiles/objects come forward; the old
-  sign put the scene inside-out (objects diverged behind the background).
-  Headless `--dump` supports the same controls for testing.
+* Added stereo rendering with `OPTIONS > VIDEO > STEREO 3D`: `OFF` and
+  `INTERLACED` (even lines = left eye, odd lines = right).  Two eye views are
+  rendered with a small horizontal separation: the full-board backdrop is the
+  far plane, tiles come half the distance forward and objects come the full
+  distance forward, while the HUD/UI stay at zero parallax.  Menus, the
+  level-select panel and the save-name prompt remain 2D.
+* SBS output is disabled and its depth/convergence rows are hidden from the
+  menu.  The settings remain for interlaced via `[video] stereo`,
+  `[video] stereo_depth` (1..8, default 2) and `[video] stereo_convergence`
+  (0..8, default 0), plus `--stereo off|interlaced`, `--stereo-depth N` and
+  `--stereo-convergence N`.  The eye order is corrected so the backdrop is the
+  far plane and tiles/objects come forward; the old sign put the scene
+  inside-out (objects diverged behind the background).  Headless `--dump`
+  supports the same controls for testing.
 
 ## 2026-11-12 (Jill 3 map return)
 

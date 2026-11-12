@@ -6,23 +6,18 @@ not a GLSL/HLSL shader pipeline.
 
 ## Stereo 3D
 
-`OPTIONS > VIDEO > STEREO 3D` cycles `OFF / INTERLACED / SBS`.  The game is
-rendered twice with a horizontal eye separation: a static board backdrop, tiles
-at half the separation and objects at the full separation.  HUD text, dialog
-boxes, the message line and menus stay at zero parallax.
+`OPTIONS > VIDEO > STEREO 3D` cycles `OFF / INTERLACED`.  The game is rendered
+twice with a horizontal eye separation: a static board backdrop, tiles at half
+the separation and objects at the full separation.  HUD text, dialog boxes, the
+message line and menus stay at zero parallax.  `INTERLACED` takes even output
+rows from the left eye and odd rows from the right.
 
-* `INTERLACED`: even output rows come from the left eye, odd rows from the right.
-* `SBS`: left eye in columns 0..159, right eye in columns 160..319 (half-width
-  side-by-side for 3D TVs/projectors).
-
-`OPTIONS > VIDEO > STEREO DEPTH` cycles the eye separation from 1 to 8 pixels
-(default 2).  `OPTIONS > VIDEO > STEREO CONVERGE` pulls both eye images inward
-by 0..8 pixels (default 0); adjust this when the two images sit too far apart
-or feel uncomfortable.  Stored as `[video] stereo = 0/1/2`,
-`[video] stereo_depth = pixels` and `[video] stereo_convergence = pixels`;
-`--stereo off|interlaced|sbs`, `--stereo-depth N` and
-`--stereo-convergence N` also work.  Headless `--dump` applies the same
-composition.
+SBS output is disabled for now and its depth/convergence rows are hidden from
+the menu.  The settings remain available to the interlaced path as
+`[video] stereo = 0/1`, `[video] stereo_depth` (1..8, default 2) and
+`[video] stereo_convergence` (0..8, default 0), with `--stereo off|interlaced`,
+`--stereo-depth N` and `--stereo-convergence N`.  Headless `--dump` applies the
+same interlaced composition.
 
 ## Filters
 
