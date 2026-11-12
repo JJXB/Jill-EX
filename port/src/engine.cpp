@@ -2587,13 +2587,30 @@ void Engine::render(Framebuffer& fb, bool with_hud, float alpha) {
         bg = ext_visuals_->board(board_name_);
     }
     const bool bg_ok = bg && bg->size() == fb.px.size();
-    if (bg_ok) {
-        fb.px = *bg;
-    }
+    // Separate the eye separation from convergence.  The backdrop is normally
+    // at the screen plane, tiles get half the separation and objects the full
+    // separation.  Positive convergence pulls every layer inward, including the
+    // backdrop, so the whole view can be made comfortable on a given display.
+    const int eye = stereo_shift_ < 0 ? -1 : (stereo_shift_ > 0 ? 1 : 0);
+    const int depth = std::abs(stereo_shift_);
+    const int bg_shift = eye * stereo_convergence_;
+    const int tile_shift = eye * (depth / 2 + stereo_convergence_);
+    const int object_shift = eye * (depth + stereo_convergence_);
 
-    // Tiles get half the eye separation; the full-board backdrop stays fixed
-    // (infinite distance) and objects below get the full separation.
-    const int tile_shift = stereo_shift_ / 2;
+    if (bg_ok) {
+        if (bg_shift == 0) {
+            fb.px = *bg;
+        } else {
+            for (int y = 0; y < Framebuffer::H; ++y) {
+                for (int x = 0; x < Framebuffer::W; ++x) {
+                    int sx = x - bg_shift;
+                    sx = std::max(0, std::min(Framebuffer::W - 1, sx));
+                    fb.px[static_cast<size_t>(y) * Framebuffer::W + x] =
+                        (*bg)[static_cast<size_t>(y) * Framebuffer::W + sx];
+                }
+            }
+        }
+    }
     int c0 = cam_x_ >> 4;
     int c1 = std::min(Board::kCols - 1, (cam_x_ + view_w()) >> 4);
     int r0 = cam_y_ >> 4;
@@ -2623,7 +2640,7 @@ void Engine::render(Framebuffer& fb, bool with_hud, float alpha) {
     }
 
     const int object_cam_x = cam_x_;
-    cam_x_ -= stereo_shift_;
+    cam_x_ -= object_shift;
     for (int i : order_) {
         const BoardObject& o = objects_[static_cast<size_t>(i)];
         if (hide_text_kinds_ && (o.kind == 20 || o.kind == 21)) {

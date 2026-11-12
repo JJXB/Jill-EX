@@ -16,10 +16,13 @@ boxes, the message line and menus stay at zero parallax.
   side-by-side for 3D TVs/projectors).
 
 `OPTIONS > VIDEO > STEREO DEPTH` cycles the eye separation from 1 to 8 pixels
-(default 2).  Lower it if the two views feel too far apart.  Stored as
-`[video] stereo = 0/1/2` and `[video] stereo_depth = pixels`;
-`--stereo off|interlaced|sbs` and `--stereo-depth N` also work.  Headless
-`--dump` applies the same composition.
+(default 2).  `OPTIONS > VIDEO > STEREO CONVERGE` pulls both eye images inward
+by 0..8 pixels (default 0); adjust this when the two images sit too far apart
+or feel uncomfortable.  Stored as `[video] stereo = 0/1/2`,
+`[video] stereo_depth = pixels` and `[video] stereo_convergence = pixels`;
+`--stereo off|interlaced|sbs`, `--stereo-depth N` and
+`--stereo-convergence N` also work.  Headless `--dump` applies the same
+composition.
 
 ## Filters
 

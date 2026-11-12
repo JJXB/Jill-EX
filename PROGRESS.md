@@ -10,8 +10,13 @@
   Menus, the level-select panel and the save-name prompt remain 2D.
 * Added `[video] stereo`, `[video] stereo_depth`, `--stereo MODE` and
   `--stereo-depth N`.  `OPTIONS > VIDEO > STEREO DEPTH` cycles 1..8 pixels;
-  the default separation is 2 (lower it if the view feels too wide).  Headless
-  `--dump` supports both modes for testing.
+  the default separation is 2 (lower it if the view feels too wide).
+  `OPTIONS > VIDEO > STEREO CONVERGE` (0..8, default 0) pulls both eye images
+  inward, including the board backdrop, so the left/right views can be lined
+  up without reducing the depth separation.  The eye order is also corrected
+  so the backdrop is the far plane and tiles/objects come forward; the old
+  sign put the scene inside-out (objects diverged behind the background).
+  Headless `--dump` supports the same controls for testing.
 
 ## 2026-11-12 (Jill 3 map return)
 

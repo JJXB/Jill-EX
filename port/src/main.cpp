@@ -86,6 +86,7 @@ void usage() {
         "  --filter N     display filter: 0 none, 1 smooth, 2 CRT\n"
         "  --stereo MODE  stereo 3D: off, interlaced or sbs\n"
         "  --stereo-depth N  per-eye separation in pixels, 1..8 (default 2)\n"
+        "  --stereo-convergence N  pull both eyes inward, 0..8 (default 0)\n"
         "  --fullscreen   start in exclusive fullscreen\n"
         "  --windowed     start windowed (default)\n"
         "  --borderless   start in borderless fullscreen\n"
@@ -186,6 +187,8 @@ int main(int argc, char** argv) {
         }
         opt.stereo = ini.get_int("video", "stereo", opt.stereo);
         opt.stereo_depth = ini.get_int("video", "stereo_depth", opt.stereo_depth);
+        opt.stereo_convergence = ini.get_int("video", "stereo_convergence",
+                                             opt.stereo_convergence);
         opt.hud_classic = ini.get_bool("hud", "classic", opt.hud_classic);
         opt.hud_portrait = ini.get_bool("hud", "portrait", opt.hud_portrait);
         opt.hud_frame = ini.get_int("hud", "frame", opt.hud_frame);
@@ -332,6 +335,13 @@ int main(int argc, char** argv) {
                 opt.stereo_depth = 1;
             } else if (opt.stereo_depth > 8) {
                 opt.stereo_depth = 8;
+            }
+        } else if (a == "--stereo-convergence") {
+            opt.stereo_convergence = std::atoi(value("--stereo-convergence"));
+            if (opt.stereo_convergence < 0) {
+                opt.stereo_convergence = 0;
+            } else if (opt.stereo_convergence > 8) {
+                opt.stereo_convergence = 8;
             }
         } else if (a == "--fullscreen") {
             opt.fullscreen = true;

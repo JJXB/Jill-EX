@@ -70,9 +70,12 @@ displays/shutter glasses); SBS stores the left eye in the first half of the
 frame and the right eye in the second half (half-width side-by-side).  Menus
 and the level-select panel stay 2D.  `OPTIONS > VIDEO > STEREO DEPTH` cycles
 the eye separation from 1 to 8 pixels (default 2; lower this first if the view
-feels too wide).  The mode is stored as `[video] stereo`, the separation as
-`[video] stereo_depth`, and can be selected with `--stereo MODE` /
-`--stereo-depth N`.
+feels too wide).  `OPTIONS > VIDEO > STEREO CONVERGE` pulls both eye images
+inward by 0..8 pixels (default 0) without changing the eye separation; use it
+when the left/right images feel like they sit too far apart.  The mode is
+stored as `[video] stereo`, the separation as `[video] stereo_depth`, the
+convergence as `[video] stereo_convergence`, and can be selected with
+`--stereo MODE` / `--stereo-depth N` / `--stereo-convergence N`.
 
 `OPTIONS > VIDEO > MESSAGE BOX` cycles three styles:
 

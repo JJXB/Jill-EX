@@ -64,6 +64,13 @@ public:
     // a simple depth order.  HUD/UI are unaffected.
     void set_stereo_shift(int pixels) { stereo_shift_ = pixels; }
     int stereo_shift() const { return stereo_shift_; }
+    // Moves the stereo convergence plane toward the viewer.  Positive values
+    // pull both eye images inward by the same amount (including the board
+    // backdrop), reducing how far apart the two views sit.
+    void set_stereo_convergence(int pixels) {
+        stereo_convergence_ = pixels;
+    }
+    int stereo_convergence() const { return stereo_convergence_; }
     // Build the draw list for an arbitrary camera and render once.  Used by the
     // menu/splash backdrops, which are not tied to the player's position.
     void render_at(Framebuffer& fb, int x, int y, bool with_hud = false);
@@ -567,4 +574,5 @@ private:
     bool turtle_skip_ = false;
     int slow_phase_ = 0;  // 0 = first half of a 2-tick move, 1 = second half
     int stereo_shift_ = 0;
+    int stereo_convergence_ = 0;
 };

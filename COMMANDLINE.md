@@ -45,6 +45,7 @@ run.cmd [options]
 | `--filter NAME` | `0`/none, `1`/smooth, `2`/crt |
 | `--stereo MODE` | Stereo 3D: `off`, `interlaced`, or `sbs` |
 | `--stereo-depth N` | Per-eye separation in pixels, 1..8 (default 2) |
+| `--stereo-convergence N` | Pull both eye images inward, 0..8 (default 0) |
 | `--fullscreen` | Exclusive fullscreen |
 | `--windowed` | Windowed (default) |
 | `--borderless` | Borderless fullscreen |

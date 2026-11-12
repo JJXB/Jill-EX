@@ -31,6 +31,7 @@ struct Options {
     int filter = 0;             // --filter N: 0 none, 1 smooth, 2 CRT
     int stereo = 0;             // --stereo MODE: 0 off, 1 interlaced, 2 SBS
     int stereo_depth = 2;       // --stereo-depth N: eye separation in pixels
+    int stereo_convergence = 0; // --stereo-convergence N: pull both eyes inward
     int window_mode = 0;        // 0 windowed, 1 fullscreen, 2 borderless
     int resolution = 0;         // 0 desktop, else index into kResolutions
     int resolution_w = 0;       // --resolution WxH, resolved at start-up

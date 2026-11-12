@@ -280,14 +280,17 @@ int run_headless(Engine& engine, const Options& opt) {
             Framebuffer left;
             Framebuffer right;
             const int shift = std::max(1, opt.stereo_depth);
-            engine.set_stereo_shift(-shift);
-            engine.render(left);
+            engine.set_stereo_convergence(opt.stereo_convergence);
             engine.set_stereo_shift(shift);
+            engine.render(left);
+            engine.set_stereo_shift(-shift);
             engine.render(right);
             engine.set_stereo_shift(0);
+            engine.set_stereo_convergence(0);
             compose_stereo(fb, left, right, opt.stereo);
         } else {
             engine.set_stereo_shift(0);
+            engine.set_stereo_convergence(0);
             engine.render(fb);
         }
         std::vector<uint32_t> argb(fb.px.size());
@@ -1037,6 +1040,7 @@ struct VideoSettings {
     int filter = 0;      // 0 none, 1 smooth (light blur), 2 CRT
     int stereo = 0;      // 0 off, 1 row-interlaced, 2 half-width SBS
     int stereo_depth = 2;  // per-eye horizontal separation in source pixels
+    int stereo_convergence = 0;  // common inward pull for both eyes
 };
 
 // Presentation rates.  The world always ticks at 18.2065 Hz; these only change
@@ -1093,6 +1097,20 @@ int stereo_depth_next(int depth, int step) {
         v = 8;
     } else if (v > 8) {
         v = 1;
+    }
+    return v;
+}
+
+std::string stereo_convergence_name(int value) {
+    return std::to_string(value) + " PX";
+}
+
+int stereo_convergence_next(int value, int step) {
+    int v = value + step;
+    if (v < 0) {
+        v = 8;
+    } else if (v > 8) {
+        v = 0;
     }
     return v;
 }
@@ -1426,6 +1444,8 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                     std::string("STEREO 3D: ") + stereo_name(video.stereo),
                     std::string("STEREO DEPTH: ") +
                         stereo_depth_name(video.stereo_depth),
+                    std::string("STEREO CONVERGE: ") +
+                        stereo_convergence_name(video.stereo_convergence),
                     "BACK"};
         }
         case MenuScreen::Audio:
@@ -2541,6 +2561,7 @@ int run_sdl(const Options& opt, Engine& engine,
     video.filter = opt.filter;
     video.stereo = opt.stereo;
     video.stereo_depth = opt.stereo_depth;
+    video.stereo_convergence = opt.stereo_convergence;
 
     SDL_Window* window = SDL_CreateWindow(
         "Jill (port skeleton)", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
@@ -3371,7 +3392,7 @@ int run_sdl(const Options& opt, Engine& engine,
                 break;
             }
             case MenuScreen::Video:
-                if (nav == 5 && sel == 9) {
+                if (nav == 5 && sel == 10) {
                     menu.screen = MenuScreen::Options;
                 } else if (sel == 4) {
                     if (nav == 5 || nav == 3 || nav == 4) {
@@ -3395,6 +3416,11 @@ int run_sdl(const Options& opt, Engine& engine,
                     if (nav == 5 || nav == 3 || nav == 4) {
                         video.stereo_depth = stereo_depth_next(
                             video.stereo_depth, nav == 3 ? -1 : 1);
+                    }
+                } else if (sel == 9) {
+                    if (nav == 5 || nav == 3 || nav == 4) {
+                        video.stereo_convergence = stereo_convergence_next(
+                            video.stereo_convergence, nav == 3 ? -1 : 1);
                     }
                 } else if (nav == 3) {
                     video_step(-1);
@@ -4034,14 +4060,17 @@ int run_sdl(const Options& opt, Engine& engine,
                 !score_entry.active;
             if (stereo_view) {
                 const int shift = std::max(1, video.stereo_depth);
-                engine.set_stereo_shift(-shift);
-                engine.render(stereo_left, true, alpha);
+                engine.set_stereo_convergence(video.stereo_convergence);
                 engine.set_stereo_shift(shift);
+                engine.render(stereo_left, true, alpha);
+                engine.set_stereo_shift(-shift);
                 engine.render(stereo_right, true, alpha);
                 engine.set_stereo_shift(0);
+                engine.set_stereo_convergence(0);
                 compose_stereo(fb, stereo_left, stereo_right, video.stereo);
             } else {
                 engine.set_stereo_shift(0);
+                engine.set_stereo_convergence(0);
                 engine.render(fb, true, alpha);
             }
             // Temporary debug indicators sit just below the HUD: under the
@@ -4148,6 +4177,8 @@ int run_sdl(const Options& opt, Engine& engine,
         ini.set_int("video", "filter", video.filter);
         ini.set_int("video", "stereo", video.stereo);
         ini.set_int("video", "stereo_depth", video.stereo_depth);
+        ini.set_int("video", "stereo_convergence",
+                    video.stereo_convergence);
         ini.set_bool("audio", "music", menu.music_on);
         ini.set_int("audio", "volume", menu.music_volume);
         ini.set_bool("audio", "sfx", menu.sfx_on);
