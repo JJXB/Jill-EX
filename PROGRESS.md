@@ -1,5 +1,21 @@
 # Progress
 
+## 2026-11-14 (CMF translation audit against SBFMDRV)
+
+* Replaced the velocity/TL approximation with the Creative driver's exact
+  formula; the old `(127-velocity)/2` form silenced 337 note-ons in `funky.ddt`
+  and 256 in `bonzo.ddt`.
+* Added SBFMDRV voice allocation (9 melody / 6 rhythm voices), the duplicate
+  note-on retie rule, live program-change reprogramming, note-range folding
+  and the correct 1/256-semitone transpose scale.
+* Pitch now uses the chip's native 49,716 Hz for Nuked/fmopl, and the built-in
+  OPL2 EG-type handling was corrected (sustaining vs. percussive envelopes
+  were swapped).
+* Percussion now writes the additive-connection register and uses the carrier
+  scaling byte for velocity; rhythm-mode note-offs ignore stale note numbers.
+* The loop wraps at the end-of-track tick and cuts sounding voices / resets
+  transpose before replaying tick 0.
+
 ## 2026-11-14 (fmopl core, title strip position)
 
 * `port/src/third_party/fmopl.c/.h` vendors fmopl 0.37a (AdPlug's

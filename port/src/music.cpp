@@ -10,6 +10,40 @@ namespace {
 const int kModOff[9] = {0x00, 0x01, 0x02, 0x08, 0x09,
                         0x0A, 0x10, 0x11, 0x12};
 
+// The SBFMDRV driver programmes every melodic channel with this patch at
+// start-up, before a song has loaded its own instruments.
+const uint8_t kInitInstrument[11] = {0x01, 0x11, 0x4F, 0x00, 0xF1,
+                                     0xF2, 0x53, 0x74, 0x00, 0x00,
+                                     0x08};
+
+// Native OPL2 output rate (3.579545 MHz / 72).  Nuked and fmopl both generate
+// pitch from this rate and resample to the device rate, so F-numbers must be
+// derived from it rather than from the output rate.
+constexpr double kOpl2Rate = 3579545.0 / 72.0;
+
+// SBFMDRV folds notes below C0 up an octave and caps the top octave (notes
+// 108..119 repeat 96..107, 120..127 sit on B7).
+int fold_note(int note) {
+    if (note < 12) {
+        return note + 12;
+    }
+    if (note >= 120) {
+        return 119;
+    }
+    if (note >= 108) {
+        return note - 12;
+    }
+    return note;
+}
+
+// SBFMDRV's velocity scaling: velocity multiplies the patch's base output
+// level, and the KSL bits from the instrument byte are preserved.
+uint8_t carrier_level(uint8_t scaling, int velocity) {
+    const int base = 63 - (scaling & 0x3F);
+    const int level = 63 - ((((velocity & 0x7F) | 0x80) * base) >> 8);
+    return static_cast<uint8_t>((scaling & 0xC0) | (level & 0x3F));
+}
+
 }  // namespace
 
 Music::Music(int sample_rate)
@@ -67,6 +101,13 @@ int Music::core_rate() const {
     }
 }
 
+double Music::note_rate() const {
+    // The built-in core generates one phase increment per output sample; the
+    // other two run at the chip's native rate internally.
+    return core_ == OplCore::Builtin ? static_cast<double>(core_rate())
+                                     : kOpl2Rate;
+}
+
 void Music::core_generate(float* out, int frames) {
     switch (core_) {
         case OplCore::Nuked:
@@ -94,17 +135,18 @@ void Music::reset() {
     bd_ = 0;
     for (int i = 0; i < 16; ++i) {
         program_[i] = 0;
-        volume_[i] = 127;
         transpose_[i] = 0.0;
-        active_note_[i] = -1;
-        active_opl_[i] = -1;
-        last_velocity_[i] = 0;
         percussion_notes_[i] = 0;
+        note_playing_[i] = -1;
+        note_fix_[i] = false;
+        note_fix_vel_[i] = 0;
     }
     for (int i = 0; i < 9; ++i) {
+        voice_[i] = Voice();
         fnum_[i] = 0;
         block_[i] = 0;
     }
+    voice_age_ = 0;
 }
 
 void Music::start(std::shared_ptr<const CmfSong> song) {
@@ -117,6 +159,9 @@ void Music::start(std::shared_ptr<const CmfSong> song) {
     end_tick_ = std::max<uint32_t>(1, song_->end_tick);
     ticks_per_sample_ =
         static_cast<double>(song_->ticks_per_second) / core_rate();
+    // Match the SBFMDRV reset sequence: waveform select on, CSM/SEL off, the
+    // default patch on every channel, and AM+VIB depth enabled.
+    driver_reset();
 }
 
 void Music::stop() {
@@ -124,6 +169,30 @@ void Music::stop() {
     reset_cores();
     bd_ = 0;
     rhythm_ = false;
+    for (int i = 0; i < 9; ++i) {
+        voice_[i] = Voice();
+    }
+}
+
+void Music::driver_reset() {
+    write_reg(0x01, 0x20);  // enable waveform select (OPL2)
+    write_reg(0x08, 0x00);  // CSM / note-select off
+    for (int i = 0; i < 9; ++i) {
+        write_instrument(i, kInitInstrument);
+        voice_[i] = Voice();
+        fnum_[i] = 0;
+        block_[i] = 0;
+    }
+    for (int i = 0; i < 16; ++i) {
+        program_[i] = 0;
+        percussion_notes_[i] = 0;
+        note_playing_[i] = -1;
+        note_fix_[i] = false;
+    }
+    voice_age_ = 0;
+    bd_ = 0;
+    depth_ = 3;
+    write_rhythm_mode();
 }
 
 const std::string& Music::title() const {
@@ -143,13 +212,28 @@ void Music::render(float* out, int frames) {
             handle_event(events[next_event_]);
             ++next_event_;
         }
-        if (next_event_ >= events.size()) {
-            // The original driver loops level music; wrap while keeping the
-            // fractional tick so the rhythm stays steady.
+        if (next_event_ >= events.size() && tick_pos_ >= end_tick_) {
+            // The original driver restarts the track from the top; cut any
+            // sounding voices and clear per-channel transpose before replaying
+            // the tick-0 controllers/program changes.
             tick_pos_ -= static_cast<double>(end_tick_);
             if (tick_pos_ < 0.0) {
                 tick_pos_ = 0.0;
             }
+            for (int v = 0; v < 9; ++v) {
+                if (voice_[v].active) {
+                    key_off(v);
+                }
+                voice_[v] = Voice();
+            }
+            for (int ch = 0; ch < 16; ++ch) {
+                transpose_[ch] = 0.0;
+                note_playing_[ch] = -1;
+                note_fix_[ch] = false;
+                percussion_notes_[ch] = 0;
+            }
+            bd_ = 0;
+            write_rhythm_mode();
             next_event_ = 0;
         }
         core_generate(out + i, 1);
@@ -176,22 +260,33 @@ void Music::handle_event(const CmfEvent& e) {
 }
 
 void Music::program_change(int chan, int program) {
-    if (chan < 0 || chan >= 16) {
+    if (chan < 0 || chan >= 16 || !song_ || song_->instrument_count <= 0) {
         return;
     }
-    program_[chan] = static_cast<uint8_t>(program & 0x7F);
+    // SBFMDRV reduces the patch number modulo the file's instrument count.
+    program = program % song_->instrument_count;
+    if (program < 0) {
+        program = 0;
+    }
+    program_[chan] = program;
     if (rhythm_ && chan >= 11) {
         return;  // loaded by the next percussion note-on
     }
-    const int opl = chan < 9 ? chan : chan % 9;
-    load_melodic(opl, program_[chan]);
+    const int limit = rhythm_ ? 6 : 9;
+    for (int i = 0; i < limit; ++i) {
+        if (voice_[i].owner != chan) {
+            continue;
+        }
+        if (voice_[i].active) {
+            load_melodic(i, program);
+            voice_[i].patch = program;
+        } else {
+            voice_[i].owner = -1;  // parked voice: reload on next use
+        }
+    }
 }
 
-void Music::load_melodic(int opl_ch, int instrument) {
-    if (!song_ || instrument < 0 || instrument >= song_->instrument_count) {
-        return;
-    }
-    const uint8_t* ins = song_->instruments[instrument];
+void Music::write_instrument(int opl_ch, const uint8_t* ins) {
     const int mo = kModOff[opl_ch];
     const int co = mo + 3;
     write_reg(static_cast<uint8_t>(0x20 + mo), ins[0]);
@@ -207,6 +302,13 @@ void Music::load_melodic(int opl_ch, int instrument) {
     write_reg(static_cast<uint8_t>(0xC0 + opl_ch), ins[10]);
 }
 
+void Music::load_melodic(int opl_ch, int instrument) {
+    if (!song_ || instrument < 0 || instrument >= song_->instrument_count) {
+        return;
+    }
+    write_instrument(opl_ch, song_->instruments[instrument]);
+}
+
 void Music::load_operator(int op_off, const uint8_t* ins, bool carrier_half) {
     const int k = carrier_half ? 1 : 0;
     write_reg(static_cast<uint8_t>(0x20 + op_off), ins[k ? 1 : 0]);
@@ -216,24 +318,26 @@ void Music::load_operator(int op_off, const uint8_t* ins, bool carrier_half) {
     write_reg(static_cast<uint8_t>(0xE0 + op_off), ins[k ? 9 : 8]);
 }
 
-void Music::set_carrier_volume(int opl_ch, int midi_chan, int instrument,
-                               int velocity) {
+void Music::set_carrier_volume(int opl_ch, int instrument, int velocity) {
     if (!song_ || instrument < 0 || instrument >= song_->instrument_count) {
         return;
     }
     const uint8_t* ins = song_->instruments[instrument];
-    int tl = (ins[3] & 0x3F) + (127 - velocity) / 2 +
-             (127 - volume_[midi_chan]) / 2;
-    tl = std::max(0, std::min(63, tl));
     const int car = kModOff[opl_ch] + 3;
     write_reg(static_cast<uint8_t>(0x40 + car),
-               static_cast<uint8_t>((ins[3] & 0xC0) | tl));
+              carrier_level(ins[3], velocity));
 }
 
-// Writes the pitch registers with the key bit *off*; the caller keys the note.
-void Music::set_frequency(int opl_ch, double note) {
+// Writes the pitch registers.  `key_on` sets the B0 key bit for a sounding
+// note; percussion and key-off writes leave it clear.
+void Music::set_frequency(int opl_ch, double note, bool key_on) {
+    if (note < 0.0) {
+        note = 0.0;
+    } else if (note > 127.0) {
+        note = 127.0;
+    }
     const double f = 440.0 * std::pow(2.0, (note - 69.0) / 12.0);
-    double x = f * 1048576.0 / core_rate();
+    double x = f * 1048576.0 / note_rate();
     int block = 0;
     while (x >= 1024.0 && block < 7) {
         x *= 0.5;
@@ -247,21 +351,22 @@ void Music::set_frequency(int opl_ch, double note) {
     fnum_[opl_ch] = fnum;
     block_[opl_ch] = block;
     write_reg(static_cast<uint8_t>(0xA0 + opl_ch),
-               static_cast<uint8_t>(fnum & 0xFF));
+              static_cast<uint8_t>(fnum & 0xFF));
     write_reg(static_cast<uint8_t>(0xB0 + opl_ch),
-               static_cast<uint8_t>((block << 2) | ((fnum >> 8) & 3)));
+              static_cast<uint8_t>((block << 2) | ((fnum >> 8) & 3) |
+                                   (key_on ? 0x20 : 0)));
 }
 
 void Music::key_on(int opl_ch) {
     write_reg(static_cast<uint8_t>(0xB0 + opl_ch),
-               static_cast<uint8_t>((block_[opl_ch] << 2) |
-                                    ((fnum_[opl_ch] >> 8) & 3) | 0x20));
+              static_cast<uint8_t>((block_[opl_ch] << 2) |
+                                   ((fnum_[opl_ch] >> 8) & 3) | 0x20));
 }
 
 void Music::key_off(int opl_ch) {
     write_reg(static_cast<uint8_t>(0xB0 + opl_ch),
-               static_cast<uint8_t>((block_[opl_ch] << 2) |
-                                    ((fnum_[opl_ch] >> 8) & 3)));
+              static_cast<uint8_t>((block_[opl_ch] << 2) |
+                                   ((fnum_[opl_ch] >> 8) & 3)));
 }
 
 void Music::write_rhythm_mode() {
@@ -273,14 +378,44 @@ void Music::write_rhythm_mode() {
     write_reg(0xBD, static_cast<uint8_t>(v));
 }
 
+int Music::allocate_voice(int chan) {
+    const int limit = rhythm_ ? 6 : 9;
+    // 1) a voice this channel last released.
+    for (int i = 0; i < limit; ++i) {
+        if (!voice_[i].active && voice_[i].owner == chan) {
+            return i;
+        }
+    }
+    // 2) a voice that has never been used.
+    for (int i = 0; i < limit; ++i) {
+        if (voice_[i].owner == -1) {
+            return i;
+        }
+    }
+    // 3) any released voice.
+    for (int i = 0; i < limit; ++i) {
+        if (!voice_[i].active) {
+            return i;
+        }
+    }
+    // 4) steal the oldest sounding voice.
+    int best = 0;
+    for (int i = 1; i < limit; ++i) {
+        if (voice_[i].age < voice_[best].age) {
+            best = i;
+        }
+    }
+    key_off(best);
+    voice_[best].active = false;
+    return best;
+}
+
 void Music::note_on(int chan, int note, int velocity) {
     if (chan < 0 || chan >= 16) {
         return;
     }
-    last_velocity_[chan] = velocity;
-    const double pitch = note + transpose_[chan];
-
     if (rhythm_ && chan >= 11 && chan <= 15) {
+        const double pitch = fold_note(note) + transpose_[chan];
         int opl_ch = 6;
         int op_off = -1;
         int bit = 0;
@@ -310,7 +445,7 @@ void Music::note_on(int chan, int note, int velocity) {
                 bit = 0x01;
                 break;
         }
-        set_frequency(opl_ch, pitch);
+        set_frequency(opl_ch, pitch, false);
         const int prog = program_[chan];
         if (song_ && prog >= 0 && prog < song_->instrument_count) {
             const uint8_t* ins = song_->instruments[prog];
@@ -320,13 +455,17 @@ void Music::note_on(int chan, int note, int velocity) {
             } else {
                 load_operator(op_off, ins, false);
             }
-            int tl = (chan == 11 ? ins[3] : ins[2]) & 0x3F;
-            tl += (127 - velocity) / 2 + (127 - volume_[chan]) / 2;
-            tl = std::max(0, std::min(63, tl));
+            // The driver always forces additive connection on the rhythm
+            // voices (C0 = instrument byte 10 | 1).
+            const int c0ch = (chan == 11) ? 6 : (chan == 12 || chan == 15) ? 7 : 8;
+            write_reg(static_cast<uint8_t>(0xC0 + c0ch),
+                      static_cast<uint8_t>(ins[10] | 1));
+            // SBFMDRV scales velocity from the carrier scaling byte (ins[3])
+            // for every percussion voice, then writes the result to that
+            // voice's own level register.
             const int target = chan == 11 ? 0x13 : op_off;
             write_reg(static_cast<uint8_t>(0x40 + target),
-                       static_cast<uint8_t>(
-                           ((chan == 11 ? ins[3] : ins[2]) & 0xC0) | tl));
+                      carrier_level(ins[3], velocity));
         }
         percussion_notes_[chan] = note;
         bd_ &= ~bit;
@@ -339,12 +478,49 @@ void Music::note_on(int chan, int note, int velocity) {
     if (rhythm_ && chan >= 6 && chan <= 8) {
         return;  // those OPL channels are percussion while rhythm mode is on
     }
-    const int opl = chan < 9 ? chan : chan % 9;
-    set_frequency(opl, pitch);
-    set_carrier_volume(opl, chan, program_[chan], velocity);
-    active_note_[chan] = note;
-    active_opl_[chan] = opl;
+
+    if (note_playing_[chan] == note) {
+        // Repeated note-on without an intervening note-off.  Release the
+        // sounding note now and retrigger it at the following note-off; the
+        // original library and AdPlug use this rule for same-tick reties.
+        release_note(chan, note);
+        note_playing_[chan] = -1;
+        note_fix_[chan] = true;
+        note_fix_vel_[chan] = velocity;
+        return;
+    }
+    note_fix_[chan] = false;
+    note_playing_[chan] = note;
+    start_note(chan, note, velocity);
+}
+
+void Music::start_note(int chan, int note, int velocity) {
+    const double pitch = fold_note(note) + transpose_[chan];
+    const int opl = allocate_voice(chan);
+    Voice& v = voice_[opl];
+    const int patch = program_[chan];
+    if (v.owner != chan || v.patch != patch) {
+        load_melodic(opl, patch);
+        v.patch = patch;
+    }
+    set_frequency(opl, pitch, false);
+    set_carrier_volume(opl, patch, velocity);
     key_on(opl);
+    v.owner = chan;
+    v.note = note;
+    v.active = true;
+    v.age = ++voice_age_;
+}
+
+void Music::release_note(int chan, int note) {
+    const int limit = rhythm_ ? 6 : 9;
+    for (int i = 0; i < limit; ++i) {
+        if (voice_[i].owner == chan && voice_[i].note == note &&
+            voice_[i].active) {
+            key_off(i);
+            voice_[i].active = false;
+        }
+    }
 }
 
 void Music::note_off(int chan, int note) {
@@ -352,6 +528,9 @@ void Music::note_off(int chan, int note) {
         return;
     }
     if (rhythm_ && chan >= 11 && chan <= 15) {
+        if (percussion_notes_[chan] != note) {
+            return;  // a newer hit is playing
+        }
         int bit = 0;
         switch (chan) {
             case 11: bit = 0x10; break;
@@ -365,14 +544,39 @@ void Music::note_off(int chan, int note) {
         percussion_notes_[chan] = 0;
         return;
     }
-    if (active_note_[chan] != note && active_note_[chan] >= 0) {
-        return;  // stale note-off for an older note
+    if (rhythm_ && chan >= 6 && chan <= 8) {
+        return;
     }
-    const int opl = active_opl_[chan];
-    if (opl >= 0) {
-        key_off(opl);
+    if (note_fix_[chan]) {
+        // The retrigger deferred by a duplicate note-on (see note_on).
+        note_fix_[chan] = false;
+        note_playing_[chan] = note;
+        start_note(chan, note, note_fix_vel_[chan]);
+        return;
     }
-    active_note_[chan] = -1;
+    release_note(chan, note);
+    if (note_playing_[chan] == note) {
+        note_playing_[chan] = -1;
+    }
+}
+
+void Music::update_transpose(int chan) {
+    const int limit = rhythm_ ? 6 : 9;
+    for (int i = 0; i < limit; ++i) {
+        if (voice_[i].active && voice_[i].owner == chan) {
+            set_frequency(i, fold_note(voice_[i].note) + transpose_[chan], true);
+        }
+    }
+    if (rhythm_ && chan >= 11 && chan <= 15 && percussion_notes_[chan] != 0) {
+        int opl_ch = 7;
+        if (chan == 11) {
+            opl_ch = 6;
+        } else if (chan == 13 || chan == 14) {
+            opl_ch = 8;
+        }
+        const int base = fold_note(percussion_notes_[chan]);
+        set_frequency(opl_ch, base + transpose_[chan], false);
+    }
 }
 
 void Music::controller(int chan, int cc, int value) {
@@ -380,29 +584,28 @@ void Music::controller(int chan, int cc, int value) {
         return;
     }
     switch (cc) {
-        case 0x07:  // channel volume
-            volume_[chan] = value;
-            if (active_note_[chan] >= 0 && active_opl_[chan] >= 0 &&
-                !(rhythm_ && chan >= 6)) {
-                set_carrier_volume(active_opl_[chan], chan, program_[chan],
-                                   last_velocity_[chan]);
-            }
-            break;
         case 0x63:  // AM/VIB depth extension
             depth_ = value & 3;
             write_rhythm_mode();
             break;
-        case 0x67:  // melody <-> rhythm mode
-            rhythm_ = value != 0;
-            write_rhythm_mode();
+        case 0x67: {  // melody <-> rhythm mode
+            const bool on = value != 0;
+            if (on != rhythm_) {
+                rhythm_ = on;
+                driver_reset();  // SBFMDRV performs a full reset here
+            }
             break;
-        case 0x68:  // transpose up, 1/128 semitone
-            transpose_[chan] = value / 128.0;
+        }
+        case 0x68:  // transpose up, 1/256 semitone per step
+            transpose_[chan] = value / 256.0;
+            update_transpose(chan);
             break;
         case 0x69:  // transpose down
-            transpose_[chan] = -value / 128.0;
+            transpose_[chan] = -value / 256.0;
+            update_transpose(chan);
             break;
         default:
             break;
     }
 }
+

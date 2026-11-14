@@ -18,6 +18,6 @@ void NukedOpl::generate(float* out, int frames) {
         OPL3_GenerateResampled(&chip_, sample);
         out[i] += (static_cast<float>(sample[0]) +
                    static_cast<float>(sample[1])) *
-                  (0.9f / 32768.0f);  // 1.8x gain to match the OPL2 core
+                  (0.65f / 32768.0f);  // 1.3x gain to match the built-in core
     }
 }

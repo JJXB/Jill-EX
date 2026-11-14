@@ -229,17 +229,10 @@ void Opl2::update_envelope(Operator& op, int block) {
             if (op.eg_db >= sustain) {
                 op.eg_db = sustain;
                 // Percussion voices have no sustain phase: they decay to
-                // silence, then switch off.
-                op.eg_state = perc ? 0 : (op.egt ? 5 : 3);
-            }
-            break;
-        }
-        case 5: {  // sustaining tone: keep decaying at the decay rate
-            const int r = std::min(15, op.dr + shift);
-            op.eg_db += rate_db_per_sec(r) / rate_;
-            if (op.eg_db >= 96.0) {
-                op.eg_db = 96.0;
-                op.eg_state = 0;
+                // silence, then switch off.  EG-type 1 holds at the sustain
+                // level until key-off; EG-type 0 keeps falling at the release
+                // rate (the chip's "percussive" envelope).
+                op.eg_state = perc ? 0 : (op.egt ? 3 : 4);
             }
             break;
         }

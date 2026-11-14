@@ -65,17 +65,39 @@ sixteen Creative default instruments are not needed. **[verified: all 22
 Supported events:
 
 * note on / note off (velocity 0 counts as note off)
-* program change (loads the instrument into the OPL channel)
-* controller 0x07 (channel volume)
-* controller 0x63 (AM/VIB depth: bit 0 vibrato, bit 1 tremolo)
-* controller 0x67 (`0` melody mode, `1` rhythm mode)
-* controllers 0x68 / 0x69 (fine transpose, 1/128 semitone)
+* program change (`program % instrument_count`, then loads the instrument)
+* controller 0x63 (AM/VIB depth: bit 0 vibrato, bit 1 tremolo; extension)
+* controller 0x67 (`0` melody mode, `1` rhythm mode; performs the driver reset)
+* controllers 0x68 / 0x69 (fine transpose, **1/256 semitone** per step)
 
-Ignored like the original: pitch bend, aftertouch, sysex, tempo meta events.
-Track end loops the song (level music in the original does not stop).
+Ignored like the original: channel volume (0x07), pitch bend, aftertouch,
+sysex, tempo meta events.  Track end loops the song.
 
-MIDI channel `n` maps to OPL channel `n` in melody mode.  In rhythm mode the
-last five MIDI channels become percussion, matching the CMF specification:
+The sequencer is aligned with the Creative **SBFMDRV** driver (Creative Music
+File driver, as reimplemented by `viiri/fmdrv` and AdPlug):
+
+* Nine melodic OPL voices in melody mode, six in rhythm mode.  Note-on picks a
+  voice with the driver's four-tier search (same channel released, never used,
+  any released, oldest sounding); note-off releases every voice on that
+  channel/note.  This matters for the tracks' legato/retrigger patterns.
+* A repeated note-on for a still-sounding note is treated as a retie: the old
+  voice is released and the note is retriggered at the following note-off, so
+  same-tick `on`/`off` pairs are not cut short.
+* Program changes invalidate parked voices (so the next note reloads the new
+  patch) and reprogram sounding voices live.
+* Pitch uses the driver's note table quirks: notes 0..11 fold up an octave,
+  notes 108..119 repeat 96..107, and 120..127 sit on B7.
+* Velocity: `TL = 63 - (((velocity | 0x80) * (63 - patchTL)) >> 8)`, with the
+  instrument's KSL bits OR'd back in.  This is the driver's logarithmic
+  velocity response; it keeps low-velocity notes audible (the old
+  `(127 - velocity) / 2` form silenced many title/level notes).
+* The driver reset (song start and controller 0x67) enables waveform select
+  (`0x01 = 0x20`), clears CSM/SEL, programs the default instrument on every
+  channel, enables AM+VIB depth (`0xBD = 0xC0/0xE0`), and clears voice state.
+
+MIDI channel `n` maps to an OPL voice dynamically in melody mode.  In rhythm
+mode the last five MIDI channels become percussion, matching the CMF
+specification:
 
 | MIDI channel | voice | OPL operators |
 |--|--|--|
@@ -85,10 +107,16 @@ last five MIDI channels become percussion, matching the CMF specification:
 | 14 | top cymbal | channel 8 carrier |
 | 15 | hi-hat | channel 7 modulator |
 
-Percussion uses instrument register writes plus the `0xBD` key bits, exactly
-like the chip.  Velocity and controller 7 are added to the carrier total level
-(`(127 - value) / 2` TL steps), which reproduces the logarithmic CMF velocity
-response.
+Percussion uses the instrument's operator-0 bytes for the dedicated rhythm
+operator, its carrier scaling byte (`instrument[3]`) for velocity, and the
+`0xBD` key bits, exactly like the chip; the connection register is forced
+additive (`instrument[10] | 1`).
+
+F-numbers are derived from the chip's native 49,716 Hz for Nuked/fmopl and from
+the output rate for the built-in core, so all three cores play at the same
+pitch.  The original loader divides 1,193,180 by the CMF header's ticks/sec
+(`+0x0C`) and passes the result to `_sbfm_song_speed`, so the header tempo is
+authoritative.
 
 ## OPL2 core
 
@@ -99,6 +127,8 @@ and depth) and renders 9 two-operator channels:
 
 * 4 waveforms (sine, half sine, absolute sine, pulse sine)
 * ADSR envelopes with key scaling, sustain level and the sustaining-tone bit
+  (EG-type 1 holds at the sustain level; EG-type 0 keeps falling at the
+  release rate)
 * feedback and FM / additive connection
 * vibrato (7 or 14 cents) and tremolo (1 or 4.8 dB)
 * rhythm mode with bass drum, snare, tom, top cymbal and hi-hat
