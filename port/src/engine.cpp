@@ -3007,7 +3007,7 @@ void Engine::render_hud_classic(Framebuffer& fb) {
     const int slen = static_cast<int>(std::strlen(buf));
     draw_text(fb, px + kClassicPanelW - 2 - slen * 6, ry + 8, label, buf);
 
-    // INVENTORY panel (the original 64x84 box) and its caption.
+    // INVENTORY panel (the original 64x84 box) and its caption strip.
     const int invY = py + 56;
     const int n = header_[4] | (header_[5] << 8);
     for (int i = 0; i < n && i < 15; ++i) {
@@ -3023,11 +3023,10 @@ void Engine::render_hud_classic(Framebuffer& fb) {
                    invY + (i % 3) * 16, true);
     }
 
-    // INVENTORY caption in the bottom strip of the panel.
-    draw_text_font(fb, px + 3, py + kClassicPanelH - 9, 0, 2, 6,
-                   "INVENTORY");
-    draw_text_font(fb, px + 2, py + kClassicPanelH - 10, label, 2, 6,
-                   "INVENTORY");
+    // INVENTORY caption in its own bottom strip.
+    classic_box(fb, px, py + 52 + 84, kClassicPanelW, 14, 8);
+    draw_text_font(fb, px + 3, py + 52 + 84 + 5, 0, 2, 6, "INVENTORY");
+    draw_text_font(fb, px + 2, py + 52 + 84 + 4, label, 2, 6, "INVENTORY");
 }
 
 // MODERN/MINIMAL HUD (the default): one horizontal strip across the top.

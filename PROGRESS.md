@@ -6,8 +6,9 @@
   12-px top/bottom borders (shape entry 3), with a 10-px title strip; the
   bottom 8 px of the screen are a plain black hint strip *below* the frame, and
   `put_bottom_msg` draws there across the full width.  The in-game inventory
-  box is the original 64x84 size again (not a full-height column), and the
-  classic main-menu HI SCORES panel is also 64x84 with six-pixel rows.
+  box is the original 64x84 size again (not a full-height column), with its own
+  INVENTORY caption strip, and the classic main-menu HI SCORES panel is also
+  64x84 with six-pixel rows.
 * **Map gem doors**: the 8x8 keyhole marker is centred 4 px into the 16x16
   `MAPDOOR` (0x0BE) tile instead of using the 32-px key-door offset, so the red
   outline surrounds the gem blocker.
