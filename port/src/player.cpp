@@ -228,8 +228,18 @@ void Engine::player_update(int i) {
             if (on_floor) {
                 o.state = 0;
                 o.p13 = 6;
-                o.p11 = ((o.dy >= 0x10) ? -7 : -4) + ((in_.h != 0) ? 1 : 0);
-                o.dx = 0;
+                if (in_.h != 0) {
+                    // Keep walking: the landing kneel is for quiet drops only.
+                    // The next ground update takes the normal 8-px step.
+                    o.p11 = 0;
+                    o.p0f = 7;
+                    o.dx = in_.h;
+                } else {
+                    // Soft/hard landing pose; p11 counts up to -1 in state 0.
+                    o.p11 = (o.dy >= 0x10) ? -7 : -4;
+                    o.dx = 0;
+                    o.p0f = 0;
+                }
                 o.dy = 0;
                 sound(1, 2);
             }

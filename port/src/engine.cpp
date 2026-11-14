@@ -15,14 +15,20 @@ namespace {
 
 // Classic (original) HUD frame.  The board still fills the 320x200 buffer; the
 // patterned border, title strip and 64-px side panel cover it, matching the
-// original presentation.
-constexpr int kClassicBorder = 8;
-constexpr int kClassicTop = 20;
-constexpr int kClassicPanelX = kClassicBorder;
+// original presentation.  The frame uses the original 8-px side borders and
+// 12-px top/bottom borders (shape entry 3: 8x16 vertical edges, 16x12
+// horizontal edges); the bottom 8 px are a plain black hint strip outside the
+// frame, as in the original screens.
+constexpr int kClassicBorderX = 8;
+constexpr int kClassicBorderY = 12;
+constexpr int kClassicHintH = 8;
+constexpr int kClassicFrameH = Framebuffer::H - kClassicHintH;  // 192
+constexpr int kClassicTop = 22;
+constexpr int kClassicPanelX = kClassicBorderX;
 constexpr int kClassicPanelY = kClassicTop;
 constexpr int kClassicPanelW = 64;
 constexpr int kClassicPanelH =
-    Framebuffer::H - kClassicTop - kClassicBorder;  // to the bottom border
+    kClassicFrameH - kClassicTop - kClassicBorderY;  // 160
 // Classic menu/HUD viewport: the intro-board picture section at tiles
 // (113,54)..(127,63) is 15x10 cells, i.e. exactly 240x160 px.  The old 238x166
 // rectangle cropped that section; the panel ends at x=72 and the right border
@@ -30,7 +36,7 @@ constexpr int kClassicPanelH =
 constexpr int kClassicViewX = kClassicPanelX + kClassicPanelW;  // 72
 constexpr int kClassicViewY = kClassicTop;                     // 20
 constexpr int kClassicViewW = 240;
-constexpr int kClassicViewH = 160;
+constexpr int kClassicViewH = kClassicPanelH;  // 152
 
 std::string join(const std::string& dir, const std::string& name) {
     if (dir.empty()) {
@@ -2765,10 +2771,15 @@ void Engine::draw_classic_backdrop(Framebuffer& fb, const std::string& title,
 
     for (int y = 0; y < Framebuffer::H; ++y) {
         for (int x = 0; x < Framebuffer::W; ++x) {
-            const bool ring = x < kClassicBorder ||
-                              x >= Framebuffer::W - kClassicBorder ||
-                              y < kClassicBorder ||
-                              y >= Framebuffer::H - kClassicBorder;
+            // Below the frame is the plain hint strip.
+            if (y >= kClassicFrameH) {
+                fb.put(x, y, 0);
+                continue;
+            }
+            const bool ring = x < kClassicBorderX ||
+                              x >= Framebuffer::W - kClassicBorderX ||
+                              y < kClassicBorderY ||
+                              y >= kClassicFrameH - kClassicBorderY;
             const bool left = x < kClassicViewX;
             const bool top = y < kClassicViewY;
             const bool bottom = y >= kClassicViewY + kClassicViewH;
@@ -2778,34 +2789,34 @@ void Engine::draw_classic_backdrop(Framebuffer& fb, const std::string& title,
             const ShapeFrame* f = fill;
             int sx = x;
             int sy = y;
-            if (x < kClassicBorder && y < kClassicBorder) {
+            if (x < kClassicBorderX && y < kClassicBorderY) {
                 f = corner;
-            } else if (x >= Framebuffer::W - kClassicBorder &&
-                       y < kClassicBorder) {
+            } else if (x >= Framebuffer::W - kClassicBorderX &&
+                       y < kClassicBorderY) {
                 f = corner;
-                sx = x - (Framebuffer::W - kClassicBorder);
-            } else if (x < kClassicBorder &&
-                       y >= Framebuffer::H - kClassicBorder) {
+                sx = x - (Framebuffer::W - kClassicBorderX);
+            } else if (x < kClassicBorderX &&
+                       y >= kClassicFrameH - kClassicBorderY) {
                 f = corner;
-                sy = y - (Framebuffer::H - kClassicBorder);
-            } else if (x >= Framebuffer::W - kClassicBorder &&
-                       y >= Framebuffer::H - kClassicBorder) {
+                sy = y - (kClassicFrameH - kClassicBorderY);
+            } else if (x >= Framebuffer::W - kClassicBorderX &&
+                       y >= kClassicFrameH - kClassicBorderY) {
                 f = corner;
-                sx = x - (Framebuffer::W - kClassicBorder);
-                sy = y - (Framebuffer::H - kClassicBorder);
-            } else if (y < kClassicBorder) {
+                sx = x - (Framebuffer::W - kClassicBorderX);
+                sy = y - (kClassicFrameH - kClassicBorderY);
+            } else if (y < kClassicBorderY) {
                 f = edge_top;
                 sy = y;
-            } else if (y >= Framebuffer::H - kClassicBorder) {
+            } else if (y >= kClassicFrameH - kClassicBorderY) {
                 f = edge_bottom;
-                sy = 4 + (y - (Framebuffer::H - kClassicBorder));
-            } else if (x < kClassicBorder) {
+                sy = y - (kClassicFrameH - kClassicBorderY);
+            } else if (x < kClassicBorderX) {
                 f = edge_left;
-                sy = y - kClassicBorder;
-            } else if (x >= Framebuffer::W - kClassicBorder) {
+                sy = y - kClassicBorderY;
+            } else if (x >= Framebuffer::W - kClassicBorderX) {
                 f = edge_right;
-                sx = x - (Framebuffer::W - kClassicBorder);
-                sy = y - kClassicBorder;
+                sx = x - (Framebuffer::W - kClassicBorderX);
+                sy = y - kClassicBorderY;
             }
             uint8_t colour;
             if (f && f->w > 0 && f->h > 0) {
@@ -2833,8 +2844,12 @@ void Engine::draw_classic_backdrop(Framebuffer& fb, const std::string& title,
     const int tw = static_cast<int>(title.size()) * adv;
     const int tx = kClassicViewX + (kClassicViewW - tw) / 2;
     const int clean_x = std::max(kClassicViewX + 2, tx);
-    draw_text_font(fb, clean_x + 1, 7, 0, bank, adv, title.c_str());
-    draw_text_font(fb, clean_x, 6, label, bank, adv, title.c_str());
+    if (adv == 8) {
+        draw_text_font(fb, clean_x, 13, label, bank, adv, title.c_str());
+    } else {
+        draw_text_font(fb, clean_x + 1, 15, 0, bank, adv, title.c_str());
+        draw_text_font(fb, clean_x, 14, label, bank, adv, title.c_str());
+    }
 }
 
 void Engine::draw_menu_window(Framebuffer& fb, int x, int y, int w, int h) {
@@ -2954,7 +2969,7 @@ void Engine::render_hud_classic(Framebuffer& fb) {
     // Status column.
     classic_box(fb, px, py, kClassicPanelW, 30, 12);
     classic_box(fb, px, py + 30, kClassicPanelW, 22, 8);
-    classic_box(fb, px, py + 52, kClassicPanelW, kClassicPanelH - 52 - 14, 8);
+    classic_box(fb, px, py + 52, kClassicPanelW, 84, 8);
 
     // HEALTH + bar.
     draw_text(fb, px + 2, py + 5, label, "HEALTH");
@@ -2992,8 +3007,8 @@ void Engine::render_hud_classic(Framebuffer& fb) {
     const int slen = static_cast<int>(std::strlen(buf));
     draw_text(fb, px + kClassicPanelW - 2 - slen * 6, ry + 8, label, buf);
 
-    // Inventory icons (3-column grid, as in the original).
-    const int invY = py + 58;
+    // INVENTORY panel (the original 64x84 box) and its caption.
+    const int invY = py + 56;
     const int n = header_[4] | (header_[5] << 8);
     for (int i = 0; i < n && i < 15; ++i) {
         const int id = header_[6 + i * 2] | (header_[7 + i * 2] << 8);
@@ -3013,13 +3028,6 @@ void Engine::render_hud_classic(Framebuffer& fb) {
                    "INVENTORY");
     draw_text_font(fb, px + 2, py + kClassicPanelH - 10, label, 2, 6,
                    "INVENTORY");
-
-    // The original keeps a blank strip under the playfield for the bottom
-    // hint line ("APPLES GIVE YOU HEALTH", save/restore notices).  Clear it
-    // to black so the message never sits on the patterned border.
-    const int msg_y = kClassicViewY + kClassicViewH;
-    fb.fill_rect(kClassicViewX, msg_y, kClassicViewW,
-                 Framebuffer::H - kClassicBorder - msg_y, 0);
 }
 
 // MODERN/MINIMAL HUD (the default): one horizontal strip across the top.
@@ -3485,15 +3493,14 @@ void Engine::draw_bottom_msg(Framebuffer& fb) {
     }
     const std::string shown = msg_text_.substr(0, len);
     if (hud_classic_) {
-        // Classic HUD: the bottom hint line lives in the blank strip under
-        // the playfield (render_hud_classic clears it to black).
-        const int max_chars = kClassicViewW / 6;
+        // Classic HUD: the bottom hint line lives in the plain strip below the
+        // frame (draw_classic_backdrop clears it to black).
+        const int max_chars = Framebuffer::W / 6;
         const std::string line =
             shown.substr(0, static_cast<size_t>(max_chars));
         const int w = static_cast<int>(line.size()) * 6;
-        const int x = kClassicViewX + (kClassicViewW - w) / 2;
-        draw_text(fb, x, kClassicViewY + kClassicViewH + 3, msg_colour_,
-                  line.c_str());
+        const int x = (Framebuffer::W - w) / 2;
+        draw_text(fb, x, kClassicFrameH + 1, msg_colour_, line.c_str());
         return;
     }
     int w = static_cast<int>(shown.size()) * 6;
@@ -4365,7 +4372,18 @@ void Engine::draw_object(int i, Framebuffer& fb) {
             // panel shapes live in DGROUP 0x88F4/0x88FC, whose writer is not
             // recovered, so the port leaves the map cells in place.
             if (map_mode_) {
-                draw_shape(fb, 0x0E05, x + 4, y + 0x0C, true);
+                // Gem doors use the 16x16 MAPDOOR tile (0x0BE), so the 8x8
+                // marker has to sit 4 px into that tile; key doors use the
+                // 32-px door art and keep the original 0x0C offset.
+                int mark_y = y + 0x0C;
+                const int col = o.x >> 4;
+                const int row = o.y >> 4;
+                if (col >= 0 && col < Board::kCols && row >= 0 &&
+                    row < Board::kRows &&
+                    (map_[col * Board::kRows + row] & 0x3FFF) == 0x0BE) {
+                    mark_y = y + 4;
+                }
+                draw_shape(fb, 0x0E05, x + 4, mark_y, true);
             }
             return;
 

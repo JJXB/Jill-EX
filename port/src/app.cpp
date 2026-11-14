@@ -2204,7 +2204,7 @@ void draw_classic_hiscores(Framebuffer& fb, Engine& engine,
     const int x = 8;
     const int y = 32;
     const int w = 64;
-    const int h = 92;
+    const int h = 84;
     fb.fill_rect(x, y, w, h, 4);
     fb.fill_rect(x, y, w, 1, 12);
     fb.fill_rect(x, y + h - 1, w, 1, 12);
@@ -2223,7 +2223,7 @@ void draw_classic_hiscores(Framebuffer& fb, Engine& engine,
         char score[16];
         std::snprintf(score, sizeof(score), "%lu",
                       static_cast<unsigned long>(hi.entries[i].score));
-        const int row = y + 17 + static_cast<int>(i) * 7;
+        const int row = y + 16 + static_cast<int>(i) * 6;
         engine.draw_text(fb, x + 3, row, 14, name.c_str());
         const int sw = static_cast<int>(std::strlen(score)) * 6;
         engine.draw_text(fb, x + w - 3 - sw, row, 7, score);
@@ -2264,12 +2264,12 @@ void draw_classic_menu(Framebuffer& fb, Engine& engine, const Menu& m,
     boxw = std::max(168, std::min(boxw, 232));
     boxw = ((boxw + 7) / 8) * 8;
     int boxh = 20 + static_cast<int>(items.size()) * line_h + 8;
-    boxh = std::min(boxh, 162);
+    boxh = std::min(boxh, 152);
     boxh = ((boxh + 7) / 8) * 8;
 
     int bx = std::max(76, std::min(80, 312 - boxw));
     int by = (Framebuffer::H - boxh) / 2;
-    by = std::max(28, std::min(by, 190 - boxh));
+    by = std::max(28, std::min(by, 180 - boxh));
     engine.draw_menu_window(fb, bx, by, boxw, boxh);
 
     const char* header =
@@ -2307,7 +2307,8 @@ void draw_classic_menu(Framebuffer& fb, Engine& engine, const Menu& m,
         hint = "UP/DOWN MOVE   ENTER MOUNT   ESC BACK";
     }
     const int w = static_cast<int>(std::strlen(hint)) * 6;
-    const int footer_y = (by + boxh + 2 <= 188) ? 188 : 192;
+    // The classic hint line lives in the plain black strip below the frame.
+    const int footer_y = Framebuffer::H - 7;
     engine.draw_text(fb, (Framebuffer::W - w) / 2, footer_y, 7, hint);
 }
 

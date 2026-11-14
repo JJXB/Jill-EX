@@ -1,5 +1,20 @@
 # Progress
 
+## 2026-11-14 (tester follow-up: classic frame, gem marker, landing)
+
+* **Classic HUD frame**: the frame now uses the original 8-px side borders and
+  12-px top/bottom borders (shape entry 3), with a 10-px title strip; the
+  bottom 8 px of the screen are a plain black hint strip *below* the frame, and
+  `put_bottom_msg` draws there across the full width.  The in-game inventory
+  box is the original 64x84 size again (not a full-height column), and the
+  classic main-menu HI SCORES panel is also 64x84 with six-pixel rows.
+* **Map gem doors**: the 8x8 keyhole marker is centred 4 px into the 16x16
+  `MAPDOOR` (0x0BE) tile instead of using the 32-px key-door offset, so the red
+  outline surrounds the gem blocker.
+* **Landing**: holding a direction through a landing now keeps the walk pose
+  and `dx`, so there is no kneeling frame or walk interrupt; the soft/hard
+  landing pose still plays when landing without a direction.
+
 ## 2026-11-14 (tester feedback: general fixes)
 
 Seven fixes from desktop testers, all in shared code (desktop/PS4/Vita):
