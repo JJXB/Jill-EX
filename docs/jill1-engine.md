@@ -844,19 +844,19 @@ the linear addresses above rather than the symbol names.
   * The port's CLASSIC style draws the original screen presentation from
     shape entry 3: frame 0x0A is the noise fill, 0x00/0x03 the vertical
     edges, 0x06/0x08 the horizontal edges and 0x04 the corners (a 9-slice).
-    The game title sits in a top strip, and a 64-px status column carries a
-    health bar, LEVEL/SCORE, a 64x84 3-column inventory box and the INVENTORY
-    caption; a matching 64-px column sits on the right of the playfield.  The
-    frame uses the original 8-px side borders and 12-px top/bottom borders
-    (shape entry 3); the board renders into the framed viewport (x 72..248,
-    y 22..180) and the camera clamps to that viewport, so Jill stays visible at
-    the board edges while CLASSIC is active.  The bottom 8 px of the screen are
-    a plain black hint strip outside the frame (the original `PRESS F1 FOR
-    HELP` line lives there).  MODERN remains a separate top strip and keeps the
-    full 320x200 camera.  The layout is reconstructed from the original
-    menu/HUD screenshots **[inferred]**; the field positions follow the
-    documented draw calls above.  A pack `hud/classic.<ext>` still replaces the
-    panel using the legacy 64x84 layout.
+    The game title sits in a top strip, and a 64-px column carries the
+    inventory on top (the menu replaces it with the CONTROLS legend), then
+    HEALTH / LEVEL / SCORE and the INVENTORY caption.  The frame uses the
+    original 8-px side borders and 12-px top/bottom borders (shape entry 3);
+    the board renders into the framed viewport (x 72..312, y 22..180) and the
+    camera clamps to that viewport, so Jill stays visible at the board edges
+    while CLASSIC is active.  The bottom 8 px of the screen are a plain black
+    hint strip outside the frame (the original `PRESS F1 FOR HELP` line lives
+    there).  MODERN remains a separate top strip and keeps the full 320x200
+    camera.  The layout is reconstructed from the original menu/HUD
+    screenshots **[inferred]**; the field positions follow the documented draw
+    calls above.  A pack `hud/classic.<ext>` still replaces the panel using the
+    legacy 64x84 layout.
   * `PRESS F1 FOR HELP` is the one-shot intro message from `FUN_22ab_05b4`, not
     part of the per-frame HUD.
 * **Menus** (`FUN_22ab_2aed`): `PICK A CHOICE  PLAY / RESTORE / ...`; the high-score

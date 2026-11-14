@@ -31,11 +31,12 @@
   and the negative-`p11` landing pose are restored (4 frames soft / 7 hard,
   cancelled by a held direction on the next ground update).  The temporary
   "keep walking" shortcut was removed.
-* **Classic side columns**: the playfield is now framed by the 64-px status
-  column on the left and a matching 64-px column on the right, so the classic
-  HUD/menu view is 176 px wide instead of 240.  The classic menu draws an empty
-  64x84 companion panel beside HI SCORES and crops the intro backdrop to the
-  centre 176x158.
+* **Classic left column**: the view is back to the full 240 px width (no
+  right-side column).  The left column now follows the original order:
+  inventory (the menu swaps in the CONTROLS legend) on top, HEALTH/LEVEL/SCORE
+  below, then the INVENTORY caption strip at the bottom.  The classic main
+  menu draws the controls legend, health/score panel and caption; other menu
+  screens keep the 64x84 HI SCORES panel.
 
 ## 2026-11-14 (tester feedback: general fixes)
 

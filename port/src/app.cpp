@@ -2232,44 +2232,96 @@ void draw_classic_hiscores(Framebuffer& fb, Engine& engine,
     }
 }
 
+void draw_classic_controls(Framebuffer& fb, Engine& engine) {
+    const int x = 8;
+    const int y = 28;
+    const int w = 64;
+    const int h = 102;
+    fb.fill_rect(x, y, w, h, 0);
+    fb.fill_rect(x, y, w, 1, 12);
+    fb.fill_rect(x, y + h - 1, w, 1, 12);
+    fb.fill_rect(x, y, 1, h, 12);
+    fb.fill_rect(x + w - 1, y, 1, h, 12);
+    engine.draw_text(fb, x + 4, y + 4, 12, "CONTROLS");
+    engine.draw_text(fb, x + 2, y + 16, 12, "MOVE JILL");
+    engine.draw_text(fb, x + 2, y + 25, 11, "Z JUMP");
+    engine.draw_text(fb, x + 2, y + 34, 11, "X THROW");
+    engine.draw_text(fb, x + 2, y + 43, 15, "F1 HELP");
+    fb.fill_rect(x + 2, y + 52, w - 4, 1, 8);
+    engine.draw_text(fb, x + 2, y + 56, 10, "N NOISE");
+    engine.draw_text(fb, x + 2, y + 64, 10, "Q QUIT");
+    engine.draw_text(fb, x + 2, y + 72, 10, "S SAVE");
+    engine.draw_text(fb, x + 2, y + 80, 10, "R RESTORE");
+    engine.draw_text(fb, x + 2, y + 88, 10, "T TURTLE");
+}
+
+void draw_classic_status(Framebuffer& fb, Engine& engine) {
+    const int x = 8;
+    const int y = 134;
+    const int w = 64;
+    const int h = 36;
+    fb.fill_rect(x, y, w, h, 0);
+    fb.fill_rect(x, y, w, 1, 12);
+    fb.fill_rect(x, y + h - 1, w, 1, 12);
+    fb.fill_rect(x, y, 1, h, 12);
+    fb.fill_rect(x + w - 1, y, 1, h, 12);
+    engine.draw_text(fb, x + 2, y + 4, 12, "HEALTH");
+    const int hp = std::max(0, std::min(8, engine.health()));
+    fb.fill_rect(x + 40, y + 4, 20, 7, 0);
+    fb.fill_rect(x + 40, y + 4, 20, 1, 8);
+    fb.fill_rect(x + 40, y + 10, 20, 1, 8);
+    fb.fill_rect(x + 40, y + 4, 1, 7, 8);
+    fb.fill_rect(x + 59, y + 4, 1, 7, 8);
+    if (hp > 0) {
+        fb.fill_rect(x + 41, y + 5, std::max(1, 18 * hp / 8), 5, 4);
+    }
+    engine.draw_text(fb, x + 1, y + 16, 7, "LEVEL");
+    engine.draw_text(fb, x + 33, y + 16, 7, "SCORE");
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%d", engine.level_id());
+    engine.draw_text(fb, x + 2, y + 25, 7, buf);
+    std::snprintf(buf, sizeof(buf), "%u",
+                  static_cast<unsigned>(engine.score()));
+    const int sw = static_cast<int>(std::strlen(buf)) * 6;
+    engine.draw_text(fb, x + w - 3 - sw, y + 25, 7, buf);
+}
+
+void draw_classic_inventory_caption(Framebuffer& fb, Engine& engine) {
+    const int x = 8;
+    const int y = 172;
+    fb.fill_rect(x, y, 64, 8, 0);
+    engine.draw_text(fb, x + 2, y + 1, 7, "INVENTORY");
+}
+
 void draw_classic_menu(Framebuffer& fb, Engine& engine, const Menu& m,
                        const char* sub,
                        const std::vector<std::string>& items, int sel,
                        bool in_game,
                        const std::vector<uint8_t>& classic_px) {
     if (!in_game) {
-        // The classic viewport is the centre 176x158 crop of the 240x160
-        // intro-board section.  It is drawn before the frame so the frame
-        // edges cover its border.
+        // The classic viewport is the 240x160 intro-board section.  It is
+        // drawn before the frame so the frame edges cover its border.
         if (classic_px.size() == static_cast<size_t>(240) * 160) {
             constexpr int vx = 72;
             constexpr int vy = 22;
-            constexpr int vw = 176;
+            constexpr int vw = 240;
             constexpr int vh = 158;
-            constexpr int sx0 = (240 - vw) / 2;
             constexpr int sy0 = (160 - vh) / 2;
             for (int y = 0; y < vh; ++y) {
                 for (int x = 0; x < vw; ++x) {
                     fb.put(vx + x, vy + y,
-                           classic_px[static_cast<size_t>(y + sy0) * 240 +
-                                      sx0 + x]);
+                           classic_px[static_cast<size_t>(y + sy0) * 240 + x]);
                 }
             }
         }
         engine.draw_classic_backdrop(fb, engine.game().title, true);
-        if (m.screen != MenuScreen::HighScores) {
+        if (m.screen == MenuScreen::Main) {
+            draw_classic_controls(fb, engine);
+            draw_classic_status(fb, engine);
+            draw_classic_inventory_caption(fb, engine);
+        } else if (m.screen != MenuScreen::HighScores) {
             draw_classic_hiscores(fb, engine, m.hi_scores);
         }
-        // Matching column on the right of the menu playfield.
-        const int rx = Framebuffer::W - 8 - 64;
-        const int ry = 32;
-        const int rw = 64;
-        const int rh = 84;
-        fb.fill_rect(rx, ry, rw, rh, 4);
-        fb.fill_rect(rx, ry, rw, 1, 12);
-        fb.fill_rect(rx, ry + rh - 1, rw, 1, 12);
-        fb.fill_rect(rx, ry, 1, rh, 12);
-        fb.fill_rect(rx + rw - 1, ry, 1, rh, 12);
     }
 
     int maxlen = 0;

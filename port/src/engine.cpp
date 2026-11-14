@@ -34,9 +34,7 @@ constexpr int kClassicPanelH =
 // picture is cropped to the centre 176 columns for the classic menu.
 constexpr int kClassicViewX = kClassicPanelX + kClassicPanelW;  // 72
 constexpr int kClassicViewY = kClassicTop;                     // 22
-constexpr int kClassicRightPanelX =
-    Framebuffer::W - kClassicBorderX - kClassicPanelW;         // 248
-constexpr int kClassicViewW = kClassicRightPanelX - kClassicViewX;  // 176
+constexpr int kClassicViewW = Framebuffer::W - kClassicViewX - kClassicBorderX;  // 240
 constexpr int kClassicViewH = kClassicPanelH;  // 158
 
 std::string join(const std::string& dir, const std::string& name) {
@@ -2968,19 +2966,33 @@ void Engine::render_hud_classic(Framebuffer& fb) {
 
     draw_classic_backdrop(fb, game_.title);
 
-    // Status column.
-    classic_box(fb, px, py, kClassicPanelW, 30, 12);
-    classic_box(fb, px, py + 30, kClassicPanelW, 22, 8);
-    classic_box(fb, px, py + 52, kClassicPanelW, 84, 8);
+    // Status column: inventory on top (the menu replaces this box with the
+    // CONTROLS legend), then HEALTH / LEVEL / SCORE, then the caption strip.
+    // This is the original left-column order from the classic screens.
+    constexpr int kInvH = 84;
+    classic_box(fb, px, py, kClassicPanelW, kInvH, 8);
 
-    // Matching column on the right of the playfield, same width as the
-    // inventory/status column (the original classic screen is symmetric).
-    classic_box(fb, kClassicRightPanelX, py, kClassicPanelW, kClassicPanelH, 8);
+    const int invY = py + 4;
+    const int n = header_[4] | (header_[5] << 8);
+    for (int i = 0; i < n && i < 15; ++i) {
+        const int id = header_[6 + i * 2] | (header_[7 + i * 2] << 8);
+        if (id < 0 || id >= 16) {
+            continue;
+        }
+        const int frame = profile_->item_icons[id];
+        if (!frame) {
+            continue;
+        }
+        draw_shape(fb, icon_shape(frame), px + 1 + (i / 3) * 16,
+                   invY + (i % 3) * 16, true);
+    }
 
     // HEALTH + bar.
-    draw_text(fb, px + 2, py + 5, label, "HEALTH");
+    const int health_y = py + kInvH + 4;
+    classic_box(fb, px, health_y, kClassicPanelW, 30, 12);
+    draw_text(fb, px + 2, health_y + 5, label, "HEALTH");
     const int barX = px + 40;
-    const int barY = py + 5;
+    const int barY = health_y + 5;
     constexpr int kBarW = 20;
     constexpr int kBarH = 7;
     fb.fill_rect(barX, barY, kBarW, kBarH, 0);
@@ -2996,9 +3008,10 @@ void Engine::render_hud_classic(Framebuffer& fb) {
     }
 
     // LEVEL / SCORE.
-    const int ry = py + 35;
-    draw_text(fb, px + 1, ry, label, "LEVEL");
-    draw_text(fb, px + 33, ry, label, "SCORE");
+    const int ry = health_y + 30;
+    classic_box(fb, px, ry, kClassicPanelW, 22, 8);
+    draw_text(fb, px + 1, ry + 5, label, "LEVEL");
+    draw_text(fb, px + 33, ry + 5, label, "SCORE");
     char buf[24];
     const int level = level_id();
     if (level == 0) {
@@ -3008,31 +3021,16 @@ void Engine::render_hud_classic(Framebuffer& fb) {
     } else {
         std::snprintf(buf, sizeof(buf), "%d", level);
     }
-    draw_text(fb, px + 2, ry + 8, label, buf);
+    draw_text(fb, px + 2, ry + 13, label, buf);
     std::snprintf(buf, sizeof(buf), "%u", static_cast<unsigned>(score()));
     const int slen = static_cast<int>(std::strlen(buf));
-    draw_text(fb, px + kClassicPanelW - 2 - slen * 6, ry + 8, label, buf);
-
-    // INVENTORY panel (the original 64x84 box) and its caption strip.
-    const int invY = py + 56;
-    const int n = header_[4] | (header_[5] << 8);
-    for (int i = 0; i < n && i < 15; ++i) {
-        const int id = header_[6 + i * 2] | (header_[7 + i * 2] << 8);
-        if (id < 0 || id >= 16) {
-            continue;
-        }
-        const int frame = profile_->item_icons[id];
-        if (!frame) {
-            continue;
-        }
-        draw_shape(fb, icon_shape(frame), px + 1 + (i / 3) * 16,
-                   invY + (i % 3) * 16, true);
-    }
+    draw_text(fb, px + kClassicPanelW - 2 - slen * 6, ry + 13, label, buf);
 
     // INVENTORY caption in its own bottom strip.
-    classic_box(fb, px, py + 52 + 84, kClassicPanelW, 14, 8);
-    draw_text_font(fb, px + 3, py + 52 + 84 + 5, 0, 2, 6, "INVENTORY");
-    draw_text_font(fb, px + 2, py + 52 + 84 + 4, label, 2, 6, "INVENTORY");
+    const int cap_y = ry + 22 + 4;
+    classic_box(fb, px, cap_y, kClassicPanelW, 14, 8);
+    draw_text_font(fb, px + 3, cap_y + 5, 0, 2, 6, "INVENTORY");
+    draw_text_font(fb, px + 2, cap_y + 4, label, 2, 6, "INVENTORY");
 }
 
 // MODERN/MINIMAL HUD (the default): one horizontal strip across the top.
