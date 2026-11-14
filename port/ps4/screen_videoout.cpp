@@ -186,6 +186,10 @@ public:
     void set_title(const char* title) override { (void)title; }
 
     void shutdown() override {
+        if (shut_down_) {
+            return;
+        }
+        shut_down_ = true;
         if (handle_ > 0) {
             // Wait for every outstanding flip event (there can be at most
             // kBufferCount queued).  Unregistering buffers still referenced by
@@ -204,10 +208,28 @@ public:
             }
             jill_paths::trace("videoout: flips drained (pending=%d)",
                               sceVideoOutIsFlipPending(handle_));
-            for (int i = 0; i < kBufferCount; ++i) {
-                sceVideoOutUnregisterBuffers(handle_, i);
+            // Attribute index 0 is the one used at register time.  A busy
+            // result (0x80290009) means the display still owns a buffer; it is
+            // not fatal as long as the port is closed before the memory goes.
+            const int32_t urc = sceVideoOutUnregisterBuffers(handle_, 0);
+            if (urc != 0) {
+                jill_paths::trace("videoout: unregister failed 0x%x", urc);
+            } else {
+                jill_paths::trace("videoout: buffers unregistered");
             }
-            jill_paths::trace("videoout: buffers unregistered");
+            // Close the port *before* unmapping.  While it is open the display
+            // keeps scanning the buffers, and freeing their memory underneath
+            // it faults on retail hardware (CE-34878-0 on quit).
+            const int32_t crc = sceVideoOutClose(handle_);
+            handle_ = 0;
+            if (crc != 0) {
+                // The port is still live: unmapping now would leave the display
+                // reading freed memory, so hand the memory to process exit.
+                jill_paths::trace("videoout: close failed 0x%x", crc);
+                jill_paths::trace("videoout: leaving display memory mapped");
+                return;
+            }
+            jill_paths::trace("videoout: port closed");
         }
         if (flip_queue_ != 0) {
             sceKernelDeleteEqueue(flip_queue_);
@@ -220,10 +242,6 @@ public:
         if (phys_ != 0) {
             sceKernelReleaseDirectMemory(phys_, total_size_);
             phys_ = 0;
-        }
-        if (handle_ > 0) {
-            sceVideoOutClose(handle_);
-            handle_ = 0;
         }
         jill_paths::trace("videoout: shut down");
         for (int i = 0; i < kBufferCount; ++i) {
@@ -246,6 +264,7 @@ private:
     int64_t frame_id_ = 0;
     bool flip_error_logged_ = false;
     bool first_frame_logged_ = false;
+    bool shut_down_ = false;
 };
 
 }  // namespace

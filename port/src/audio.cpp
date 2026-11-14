@@ -502,6 +502,11 @@ void MusicPlayer::mix(uint8_t* stream, int len) {
         return;
     }
     if (has_pending_) {
+#ifdef JILL_PS4
+        jill_paths::trace("audio: start %s (midi=%d)",
+                          pending_ ? pending_->title.c_str() : "-",
+                          midi_active_ ? 1 : 0);
+#endif
         if (midi_active_) {
             midi_music_.start(pending_);
         } else {

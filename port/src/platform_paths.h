@@ -23,6 +23,13 @@ std::string resolve(const std::string& path);
 // True when the path exists on disk (directory or file).
 bool exists(const std::string& path);
 
+// Return `path` when it exists, else the first case-insensitive match of its
+// file name inside its directory, else `path` unchanged.  The PS4 data
+// filesystem is case-sensitive while the DOS-era assets and the copies people
+// push over FTP are not consistently cased, so an exact miss would silently
+// fall back to the previously playing track.
+std::string resolve_file(const std::string& path);
+
 // Create the data root on PS4.  No-op on desktop.  Returns false and fills
 // `err` when the folder cannot be created.
 bool ensure_data_root(std::string& err);

@@ -37,6 +37,12 @@
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\config.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\platform_paths.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\screen_sdl.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\cmf.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

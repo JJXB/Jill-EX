@@ -1,5 +1,6 @@
 #include "platform_paths.h"
 
+#include <cctype>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -54,6 +55,36 @@ bool exists(const std::string& path) {
     }
     std::error_code ec;
     return std::filesystem::exists(path, ec);
+}
+
+std::string resolve_file(const std::string& path) {
+    std::error_code ec;
+    if (path.empty() || std::filesystem::exists(path, ec)) {
+        return path;
+    }
+    const std::filesystem::path p(path);
+    const std::filesystem::path dir = p.parent_path();
+    if (dir.empty()) {
+        return path;
+    }
+    auto lower = [](std::string s) {
+        for (char& c : s) {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        return s;
+    };
+    const std::string want = lower(p.filename().string());
+    std::filesystem::directory_iterator it(dir, ec);
+    if (ec) {
+        return path;
+    }
+    for (const auto& e : it) {
+        if (lower(e.path().filename().string()) == want) {
+            trace("path: %s -> %s", path.c_str(), e.path().string().c_str());
+            return e.path().string();
+        }
+    }
+    return path;
 }
 
 void log_open(const std::string& path) {

@@ -195,6 +195,10 @@ running game's sound bank.
   section changes.  The engine reports each change once through
   `Engine::take_music_request()`; the app resolves it against the game's data
   directory.  The full per-board mapping is in `docs/music-catalog.md`.
+* Loading a save and returning to the hub through `!` both bypass the normal
+  board loader, so they refresh the track explicitly: a restored save starts
+  its board's first track (the save can be made far from the music checkpoint),
+  and a completed level hands the hub its own track back.
 * Settings: `[audio] music = 0/1`, `[audio] volume = 0..100` and
   `[audio] pc_speaker = 0/1` in `jill.ini`, the **OPTIONS > SOUND** screen
   (MUSIC, MUSIC VOLUME, SFX, SFX VOLUME, PC SPEAKER), and

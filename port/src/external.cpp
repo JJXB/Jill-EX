@@ -30,6 +30,24 @@ std::string norm_rel(std::string s) {
     return lower(s);
 }
 
+// Lexical "path relative to root" (no filesystem calls).  libc++ implements
+// `fs::relative` through `weakly_canonical`, and the PS4 kernel returns
+// "Function not implemented" for `realpath`, which made selecting an external
+// pack abort with an uncaught filesystem_error.  The iterator below only ever
+// yields paths under `root`, so a prefix strip is exact and portable.
+std::string relative_to(const std::string& root, const fs::path& child) {
+    std::string base = fs::path(root).generic_string();
+    while (base.size() > 1 && base.back() == '/') {
+        base.pop_back();
+    }
+    std::string full = child.generic_string();
+    if (full.size() > base.size() && full.compare(0, base.size(), base) == 0 &&
+        full[base.size()] == '/') {
+        return full.substr(base.size() + 1);
+    }
+    return child.filename().generic_string();
+}
+
 std::string stem_of(const std::string& rel) {
     const size_t slash = rel.find_last_of('/');
     std::string name = slash == std::string::npos ? rel : rel.substr(slash + 1);
@@ -228,7 +246,7 @@ bool ExternalAssets::scan(const std::string& base, std::string& err) {
     if (fs::is_directory(autoload_root_, ec)) {
         for (const auto& e : fs::recursive_directory_iterator(autoload_root_,
                                                               ec)) {
-            if (e.is_regular_file()) {
+            if (e.is_regular_file(ec)) {
                 autoload_ = true;
                 break;
             }
@@ -465,10 +483,10 @@ std::vector<std::string> ExternalAssets::files(const std::string& prefix) const 
             return;
         }
         for (const auto& e : fs::recursive_directory_iterator(dir, ec)) {
-            if (!e.is_regular_file()) {
+            if (!e.is_regular_file(ec)) {
                 continue;
             }
-            std::string rel = fs::relative(e.path(), root).string();
+            std::string rel = relative_to(root, e.path());
             std::replace(rel.begin(), rel.end(), '\\', '/');
             out.push_back(lower(rel));
         }
