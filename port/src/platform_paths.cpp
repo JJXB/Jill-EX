@@ -8,8 +8,12 @@
 
 namespace jill_paths {
 namespace {
-#ifdef JILL_PS4
+#if defined(JILL_PS4)
 const char kDataRoot[] = "/data/JillEX";
+#elif defined(JILL_VITA)
+// Vita has no writable system partition: the app mounts at ux0:app/<TITLEID>
+// and every mutable file belongs under ux0:data.
+const char kDataRoot[] = "ux0:data/JillEX";
 #else
 const char kDataRoot[] = "";
 #endif
@@ -24,7 +28,19 @@ bool is_absolute_path(const std::string& p) {
     if (p[0] == '/' || p[0] == '\\') {
         return true;
     }
-    return p.size() >= 2 && p[1] == ':';
+    if (p.size() >= 2 && p[1] == ':') {
+        return true;
+    }
+#ifdef JILL_VITA
+    // Vita device prefixes put the colon later: "ux0:", "ur0:", "uma0:",
+    // "imc0:", "app0:", "savedata0:".  Without this, resolve() prepends the
+    // data root to a path that already has it (ux0:data/JillEX/ux0:data/...).
+    const std::string::size_type colon = p.find(':');
+    if (colon >= 2 && colon <= 8) {
+        return true;
+    }
+#endif
+    return false;
 }
 
 }  // namespace
@@ -99,7 +115,7 @@ void log_open(const std::string& path) {
 }
 
 void trace(const char* fmt, ...) {
-#ifndef JILL_PS4
+#if !defined(JILL_PS4) && !defined(JILL_VITA)
     // Desktop stays quiet unless explicitly asked.
     if (std::getenv("JILL_TRACE") == nullptr) {
         return;

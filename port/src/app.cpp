@@ -439,8 +439,13 @@ std::string scancode_name(SDL_Scancode sc) {
 void load_bindings_ini(const IniFile& ini, Bindings& b,
                        const std::string& section = "controls") {
     for (int a = 0; a < ACT_COUNT; ++a) {
-        const std::string value = ini.get(section, kBindActionKey[a]);
-        if (!value.empty()) {
+        // A key that is not in the file at all leaves the built-in default
+        // alone; an explicitly empty value unbinds.  This matters on the
+        // consoles, whose ini files carry no [controls] section: a plain
+        // `get()` would return "" and quietly unbind jump/throw so the pad
+        // appeared dead in game while the menus still worked.
+        if (ini.has(section, kBindActionKey[a])) {
+            const std::string value = ini.get(section, kBindActionKey[a]);
             const size_t bar = value.find('|');
             const std::string first = value.substr(0, bar);
             const std::string second =
@@ -456,8 +461,11 @@ void load_bindings_ini(const IniFile& ini, Bindings& b,
                             ? SDL_SCANCODE_UNKNOWN
                             : SDL_GetScancodeFromName(second.c_str());
         }
-        const std::string pad = ini.get(
-            section, std::string(kBindActionKey[a]) + "_pad");
+        const std::string pad_key = std::string(kBindActionKey[a]) + "_pad";
+        if (!ini.has(section, pad_key)) {
+            continue;
+        }
+        const std::string pad = ini.get(section, pad_key);
         b.pad[a] = pad.empty()
                        ? -1
                        : SDL_GameControllerGetButtonFromString(pad.c_str());
@@ -650,6 +658,40 @@ void poll_input(const uint8_t* keys, const Bindings& b,
 #endif
 
     engine.set_input(h, v, jump, throw_btn);
+#ifdef JILL_VITA
+    // Vita diagnostics: log every change of the raw pad state so a silent pad
+    // (or a wrong button index) is visible in jill.log.
+    {
+        static unsigned last_mask = 0;
+        static int last_h = 99;
+        static int last_v = 99;
+        unsigned mask = 0;
+        if (gc) {
+            for (int i = 0; i < SDL_CONTROLLER_BUTTON_MAX; ++i) {
+                if (SDL_GameControllerGetButton(
+                        gc, static_cast<SDL_GameControllerButton>(i))) {
+                    mask |= 1u << i;
+                }
+            }
+        } else if (joy) {
+            const int n = SDL_JoystickNumButtons(joy);
+            for (int i = 0; i < n && i < 32; ++i) {
+                if (SDL_JoystickGetButton(joy, i)) {
+                    mask |= 1u << i;
+                }
+            }
+        }
+        if (mask != last_mask || h != last_h || v != last_v) {
+            jill_paths::trace(
+                "pad: gc=%d joy=%d mask=%08x h=%d v=%d jump=%d throw=%d",
+                gc ? 1 : 0, joy ? 1 : 0, mask, h, v, jump ? 1 : 0,
+                throw_btn ? 1 : 0);
+            last_mask = mask;
+            last_h = h;
+            last_v = v;
+        }
+    }
+#endif
 }
 
 struct LevelSelect {
@@ -746,7 +788,8 @@ bool apply_selection(Engine& engine, const std::vector<GameDef>& games,
     const bool turtle = engine.turtle();
     std::string err;
     if (engine.game().id != g.id) {
-        Engine fresh;
+        std::unique_ptr<Engine> fresh_storage(new Engine());
+        Engine& fresh = *fresh_storage;
         if (!fresh.init(g, err)) {
             std::fprintf(stderr, "%s: %s\n", g.id.c_str(), err.c_str());
             return false;
@@ -2027,7 +2070,8 @@ void ensure_splash_image(SplashImage& img, int index,
     }
     const GameDef& g = games[static_cast<size_t>(index - 1)];
     img.palette_ready = load_palette(g.palette, img.palette);
-    Engine art;
+    std::unique_ptr<Engine> art_storage(new Engine());
+    Engine& art = *art_storage;
     std::string err;
     if (!art.init(g, err)) {
         std::fprintf(stderr, "splash %s: %s\n", g.id.c_str(), err.c_str());
@@ -2092,7 +2136,8 @@ void ensure_theme_backdrop(ThemeBackdrop& tb, int theme,
         return;
     }
     const GameDef& g = games[static_cast<size_t>(theme - 1)];
-    Engine tmp;
+    std::unique_ptr<Engine> tmp_storage(new Engine());
+    Engine& tmp = *tmp_storage;
     std::string err;
     if (!tmp.init(g, err)) {
         return;
@@ -2741,7 +2786,8 @@ bool start_game(Engine& engine, const std::vector<GameDef>& games, int index,
     const bool turtle = engine.turtle();
     std::string err;
     if (engine.game().id != g.id) {
-        Engine fresh;
+        std::unique_ptr<Engine> fresh_storage(new Engine());
+        Engine& fresh = *fresh_storage;
         if (!fresh.init(g, err)) {
             std::fprintf(stderr, "%s: %s\n", g.id.c_str(), err.c_str());
             return false;
@@ -2813,6 +2859,7 @@ bool start_demo(Engine& engine, const std::vector<GameDef>& games,
 
 int run_sdl(const Options& opt, Engine& engine,
             const std::vector<GameDef>& games) {
+    jill_paths::trace("startup: run_sdl enter");
     // Let SDL drive Xbox pads through XInput and legacy pads through the
     // DirectInput path (both hints default to on; set them explicitly).
 #ifdef SDL_HINT_XINPUT_ENABLED
@@ -2844,6 +2891,7 @@ int run_sdl(const Options& opt, Engine& engine,
                                   SDL_INIT_EVENTS | SDL_INIT_GAMECONTROLLER |
                                   SDL_INIT_JOYSTICK;
 #endif
+    jill_paths::trace("startup: SDL_Init subsystems=0x%x", sdl_subsystems);
     if (SDL_Init(sdl_subsystems) != 0) {
         std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
@@ -3160,16 +3208,45 @@ int run_sdl(const Options& opt, Engine& engine,
         if (controller || joystick) {
             return;
         }
+#ifdef JILL_VITA
+        jill_paths::trace("pad: %d joystick device(s)", SDL_NumJoysticks());
+        for (int i = 0; i < SDL_NumJoysticks(); ++i) {
+            SDL_JoystickGUID guid = SDL_JoystickGetDeviceGUID(i);
+            char guid_str[64] = {};
+            SDL_JoystickGetGUIDString(guid, guid_str, sizeof(guid_str));
+            jill_paths::trace("pad: %d name=%s guid=%s controller=%d", i,
+                              SDL_JoystickNameForIndex(i), guid_str,
+                              SDL_IsGameController(i) ? 1 : 0);
+        }
+#endif
         for (int i = 0; i < SDL_NumJoysticks(); ++i) {
             if (SDL_IsGameController(i)) {
                 controller = SDL_GameControllerOpen(i);
                 if (controller) {
+#ifdef JILL_VITA
+                    char* mapping = SDL_GameControllerMapping(controller);
+                    SDL_Joystick* js = SDL_GameControllerGetJoystick(controller);
+                    jill_paths::trace(
+                        "pad: opened controller %s buttons=%d axes=%d",
+                        SDL_GameControllerName(controller),
+                        js ? SDL_JoystickNumButtons(js) : -1,
+                        js ? SDL_JoystickNumAxes(js) : -1);
+                    jill_paths::trace("pad: mapping %s",
+                                      mapping ? mapping : "(none)");
+                    if (mapping) {
+                        SDL_free(mapping);
+                    }
+#endif
                     return;
                 }
             }
         }
         if (SDL_NumJoysticks() > 0) {
             joystick = SDL_JoystickOpen(0);
+#ifdef JILL_VITA
+            jill_paths::trace("pad: opened raw joystick %s",
+                              joystick ? SDL_JoystickName(joystick) : "(null)");
+#endif
         }
     };
     open_pads();
@@ -4511,6 +4588,20 @@ int run_sdl(const Options& opt, Engine& engine,
         const bool paused = splash_active || select.open || menu_open(menu) ||
                             engine.text_page_open() || ending.active ||
                             score_entry.active;
+#ifdef JILL_VITA
+        {
+            static bool last_paused = false;
+            if (paused != last_paused) {
+                jill_paths::trace(
+                    "loop: paused=%d (splash=%d select=%d menu=%d page=%d "
+                    "ending=%d score=%d)",
+                    paused ? 1 : 0, splash_active ? 1 : 0, select.open ? 1 : 0,
+                    menu_open(menu) ? 1 : 0, engine.text_page_open() ? 1 : 0,
+                    ending.active ? 1 : 0, score_entry.active ? 1 : 0);
+                last_paused = paused;
+            }
+        }
+#endif
         if (paused) {
             engine.set_input(0, 0, false, false);
         } else {
@@ -5064,7 +5155,11 @@ int run_app(const Options& opt) {
         run_opt.resolution = match_resolution(opt.resolution_w, opt.resolution_h);
     }
 
-    Engine engine;
+    // Engine is ~71 KiB and the console builds run on a small main-thread
+    // stack (the Vita default is well below a megabyte), so keep it on the
+    // heap and merely alias it here.
+    std::unique_ptr<Engine> engine_storage(new Engine());
+    Engine& engine = *engine_storage;
     jill_paths::trace("startup: engine init game=%s data=%s palette=%s",
                       game.id.c_str(), game.data_dir.c_str(),
                       game.palette.c_str());
@@ -5097,8 +5192,10 @@ int run_app(const Options& opt) {
     engine.set_hud_panel(run_opt.hud_panel);
     engine.set_font_name(run_opt.menu_font);
     engine.set_turtle(run_opt.turtle);
+    jill_paths::trace("startup: options applied");
     // External art (pack + autoload) must be mounted before the menu border
     // selection is resolved; headless --dump then uses the same overrides.
+    jill_paths::trace("startup: external scan");
     ExternalAssets headless_assets;
     {
         std::string ext_err;
@@ -5127,13 +5224,16 @@ int run_app(const Options& opt) {
         }
     }
     apply_menu_frame(engine, games, run_opt.menu_frame, run_opt.menu_theme);
+    jill_paths::trace("startup: external done");
     std::string board = opt.board.empty() ? game.first_board : opt.board;
+    jill_paths::trace("startup: load board %s", board.c_str());
     if (!engine.load_board(board, err)) {
         std::fprintf(stderr, "%s\n", err.c_str());
         std::fprintf(stderr, "data dir: %s (use --data to point at the game files)\n",
                      game.data_dir.c_str());
         return 2;
     }
+    jill_paths::trace("startup: board ready");
     for (int i = 0; i < opt.items; ++i) {
         engine.add_item(2);  // debug: knives
     }

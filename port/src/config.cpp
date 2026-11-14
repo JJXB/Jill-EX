@@ -117,6 +117,14 @@ std::string IniFile::get(const std::string& section, const std::string& key,
     return k == s->second.end() ? fallback : k->second;
 }
 
+bool IniFile::has(const std::string& section, const std::string& key) const {
+    auto s = data_.find(ini_lower(section));
+    if (s == data_.end()) {
+        return false;
+    }
+    return s->second.find(ini_lower(key)) != s->second.end();
+}
+
 int IniFile::get_int(const std::string& section, const std::string& key,
                      int fallback) const {
     const std::string v = get(section, key);

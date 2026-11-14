@@ -15,6 +15,8 @@ public:
 
     std::string get(const std::string& section, const std::string& key,
                     const std::string& fallback = std::string()) const;
+    // True when the key exists (an existing but empty value counts).
+    bool has(const std::string& section, const std::string& key) const;
     int get_int(const std::string& section, const std::string& key,
                 int fallback) const;
     bool get_bool(const std::string& section, const std::string& key,

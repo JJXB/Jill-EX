@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <string>
 
@@ -17,6 +18,15 @@
 #include <unistd.h>
 #endif
 
+#ifdef JILL_VITA
+// vita-elf-create scans the ELF for these two symbols and writes the values
+// into the module info.  The default main-thread stack is 256 KiB, which the
+// engine's ~71 KiB objects plus SDL and the dialog code blow through; the
+// module then dies silently before any of its own tracing can run.
+extern "C" unsigned int sceUserMainThreadStackSize = 1024 * 1024;
+extern "C" unsigned int sceLibcHeapSize = 32 * 1024 * 1024;
+#endif
+
 namespace {
 
 // Directory holding jill.ini (and therefore the relative games/, profiles/ and
@@ -25,8 +35,8 @@ namespace {
 // directly still finds the repository configuration.
 std::string config_directory(const char* argv0) {
     namespace fs = std::filesystem;
-#ifdef JILL_PS4
-    // PS4: jill.ini, games/, profiles/ and the game data all live in one
+#if defined(JILL_PS4) || defined(JILL_VITA)
+    // Console: jill.ini, games/, profiles/ and the game data all live in one
     // writable folder.  main() chdir()s there before any file is opened.
     (void)argv0;
     return jill_paths::data_root();
@@ -162,9 +172,9 @@ void usage() {
 }  // namespace
 
 int main(int argc, char** argv) {
-#ifdef JILL_PS4
-    // The PS4 filesystem root is read-only; create the writable game folder
-    // and run from it before touching jill.ini or any asset path.
+#if defined(JILL_PS4) || defined(JILL_VITA)
+    // The console filesystem root is read-only; create the writable game
+    // folder and run from it before touching jill.ini or any asset path.
     {
         std::string root_err;
         if (!jill_paths::ensure_data_root(root_err)) {
@@ -181,7 +191,7 @@ int main(int argc, char** argv) {
         std::error_code ec;
         std::filesystem::current_path(cfg_dir, ec);
     }
-#ifdef JILL_PS4
+#if defined(JILL_PS4) || defined(JILL_VITA)
     // There is no console on the console: keep a diagnostic log next to the
     // data so failures can be inspected over FTP.  Use the absolute path:
     // shadPS4 (among others) does not implement chdir, so the process working
@@ -193,6 +203,12 @@ int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IOLBF, 0);
     std::setvbuf(stderr, nullptr, _IONBF, 0);
     jill_paths::trace("startup: log ready");
+#if defined(JILL_PS4) || defined(JILL_VITA)
+    std::set_terminate([] {
+        jill_paths::trace("fatal: std::terminate (uncaught exception or abort)");
+        std::abort();
+    });
+#endif
 #endif
     Options opt;
     // jill.ini supplies the defaults; command-line arguments override it.
@@ -519,10 +535,10 @@ int main(int argc, char** argv) {
             return 2;
         }
     }
-#ifdef JILL_PS4
-    // Make every configured path absolute under /data/JillEX.  shadPS4 and
-    // some loaders stub chdir, so relative paths are not dependable even
-    // though we still attempt the chdir above.
+#if defined(JILL_PS4) || defined(JILL_VITA)
+    // Make every configured path absolute under the console data root.
+    // shadPS4 and some loaders stub chdir, so relative paths are not
+    // dependable even though we still attempt the chdir above.
     opt.games_dir = jill_paths::resolve(opt.games_dir);
     opt.profiles_dir = jill_paths::resolve(opt.profiles_dir);
     opt.external_dir = jill_paths::resolve(opt.external_dir);
@@ -566,8 +582,20 @@ int main(int argc, char** argv) {
                       opt.games_dir.c_str(), opt.profiles_dir.c_str(),
                       opt.external_dir.c_str(), opt.renderer.c_str());
     opt.stereo = 0;  // stereo display is currently disabled
+    // Console builds die silently when something throws: an uncaught exception
+    // calls std::terminate, and the loader reports nothing at all.  Report it
+    // in jill.log instead of vanishing.
+    int rc = 0;
+    try {
+        rc = run_app(opt);
+    } catch (const std::exception& e) {
+        jill_paths::trace("fatal: exception: %s", e.what());
+        rc = 1;
+    } catch (...) {
+        jill_paths::trace("fatal: unknown exception");
+        rc = 1;
+    }
 #ifdef JILL_PS4
-    const int rc = run_app(opt);
     // The devices are already closed and saves/config flushed.  Returning
     // through the CRT runs atexit(SDL_Quit) and static destructors after the
     // videoout/audio handles are gone, which faults on retail hardware
@@ -575,6 +603,6 @@ int main(int argc, char** argv) {
     jill_paths::trace("startup: exiting (rc=%d)", rc);
     _exit(rc);
 #else
-    return run_app(opt);
+    return rc;
 #endif
 }

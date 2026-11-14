@@ -233,7 +233,10 @@ bool Engine::load_board(const std::string& name, std::string& err) {
     if (!has_extension(file)) {
         file += game_.board_ext;
     }
+    jill_paths::trace("load_board: %s (data=%s)", file.c_str(),
+                      data_dir_.c_str());
     if (!board_.load(join(data_dir_, file), err)) {
+        jill_paths::trace("load_board: failed: %s", err.c_str());
         return false;
     }
     if (board_.objects.empty()) {
@@ -276,8 +279,9 @@ bool Engine::load_board(const std::string& name, std::string& err) {
     // begins on zeppelin.ddt, the hub on funky.ddt, and so on.
     music_request_ = first_board_music(objects_);
     last_music_ = music_request_;
-    jill_paths::trace("board: %s objects=%zu track=%s", board_name_.c_str(),
-                      objects_.size(), music_request_.c_str());
+    jill_paths::trace("board: %s objects=%u track=%s", board_name_.c_str(),
+                      static_cast<unsigned>(objects_.size()),
+                      music_request_.c_str());
 
     // Level id: derive it from a numeric board name first (Jill 2/3 store 0 in
     // most headers), otherwise trust the header (map/intro boards).
@@ -5126,8 +5130,9 @@ void Engine::start_macro(const std::string& name) {
         macro_last_ = time;
     }
     if (!macro_.empty()) {
-        std::fprintf(stderr, "macro %s: %zu records, %d ticks\n",
-                     clean.c_str(), macro_.size(), macro_last_);
+        std::fprintf(stderr, "macro %s: %u records, %d ticks\n",
+                     clean.c_str(), static_cast<unsigned>(macro_.size()),
+                     macro_last_);
     }
     macro_playing_ = !macro_.empty();
 }

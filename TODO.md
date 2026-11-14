@@ -2,10 +2,9 @@
   * Neaten up Classic Menus/HUD
   * Stereo Rendering - SBS, Interlaced - Code Disabled,
   * Fix PS4 Crashes
-    * External pack select: `fs::relative`/`realpath` abort (fixed 2026-11-13)
     * Quit: Still broken.
   * Check Version? 
-  * Demo option on main menu for original demos (added 2026-11-14; user test pending)
+  * Demo option on main menu for original demos (Inputs wrong)
 * Least Important Ideas
   * Other Games
     * Xargon Support? - no. Separate Project. Use this and xargon's own source code as a base for it.
@@ -20,7 +19,15 @@
     * Linux
     * Android? - NDK?
     * PS4
-      * Builds, Runs, Crashes on exit or loading external data
-    * Vita? - Look into SDK's
+      * Builds and runs; quit crash + pack loading fixed 2026-11-13 (awaiting hardware confirmation)
+    * Vita
+      * Builds and runs on hardware (2026-11-14): front end, Jill 1 hub, music,
+        external packs, pad (cross jump / square throw)
+      * Verify the rest on hardware: Jill 2/3, Onesimus, save/restore,
+        high scores, text pages, endings, minimap, NOISEMAKER
+      * Check screen fit/letterboxing and readability at Vita resolution
+      * Quit path: use the PS4 `_exit()` style teardown if the exit crash shows up
+      * Audio latency / SDL Vita device reopen after suspend-resume
+      * Real LiveArea artwork (keep it 8-bit indexed in `sce_sys/`)
     * PSP? - Look into PSPSDK
     * XBOX - OpenXDK?
