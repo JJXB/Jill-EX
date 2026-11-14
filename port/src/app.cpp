@@ -2232,34 +2232,11 @@ void draw_classic_hiscores(Framebuffer& fb, Engine& engine,
     }
 }
 
-void draw_classic_controls(Framebuffer& fb, Engine& engine) {
-    const int x = 8;
-    const int y = 28;
-    const int w = 64;
-    const int h = 102;
-    fb.fill_rect(x, y, w, h, 0);
-    fb.fill_rect(x, y, w, 1, 12);
-    fb.fill_rect(x, y + h - 1, w, 1, 12);
-    fb.fill_rect(x, y, 1, h, 12);
-    fb.fill_rect(x + w - 1, y, 1, h, 12);
-    engine.draw_text(fb, x + 4, y + 4, 12, "CONTROLS");
-    engine.draw_text(fb, x + 2, y + 16, 12, "MOVE JILL");
-    engine.draw_text(fb, x + 2, y + 25, 11, "Z JUMP");
-    engine.draw_text(fb, x + 2, y + 34, 11, "X THROW");
-    engine.draw_text(fb, x + 2, y + 43, 15, "F1 HELP");
-    fb.fill_rect(x + 2, y + 52, w - 4, 1, 8);
-    engine.draw_text(fb, x + 2, y + 56, 10, "N NOISE");
-    engine.draw_text(fb, x + 2, y + 64, 10, "Q QUIT");
-    engine.draw_text(fb, x + 2, y + 72, 10, "S SAVE");
-    engine.draw_text(fb, x + 2, y + 80, 10, "R RESTORE");
-    engine.draw_text(fb, x + 2, y + 88, 10, "T TURTLE");
-}
-
 void draw_classic_status(Framebuffer& fb, Engine& engine) {
     const int x = 8;
-    const int y = 134;
+    const int y = 120;
     const int w = 64;
-    const int h = 36;
+    const int h = 44;
     fb.fill_rect(x, y, w, h, 0);
     fb.fill_rect(x, y, w, 1, 12);
     fb.fill_rect(x, y + h - 1, w, 1, 12);
@@ -2302,25 +2279,25 @@ void draw_classic_menu(Framebuffer& fb, Engine& engine, const Menu& m,
         // The classic viewport is the 240x160 intro-board section.  It is
         // drawn before the frame so the frame edges cover its border.
         if (classic_px.size() == static_cast<size_t>(240) * 160) {
-            constexpr int vx = 72;
+            constexpr int vx = 80;
             constexpr int vy = 22;
-            constexpr int vw = 240;
+            constexpr int vw = 232;
             constexpr int vh = 158;
+            constexpr int sx0 = (240 - vw) / 2;
             constexpr int sy0 = (160 - vh) / 2;
             for (int y = 0; y < vh; ++y) {
                 for (int x = 0; x < vw; ++x) {
                     fb.put(vx + x, vy + y,
-                           classic_px[static_cast<size_t>(y + sy0) * 240 + x]);
+                           classic_px[static_cast<size_t>(y + sy0) * 240 +
+                                      sx0 + x]);
                 }
             }
         }
         engine.draw_classic_backdrop(fb, engine.game().title, true);
-        if (m.screen == MenuScreen::Main) {
-            draw_classic_controls(fb, engine);
+        if (m.screen != MenuScreen::HighScores) {
+            draw_classic_hiscores(fb, engine, m.hi_scores);
             draw_classic_status(fb, engine);
             draw_classic_inventory_caption(fb, engine);
-        } else if (m.screen != MenuScreen::HighScores) {
-            draw_classic_hiscores(fb, engine, m.hi_scores);
         }
     }
 

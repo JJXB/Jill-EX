@@ -31,12 +31,12 @@
   and the negative-`p11` landing pose are restored (4 frames soft / 7 hard,
   cancelled by a held direction on the next ground update).  The temporary
   "keep walking" shortcut was removed.
-* **Classic left column**: the view is back to the full 240 px width (no
-  right-side column).  The left column now follows the original order:
-  inventory (the menu swaps in the CONTROLS legend) on top, HEALTH/LEVEL/SCORE
-  below, then the INVENTORY caption strip at the bottom.  The classic main
-  menu draws the controls legend, health/score panel and caption; other menu
-  screens keep the 64x84 HI SCORES panel.
+* **Classic left column**: the view is back to 232 px, separated from the
+  64-px column by an 8-px patterned gap (as in the original screens).  The
+  column is HEALTH at the top, LEVEL/SCORE below, then the 64x84 inventory
+  panel and the INVENTORY caption at the bottom.  The classic main menu keeps
+  the HI SCORES panel plus the health/score panel and caption (the controls
+  legend was removed).
 
 ## 2026-11-14 (tester feedback: general fixes)
 

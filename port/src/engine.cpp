@@ -29,12 +29,12 @@ constexpr int kClassicPanelY = kClassicTop;
 constexpr int kClassicPanelW = 64;
 constexpr int kClassicPanelH =
     kClassicFrameH - kClassicTop - kClassicBorderY;  // 158
-// Classic menu/HUD viewport: the left status column and a matching right
-// column of the same width frame the 176-px playfield.  The intro-board
-// picture is cropped to the centre 176 columns for the classic menu.
-constexpr int kClassicViewX = kClassicPanelX + kClassicPanelW;  // 72
+// Classic menu/HUD viewport: an 8-px patterned gap separates the 64-px left
+// status column from the playfield.  The intro-board picture is centre-cropped
+// to the viewport for the classic menu.
+constexpr int kClassicViewX = kClassicPanelX + kClassicPanelW + 8;  // 80
 constexpr int kClassicViewY = kClassicTop;                     // 22
-constexpr int kClassicViewW = Framebuffer::W - kClassicViewX - kClassicBorderX;  // 240
+constexpr int kClassicViewW = Framebuffer::W - kClassicViewX - kClassicBorderX;  // 232
 constexpr int kClassicViewH = kClassicPanelH;  // 158
 
 std::string join(const std::string& dir, const std::string& name) {
@@ -2966,33 +2966,12 @@ void Engine::render_hud_classic(Framebuffer& fb) {
 
     draw_classic_backdrop(fb, game_.title);
 
-    // Status column: inventory on top (the menu replaces this box with the
-    // CONTROLS legend), then HEALTH / LEVEL / SCORE, then the caption strip.
-    // This is the original left-column order from the classic screens.
-    constexpr int kInvH = 84;
-    classic_box(fb, px, py, kClassicPanelW, kInvH, 8);
-
-    const int invY = py + 4;
-    const int n = header_[4] | (header_[5] << 8);
-    for (int i = 0; i < n && i < 15; ++i) {
-        const int id = header_[6 + i * 2] | (header_[7 + i * 2] << 8);
-        if (id < 0 || id >= 16) {
-            continue;
-        }
-        const int frame = profile_->item_icons[id];
-        if (!frame) {
-            continue;
-        }
-        draw_shape(fb, icon_shape(frame), px + 1 + (i / 3) * 16,
-                   invY + (i % 3) * 16, true);
-    }
-
-    // HEALTH + bar.
-    const int health_y = py + kInvH + 4;
-    classic_box(fb, px, health_y, kClassicPanelW, 30, 12);
-    draw_text(fb, px + 2, health_y + 5, label, "HEALTH");
+    // Status column: HEALTH on top, LEVEL/SCORE below it, then the inventory
+    // panel and the INVENTORY caption at the bottom.
+    classic_box(fb, px, py, kClassicPanelW, 30, 12);
+    draw_text(fb, px + 2, py + 5, label, "HEALTH");
     const int barX = px + 40;
-    const int barY = health_y + 5;
+    const int barY = py + 5;
     constexpr int kBarW = 20;
     constexpr int kBarH = 7;
     fb.fill_rect(barX, barY, kBarW, kBarH, 0);
@@ -3008,10 +2987,10 @@ void Engine::render_hud_classic(Framebuffer& fb) {
     }
 
     // LEVEL / SCORE.
-    const int ry = health_y + 30;
-    classic_box(fb, px, ry, kClassicPanelW, 22, 8);
-    draw_text(fb, px + 1, ry + 5, label, "LEVEL");
-    draw_text(fb, px + 33, ry + 5, label, "SCORE");
+    classic_box(fb, px, py + 30, kClassicPanelW, 22, 8);
+    const int ry = py + 35;
+    draw_text(fb, px + 1, ry, label, "LEVEL");
+    draw_text(fb, px + 33, ry, label, "SCORE");
     char buf[24];
     const int level = level_id();
     if (level == 0) {
@@ -3021,13 +3000,30 @@ void Engine::render_hud_classic(Framebuffer& fb) {
     } else {
         std::snprintf(buf, sizeof(buf), "%d", level);
     }
-    draw_text(fb, px + 2, ry + 13, label, buf);
+    draw_text(fb, px + 2, ry + 8, label, buf);
     std::snprintf(buf, sizeof(buf), "%u", static_cast<unsigned>(score()));
     const int slen = static_cast<int>(std::strlen(buf));
-    draw_text(fb, px + kClassicPanelW - 2 - slen * 6, ry + 13, label, buf);
+    draw_text(fb, px + kClassicPanelW - 2 - slen * 6, ry + 8, label, buf);
+
+    // INVENTORY panel at the bottom (64x84) and its caption strip.
+    classic_box(fb, px, py + 52, kClassicPanelW, 84, 8);
+    const int invY = py + 56;
+    const int n = header_[4] | (header_[5] << 8);
+    for (int i = 0; i < n && i < 15; ++i) {
+        const int id = header_[6 + i * 2] | (header_[7 + i * 2] << 8);
+        if (id < 0 || id >= 16) {
+            continue;
+        }
+        const int frame = profile_->item_icons[id];
+        if (!frame) {
+            continue;
+        }
+        draw_shape(fb, icon_shape(frame), px + 1 + (i / 3) * 16,
+                   invY + (i % 3) * 16, true);
+    }
 
     // INVENTORY caption in its own bottom strip.
-    const int cap_y = ry + 22 + 4;
+    const int cap_y = py + 52 + 84;
     classic_box(fb, px, cap_y, kClassicPanelW, 14, 8);
     draw_text_font(fb, px + 3, cap_y + 5, 0, 2, 6, "INVENTORY");
     draw_text_font(fb, px + 2, cap_y + 4, label, 2, 6, "INVENTORY");
