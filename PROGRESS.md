@@ -1,5 +1,16 @@
 # Progress
 
+## 2026-11-14 (fmopl core, title strip position)
+
+* `port/src/third_party/fmopl.c/.h` vendors fmopl 0.37a (AdPlug's
+  LGPL-2.1 fork of Tatsuyuki Satoh's YM3812 core).  `FmOpl` uses the real
+  3.579545 MHz chip clock and is gain-matched to the built-in core.
+* The OPL core option now has three choices: `BUILTIN OPL2` (0),
+  `NUKED OPL3` (1) and `FMOPL` (2), selectable from `OPTIONS > SOUND > OPL
+  CORE`, `[audio] opl_core` or `--opl-core 0|1|2`.
+* The classic title text moved up from y=13/14 to y=9/10 (8-px/6-px font), so
+  it sits in the top strip like the original screens.
+
 ## 2026-11-14 (optional Nuked OPL3 music core)
 
 * `port/src/third_party/opl3.c/.h` vendors Nuked OPL3 1.8 (LGPL-2.1, notice

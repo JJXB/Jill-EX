@@ -23,6 +23,7 @@ add_executable(jill
     src/cmf.cpp
     src/opl2.cpp
     src/nuked_opl.cpp
+    src/fmopl_opl.cpp
     src/music.cpp
     src/midi.cpp
     src/sfx.cpp
@@ -31,6 +32,7 @@ add_executable(jill
     src/external.cpp
     src/third_party/stb_vorbis.c
     src/third_party/opl3.c
+    src/third_party/fmopl.c
     src/third_party/miniz.c
     src/third_party/miniz_tinfl.c
     src/third_party/miniz_tdef.c

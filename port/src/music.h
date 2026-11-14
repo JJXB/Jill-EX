@@ -3,6 +3,7 @@
 #include <memory>
 
 #include "cmf.h"
+#include "fmopl_opl.h"
 #include "nuked_opl.h"
 #include "opl2.h"
 
@@ -13,7 +14,7 @@
 // percussion mode.
 class Music {
 public:
-    enum class OplCore { Builtin, Nuked };
+    enum class OplCore { Builtin, Nuked, Fmopl };
 
     explicit Music(int sample_rate = 48000);
 
@@ -49,6 +50,7 @@ private:
 
     Opl2 opl_;
     NukedOpl nuked_;
+    FmOpl fmopl_;
     OplCore core_ = OplCore::Builtin;
 
     void reset_cores();

@@ -62,6 +62,7 @@ add_executable(jill
     ${JILL_SRC}/cmf.cpp
     ${JILL_SRC}/opl2.cpp
     ${JILL_SRC}/nuked_opl.cpp
+    ${JILL_SRC}/fmopl_opl.cpp
     ${JILL_SRC}/music.cpp
     ${JILL_SRC}/midi.cpp
     ${JILL_SRC}/sfx.cpp
@@ -70,6 +71,7 @@ add_executable(jill
     ${JILL_SRC}/external.cpp
     ${JILL_SRC}/third_party/stb_vorbis.c
     ${JILL_SRC}/third_party/opl3.c
+    ${JILL_SRC}/third_party/fmopl.c
     ${JILL_SRC}/third_party/miniz.c
     ${JILL_SRC}/third_party/miniz_tinfl.c
     ${JILL_SRC}/third_party/miniz_tdef.c

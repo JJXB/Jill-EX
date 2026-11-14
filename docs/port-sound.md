@@ -108,6 +108,24 @@ cycle-exact and does not emulate the chip's log-sine quantisation.  Envelope
 times follow the OPL rate halving rule (rate 15 about 0.2 ms, rate 0 about
 6 s), which is close enough for the original instrument banks. **[inferred]**
 
+## Selectable synthesis cores
+
+`Music` can drive three register-compatible cores; the CMF sequencer and the
+MIDI-to-OPL translation are identical for all of them:
+
+| `opl_core` | Core | Source | Licence |
+| --- | --- | --- | --- |
+| 0 | `BUILTIN OPL2` | `src/opl2.cpp` | project licence |
+| 1 | `NUKED OPL3` | `src/third_party/opl3.c` (OPL2 mode) | LGPL-2.1 |
+| 2 | `FMOPL` | `src/third_party/fmopl.c` | LGPL-2.1 |
+
+Select with **OPTIONS > SOUND > OPL CORE** (cycles through the three),
+`[audio] opl_core = 0|1|2` in `jill.ini`, or `--opl-core 0|1|2`.
+`--dump-music` uses the same switch for offline A/B comparison.  All three are
+gain-matched to the built-in core, so switching does not jump in volume.
+Changing the core restarts the current track so the new core rebuilds its
+register state.  See `THIRD_PARTY_NOTICES.md` for the LGPL obligations.
+
 ## Sampled effects
 
 `SfxBank` reads the same `.vcl` file as the text pages (the manifest `pages`
@@ -199,10 +217,11 @@ running game's sound bank.
   board loader, so they refresh the track explicitly: a restored save starts
   its board's first track (the save can be made far from the music checkpoint),
   and a completed level hands the hub its own track back.
-* Settings: `[audio] music = 0/1`, `[audio] volume = 0..100` and
-  `[audio] pc_speaker = 0/1` in `jill.ini`, the **OPTIONS > SOUND** screen
-  (MUSIC, MUSIC VOLUME, SFX, SFX VOLUME, PC SPEAKER), and
-  `--no-music` / `--music-volume N` / `--pc-speaker`.
+* Settings: `[audio] music = 0/1`, `[audio] volume = 0..100`,
+  `[audio] opl_core = 0|1|2` and `[audio] pc_speaker = 0/1` in `jill.ini`,
+  the **OPTIONS > SOUND** screen (MUSIC, MUSIC VOLUME, SFX, SFX VOLUME,
+  PC SPEAKER, OPL CORE), and `--no-music` / `--music-volume N` /
+  `--pc-speaker` / `--opl-core N`.
 * PC SPEAKER replaces each sampled effect with a 1-bit square-wave rendition
   of the same sample (the original's `_noisemaker` PIT output is not
   data-driven in the shipped banks).  Music stays on the OPL2 path.
@@ -214,7 +233,8 @@ running game's sound bank.
 
 * The PC-speaker mode is a 1-bit rendering of the sampled effects, not a
   cycle-accurate PIT channel-2 emulation.
-* The port does not emulate OPL3 or the chip's timers/status port.
+* The built-in core does not emulate OPL3 or the chip's timers/status port;
+  the Nuked core runs in OPL2 mode and ignores the second register bank.
 * Rhythm-mode noise is gated on the rhythm flag; ordinary melodic channels
   7-9 were incorrectly using the LFSR and produced a hiss **[verified]**.
 * The five rhythm voices ignore their instrument sustain level and decay to

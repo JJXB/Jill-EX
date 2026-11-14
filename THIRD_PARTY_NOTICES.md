@@ -207,6 +207,18 @@ this project's source are both shipped so the library can be modified and the
 application relinked.  The PolyForm Noncommercial license continues to cover
 the rest of Jill-EX.
 
+### fmopl (optional music core)
+
+`port/src/third_party/fmopl.c` and `fmopl.h` are fmopl 0.37a by
+Tatsuyuki Satoh (MultiArcadeMachineEmurator development).  This is the AdPlug
+fork, relicensed by its authors under the **GNU Lesser General Public License
+2.1** (or later); the source header carries the full notice, and the copy is
+unmodified except for being compiled into this project.  It is selected with
+`OPTIONS > SOUND > OPL CORE` or `--opl-core 2`.  The same LGPL static-link
+provisions as Nuked apply: the component source and this project's source are
+shipped so the library can be modified and the application relinked.  The
+PolyForm Noncommercial license continues to cover the rest of Jill-EX.
+
 **Not included:** DOSBox's `dbopl` is GPL-2.0 and cannot be combined with the
 PolyForm terms; libADLMIDI is LGPL-3.0 and would require LGPL-3 relink/source
 provisions (and adds a large MIDI-synthesis dependency tree), so neither is

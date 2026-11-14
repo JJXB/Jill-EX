@@ -1706,7 +1706,10 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                         (m.pc_speaker ? "ON" : "OFF"),
                     std::string("MIDI OUT: ") + midi_device_label(audio),
                     std::string("OPL CORE: ") +
-                        (audio.opl_core() ? "NUKED OPL3" : "BUILTIN OPL2"),
+                        (audio.opl_core() == 2
+                             ? "FMOPL"
+                             : audio.opl_core() == 1 ? "NUKED OPL3"
+                                                     : "BUILTIN OPL2"),
                     "SOUND TEST",
                     "BACK"};
         case MenuScreen::Hud:
@@ -3953,7 +3956,8 @@ int run_sdl(const Options& opt, Engine& engine,
                 } else if (nav == 5 && sel == 8) {
                     menu.screen = MenuScreen::Options;
                 } else if (sel == 6 && (nav == 5 || nav == 3 || nav == 4)) {
-                    music_player.set_opl_core(music_player.opl_core() ? 0 : 1);
+                    const int next = (music_player.opl_core() + 1) % 3;
+                    music_player.set_opl_core(next);
                 } else if (sel == 5 && (nav == 3 || nav == 4 || nav == 5)) {
                     const int count =
                         static_cast<int>(MusicPlayer::midi_devices().size());

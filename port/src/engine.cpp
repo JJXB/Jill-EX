@@ -2845,10 +2845,10 @@ void Engine::draw_classic_backdrop(Framebuffer& fb, const std::string& title,
     const int tx = kClassicViewX + (kClassicViewW - tw) / 2;
     const int clean_x = std::max(kClassicViewX + 2, tx);
     if (adv == 8) {
-        draw_text_font(fb, clean_x, 13, label, bank, adv, title.c_str());
+        draw_text_font(fb, clean_x, 9, label, bank, adv, title.c_str());
     } else {
-        draw_text_font(fb, clean_x + 1, 15, 0, bank, adv, title.c_str());
-        draw_text_font(fb, clean_x, 14, label, bank, adv, title.c_str());
+        draw_text_font(fb, clean_x + 1, 11, 0, bank, adv, title.c_str());
+        draw_text_font(fb, clean_x, 10, label, bank, adv, title.c_str());
     }
 }
 

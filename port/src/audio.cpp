@@ -225,8 +225,12 @@ void MusicPlayer::set_opl_core(int core) {
         SDL_LockAudioDevice(device_);
     }
 #endif
-    const Music::OplCore next = core == 1 ? Music::OplCore::Nuked
-                                          : Music::OplCore::Builtin;
+    Music::OplCore next = Music::OplCore::Builtin;
+    if (core == 1) {
+        next = Music::OplCore::Nuked;
+    } else if (core == 2) {
+        next = Music::OplCore::Fmopl;
+    }
     if (music_.opl_core() != next) {
         music_.set_opl_core(next);
         // Rebuild the current CMF stream from the top on the new core.  An
@@ -243,7 +247,14 @@ void MusicPlayer::set_opl_core(int core) {
 }
 
 int MusicPlayer::opl_core() const {
-    return music_.opl_core() == Music::OplCore::Nuked ? 1 : 0;
+    switch (music_.opl_core()) {
+        case Music::OplCore::Nuked:
+            return 1;
+        case Music::OplCore::Fmopl:
+            return 2;
+        default:
+            return 0;
+    }
 }
 
 void MusicPlayer::play(std::shared_ptr<const CmfSong> song) {
@@ -650,8 +661,13 @@ bool MusicPlayer::render_wav(const CmfSong& song, const std::string& path,
     }
     auto shared = std::make_shared<CmfSong>(song);
     Music music(sample_rate);
-    music.set_opl_core(opl_core == 1 ? Music::OplCore::Nuked
-                                     : Music::OplCore::Builtin);
+    Music::OplCore core = Music::OplCore::Builtin;
+    if (opl_core == 1) {
+        core = Music::OplCore::Nuked;
+    } else if (opl_core == 2) {
+        core = Music::OplCore::Fmopl;
+    }
+    music.set_opl_core(core);
     music.start(shared);
 
     const int frames = static_cast<int>(seconds * sample_rate);

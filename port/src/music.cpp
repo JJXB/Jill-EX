@@ -12,12 +12,20 @@ const int kModOff[9] = {0x00, 0x01, 0x02, 0x08, 0x09,
 
 }  // namespace
 
-Music::Music(int sample_rate) : opl_(sample_rate), nuked_(sample_rate) {
+Music::Music(int sample_rate)
+    : opl_(sample_rate), nuked_(sample_rate), fmopl_(sample_rate) {
     reset();
 }
 
 const char* Music::opl_core_name(OplCore core) {
-    return core == OplCore::Nuked ? "NUKED OPL3" : "BUILTIN OPL2";
+    switch (core) {
+        case OplCore::Nuked:
+            return "NUKED OPL3";
+        case OplCore::Fmopl:
+            return "FMOPL";
+        default:
+            return "BUILTIN OPL2";
+    }
 }
 
 void Music::set_opl_core(OplCore core) {
@@ -31,25 +39,45 @@ void Music::set_opl_core(OplCore core) {
 void Music::reset_cores() {
     opl_.reset();
     nuked_.reset();
+    fmopl_.reset();
 }
 
 void Music::write_reg(uint8_t reg, uint8_t value) {
-    if (core_ == OplCore::Nuked) {
-        nuked_.write(reg, value);
-    } else {
-        opl_.write(reg, value);
+    switch (core_) {
+        case OplCore::Nuked:
+            nuked_.write(reg, value);
+            break;
+        case OplCore::Fmopl:
+            fmopl_.write(reg, value);
+            break;
+        default:
+            opl_.write(reg, value);
+            break;
     }
 }
 
 int Music::core_rate() const {
-    return core_ == OplCore::Nuked ? nuked_.sample_rate() : opl_.sample_rate();
+    switch (core_) {
+        case OplCore::Nuked:
+            return nuked_.sample_rate();
+        case OplCore::Fmopl:
+            return fmopl_.sample_rate();
+        default:
+            return opl_.sample_rate();
+    }
 }
 
 void Music::core_generate(float* out, int frames) {
-    if (core_ == OplCore::Nuked) {
-        nuked_.generate(out, frames);
-    } else {
-        opl_.generate(out, frames);
+    switch (core_) {
+        case OplCore::Nuked:
+            nuked_.generate(out, frames);
+            break;
+        case OplCore::Fmopl:
+            fmopl_.generate(out, frames);
+            break;
+        default:
+            opl_.generate(out, frames);
+            break;
     }
 }
 

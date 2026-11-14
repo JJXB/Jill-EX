@@ -84,7 +84,7 @@ struct Options {
     bool air_jump_buffer = false; // --air-jump-buffer: hold jump through a fall
     bool minimap = false;       // --minimap: board overview overlay
     bool animated_water = true; // --no-animated-water: freeze water tiles
-    int opl_core = 0;           // --opl-core: 0 built-in OPL2, 1 Nuked OPL3
+    int opl_core = 0;           // --opl-core: 0 built-in OPL2, 1 Nuked, 2 fmopl
     bool center_fish_shot = false; // --center-fish-shot: vertical fish shot
     bool turtle = false;       // --turtle: Jill 3-style half-speed mode
     int player_look = 0;       // --jill-look N: 0 game default, N = games[N-1]

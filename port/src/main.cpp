@@ -162,7 +162,8 @@ void usage() {
         "  --sfx-volume N  effect volume 0-100 (default 80)\n"
         "  --pc-speaker   play effects as 1-bit PC-speaker square waves\n"
         "  --midi N       play music through system MIDI device N (-1 = OPL2)\n"
-        "  --opl-core N   music core: 0 = built-in OPL2, 1 = Nuked OPL3\n"
+        "  --opl-core N   music core: 0 = built-in OPL2, 1 = Nuked OPL3,\n"
+        "                 2 = fmopl (LGPL YM3812)\n"
         "  --list-midi    print the system MIDI output devices and exit\n"
         "  --music-file NAME track for --dump-music (default: the game title track)\n"
         "  --music-seconds N seconds to render with --dump-music (default 10)\n"
@@ -524,7 +525,12 @@ int main(int argc, char** argv) {
                 opt.midi_device = -1;
             }
         } else if (a == "--opl-core") {
-            opt.opl_core = std::atoi(value("--opl-core")) == 1 ? 1 : 0;
+            opt.opl_core = std::atoi(value("--opl-core"));
+            if (opt.opl_core < 0) {
+                opt.opl_core = 0;
+            } else if (opt.opl_core > 2) {
+                opt.opl_core = 2;
+            }
         } else if (a == "--list-midi") {
             opt.list_midi = true;
         } else if (a == "--music-file") {

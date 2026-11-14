@@ -442,6 +442,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\cmf.cpp" />
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\opl2.cpp" />
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\nuked_opl.cpp" />
+    <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\fmopl_opl.cpp" />
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\music.cpp" />
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\midi.cpp" />
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\sfx.cpp" />
@@ -450,6 +451,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\external.cpp" />
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\third_party\stb_vorbis.c" />
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\third_party\opl3.c" />
+    <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\third_party\fmopl.c" />
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\third_party\miniz.c" />
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\third_party\miniz_tinfl.c" />
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\third_party\miniz_tdef.c" />
