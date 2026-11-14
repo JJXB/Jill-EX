@@ -3,15 +3,25 @@
 #include <memory>
 
 #include "cmf.h"
+#include "nuked_opl.h"
 #include "opl2.h"
 
-// CMF sequencer feeding the OPL2 core.  Mirrors the original `_sbfm_*` driver:
-// MIDI note on/off and program changes are translated to OPL register writes,
-// channels 11..15 become the five rhythm voices, and controller 0x67 switches
-// between nine-channel melody mode and six-channel + percussion mode.
+// CMF sequencer feeding an OPL2-compatible core.  Mirrors the original
+// `_sbfm_*` driver: MIDI note on/off and program changes are translated to OPL
+// register writes, channels 11..15 become the five rhythm voices, and
+// controller 0x67 switches between nine-channel melody mode and six-channel +
+// percussion mode.
 class Music {
 public:
+    enum class OplCore { Builtin, Nuked };
+
     explicit Music(int sample_rate = 48000);
+
+    // Selects the synthesis core.  Changing it resets the register state; the
+    // caller restarts the current song.
+    void set_opl_core(OplCore core);
+    OplCore opl_core() const { return core_; }
+    static const char* opl_core_name(OplCore core);
 
     void reset();
     void start(std::shared_ptr<const CmfSong> song);
@@ -38,6 +48,13 @@ private:
                             int velocity);
 
     Opl2 opl_;
+    NukedOpl nuked_;
+    OplCore core_ = OplCore::Builtin;
+
+    void reset_cores();
+    void write_reg(uint8_t reg, uint8_t value);
+    int core_rate() const;
+    void core_generate(float* out, int frames);
     std::shared_ptr<const CmfSong> song_;
     bool playing_ = false;
     size_t next_event_ = 0;

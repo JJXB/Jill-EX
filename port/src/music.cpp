@@ -12,10 +12,49 @@ const int kModOff[9] = {0x00, 0x01, 0x02, 0x08, 0x09,
 
 }  // namespace
 
-Music::Music(int sample_rate) : opl_(sample_rate) { reset(); }
+Music::Music(int sample_rate) : opl_(sample_rate), nuked_(sample_rate) {
+    reset();
+}
+
+const char* Music::opl_core_name(OplCore core) {
+    return core == OplCore::Nuked ? "NUKED OPL3" : "BUILTIN OPL2";
+}
+
+void Music::set_opl_core(OplCore core) {
+    if (core_ == core) {
+        return;
+    }
+    core_ = core;
+    reset_cores();
+}
+
+void Music::reset_cores() {
+    opl_.reset();
+    nuked_.reset();
+}
+
+void Music::write_reg(uint8_t reg, uint8_t value) {
+    if (core_ == OplCore::Nuked) {
+        nuked_.write(reg, value);
+    } else {
+        opl_.write(reg, value);
+    }
+}
+
+int Music::core_rate() const {
+    return core_ == OplCore::Nuked ? nuked_.sample_rate() : opl_.sample_rate();
+}
+
+void Music::core_generate(float* out, int frames) {
+    if (core_ == OplCore::Nuked) {
+        nuked_.generate(out, frames);
+    } else {
+        opl_.generate(out, frames);
+    }
+}
 
 void Music::reset() {
-    opl_.reset();
+    reset_cores();
     song_.reset();
     playing_ = false;
     next_event_ = 0;
@@ -49,12 +88,12 @@ void Music::start(std::shared_ptr<const CmfSong> song) {
     playing_ = true;
     end_tick_ = std::max<uint32_t>(1, song_->end_tick);
     ticks_per_sample_ =
-        static_cast<double>(song_->ticks_per_second) / opl_.sample_rate();
+        static_cast<double>(song_->ticks_per_second) / core_rate();
 }
 
 void Music::stop() {
     playing_ = false;
-    opl_.reset();
+    reset_cores();
     bd_ = 0;
     rhythm_ = false;
 }
@@ -85,7 +124,7 @@ void Music::render(float* out, int frames) {
             }
             next_event_ = 0;
         }
-        opl_.generate(out + i, 1);
+        core_generate(out + i, 1);
     }
 }
 
@@ -127,26 +166,26 @@ void Music::load_melodic(int opl_ch, int instrument) {
     const uint8_t* ins = song_->instruments[instrument];
     const int mo = kModOff[opl_ch];
     const int co = mo + 3;
-    opl_.write(static_cast<uint8_t>(0x20 + mo), ins[0]);
-    opl_.write(static_cast<uint8_t>(0x20 + co), ins[1]);
-    opl_.write(static_cast<uint8_t>(0x40 + mo), ins[2]);
-    opl_.write(static_cast<uint8_t>(0x40 + co), ins[3]);
-    opl_.write(static_cast<uint8_t>(0x60 + mo), ins[4]);
-    opl_.write(static_cast<uint8_t>(0x60 + co), ins[5]);
-    opl_.write(static_cast<uint8_t>(0x80 + mo), ins[6]);
-    opl_.write(static_cast<uint8_t>(0x80 + co), ins[7]);
-    opl_.write(static_cast<uint8_t>(0xE0 + mo), ins[8]);
-    opl_.write(static_cast<uint8_t>(0xE0 + co), ins[9]);
-    opl_.write(static_cast<uint8_t>(0xC0 + opl_ch), ins[10]);
+    write_reg(static_cast<uint8_t>(0x20 + mo), ins[0]);
+    write_reg(static_cast<uint8_t>(0x20 + co), ins[1]);
+    write_reg(static_cast<uint8_t>(0x40 + mo), ins[2]);
+    write_reg(static_cast<uint8_t>(0x40 + co), ins[3]);
+    write_reg(static_cast<uint8_t>(0x60 + mo), ins[4]);
+    write_reg(static_cast<uint8_t>(0x60 + co), ins[5]);
+    write_reg(static_cast<uint8_t>(0x80 + mo), ins[6]);
+    write_reg(static_cast<uint8_t>(0x80 + co), ins[7]);
+    write_reg(static_cast<uint8_t>(0xE0 + mo), ins[8]);
+    write_reg(static_cast<uint8_t>(0xE0 + co), ins[9]);
+    write_reg(static_cast<uint8_t>(0xC0 + opl_ch), ins[10]);
 }
 
 void Music::load_operator(int op_off, const uint8_t* ins, bool carrier_half) {
     const int k = carrier_half ? 1 : 0;
-    opl_.write(static_cast<uint8_t>(0x20 + op_off), ins[k ? 1 : 0]);
-    opl_.write(static_cast<uint8_t>(0x40 + op_off), ins[k ? 3 : 2]);
-    opl_.write(static_cast<uint8_t>(0x60 + op_off), ins[k ? 5 : 4]);
-    opl_.write(static_cast<uint8_t>(0x80 + op_off), ins[k ? 7 : 6]);
-    opl_.write(static_cast<uint8_t>(0xE0 + op_off), ins[k ? 9 : 8]);
+    write_reg(static_cast<uint8_t>(0x20 + op_off), ins[k ? 1 : 0]);
+    write_reg(static_cast<uint8_t>(0x40 + op_off), ins[k ? 3 : 2]);
+    write_reg(static_cast<uint8_t>(0x60 + op_off), ins[k ? 5 : 4]);
+    write_reg(static_cast<uint8_t>(0x80 + op_off), ins[k ? 7 : 6]);
+    write_reg(static_cast<uint8_t>(0xE0 + op_off), ins[k ? 9 : 8]);
 }
 
 void Music::set_carrier_volume(int opl_ch, int midi_chan, int instrument,
@@ -159,14 +198,14 @@ void Music::set_carrier_volume(int opl_ch, int midi_chan, int instrument,
              (127 - volume_[midi_chan]) / 2;
     tl = std::max(0, std::min(63, tl));
     const int car = kModOff[opl_ch] + 3;
-    opl_.write(static_cast<uint8_t>(0x40 + car),
+    write_reg(static_cast<uint8_t>(0x40 + car),
                static_cast<uint8_t>((ins[3] & 0xC0) | tl));
 }
 
 // Writes the pitch registers with the key bit *off*; the caller keys the note.
 void Music::set_frequency(int opl_ch, double note) {
     const double f = 440.0 * std::pow(2.0, (note - 69.0) / 12.0);
-    double x = f * 1048576.0 / opl_.sample_rate();
+    double x = f * 1048576.0 / core_rate();
     int block = 0;
     while (x >= 1024.0 && block < 7) {
         x *= 0.5;
@@ -179,20 +218,20 @@ void Music::set_frequency(int opl_ch, double note) {
     const int fnum = static_cast<int>(x + 0.5) & 0x3FF;
     fnum_[opl_ch] = fnum;
     block_[opl_ch] = block;
-    opl_.write(static_cast<uint8_t>(0xA0 + opl_ch),
+    write_reg(static_cast<uint8_t>(0xA0 + opl_ch),
                static_cast<uint8_t>(fnum & 0xFF));
-    opl_.write(static_cast<uint8_t>(0xB0 + opl_ch),
+    write_reg(static_cast<uint8_t>(0xB0 + opl_ch),
                static_cast<uint8_t>((block << 2) | ((fnum >> 8) & 3)));
 }
 
 void Music::key_on(int opl_ch) {
-    opl_.write(static_cast<uint8_t>(0xB0 + opl_ch),
+    write_reg(static_cast<uint8_t>(0xB0 + opl_ch),
                static_cast<uint8_t>((block_[opl_ch] << 2) |
                                     ((fnum_[opl_ch] >> 8) & 3) | 0x20));
 }
 
 void Music::key_off(int opl_ch) {
-    opl_.write(static_cast<uint8_t>(0xB0 + opl_ch),
+    write_reg(static_cast<uint8_t>(0xB0 + opl_ch),
                static_cast<uint8_t>((block_[opl_ch] << 2) |
                                     ((fnum_[opl_ch] >> 8) & 3)));
 }
@@ -203,7 +242,7 @@ void Music::write_rhythm_mode() {
     if (rhythm_) {
         v |= bd_ & 0x1F;
     }
-    opl_.write(0xBD, static_cast<uint8_t>(v));
+    write_reg(0xBD, static_cast<uint8_t>(v));
 }
 
 void Music::note_on(int chan, int note, int velocity) {
@@ -257,7 +296,7 @@ void Music::note_on(int chan, int note, int velocity) {
             tl += (127 - velocity) / 2 + (127 - volume_[chan]) / 2;
             tl = std::max(0, std::min(63, tl));
             const int target = chan == 11 ? 0x13 : op_off;
-            opl_.write(static_cast<uint8_t>(0x40 + target),
+            write_reg(static_cast<uint8_t>(0x40 + target),
                        static_cast<uint8_t>(
                            ((chan == 11 ? ins[3] : ins[2]) & 0xC0) | tl));
         }

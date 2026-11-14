@@ -219,6 +219,33 @@ void MusicPlayer::ps4_audio_loop() {
 }
 #endif
 
+void MusicPlayer::set_opl_core(int core) {
+#ifdef JILL_HAVE_SDL
+    if (device_ != 0) {
+        SDL_LockAudioDevice(device_);
+    }
+#endif
+    const Music::OplCore next = core == 1 ? Music::OplCore::Nuked
+                                          : Music::OplCore::Builtin;
+    if (music_.opl_core() != next) {
+        music_.set_opl_core(next);
+        // Rebuild the current CMF stream from the top on the new core.  An
+        // external PCM track is unaffected; MIDI bypasses the OPL core.
+        if (last_song_ && !midi_active_ && !ext_music_) {
+            music_.start(last_song_);
+        }
+    }
+#ifdef JILL_HAVE_SDL
+    if (device_ != 0) {
+        SDL_UnlockAudioDevice(device_);
+    }
+#endif
+}
+
+int MusicPlayer::opl_core() const {
+    return music_.opl_core() == Music::OplCore::Nuked ? 1 : 0;
+}
+
 void MusicPlayer::play(std::shared_ptr<const CmfSong> song) {
 #ifdef JILL_HAVE_SDL
     if (device_ != 0) {
@@ -614,7 +641,7 @@ void write_le32(std::FILE* f, uint32_t v) {
 
 bool MusicPlayer::render_wav(const CmfSong& song, const std::string& path,
                              double seconds, int sample_rate, float volume,
-                             std::string& err) {
+                             int opl_core, std::string& err) {
     if (seconds <= 0.0) {
         seconds = 5.0;
     }
@@ -623,6 +650,8 @@ bool MusicPlayer::render_wav(const CmfSong& song, const std::string& path,
     }
     auto shared = std::make_shared<CmfSong>(song);
     Music music(sample_rate);
+    music.set_opl_core(opl_core == 1 ? Music::OplCore::Nuked
+                                     : Music::OplCore::Builtin);
     music.start(shared);
 
     const int frames = static_cast<int>(seconds * sample_rate);

@@ -28,15 +28,16 @@ constexpr int kClassicPanelX = kClassicBorderX;
 constexpr int kClassicPanelY = kClassicTop;
 constexpr int kClassicPanelW = 64;
 constexpr int kClassicPanelH =
-    kClassicFrameH - kClassicTop - kClassicBorderY;  // 160
-// Classic menu/HUD viewport: the intro-board picture section at tiles
-// (113,54)..(127,63) is 15x10 cells, i.e. exactly 240x160 px.  The old 238x166
-// rectangle cropped that section; the panel ends at x=72 and the right border
-// starts at 312, so 240 px is the full available width.
+    kClassicFrameH - kClassicTop - kClassicBorderY;  // 158
+// Classic menu/HUD viewport: the left status column and a matching right
+// column of the same width frame the 176-px playfield.  The intro-board
+// picture is cropped to the centre 176 columns for the classic menu.
 constexpr int kClassicViewX = kClassicPanelX + kClassicPanelW;  // 72
-constexpr int kClassicViewY = kClassicTop;                     // 20
-constexpr int kClassicViewW = 240;
-constexpr int kClassicViewH = kClassicPanelH;  // 152
+constexpr int kClassicViewY = kClassicTop;                     // 22
+constexpr int kClassicRightPanelX =
+    Framebuffer::W - kClassicBorderX - kClassicPanelW;         // 248
+constexpr int kClassicViewW = kClassicRightPanelX - kClassicViewX;  // 176
+constexpr int kClassicViewH = kClassicPanelH;  // 158
 
 std::string join(const std::string& dir, const std::string& name) {
     if (dir.empty()) {
@@ -2781,9 +2782,10 @@ void Engine::draw_classic_backdrop(Framebuffer& fb, const std::string& title,
                               y < kClassicBorderY ||
                               y >= kClassicFrameH - kClassicBorderY;
             const bool left = x < kClassicViewX;
+            const bool right = x >= kClassicViewX + kClassicViewW;
             const bool top = y < kClassicViewY;
             const bool bottom = y >= kClassicViewY + kClassicViewH;
-            if (!(ring || left || top || bottom)) {
+            if (!(ring || left || right || top || bottom)) {
                 continue;
             }
             const ShapeFrame* f = fill;
@@ -2970,6 +2972,10 @@ void Engine::render_hud_classic(Framebuffer& fb) {
     classic_box(fb, px, py, kClassicPanelW, 30, 12);
     classic_box(fb, px, py + 30, kClassicPanelW, 22, 8);
     classic_box(fb, px, py + 52, kClassicPanelW, 84, 8);
+
+    // Matching column on the right of the playfield, same width as the
+    // inventory/status column (the original classic screen is symmetric).
+    classic_box(fb, kClassicRightPanelX, py, kClassicPanelW, kClassicPanelH, 8);
 
     // HEALTH + bar.
     draw_text(fb, px + 2, py + 5, label, "HEALTH");
@@ -4371,18 +4377,19 @@ void Engine::draw_object(int i, Framebuffer& fb) {
             // panel shapes live in DGROUP 0x88F4/0x88FC, whose writer is not
             // recovered, so the port leaves the map cells in place.
             if (map_mode_) {
-                // Gem doors use the 16x16 MAPDOOR tile (0x0BE), so the 8x8
-                // marker has to sit 4 px into that tile; key doors use the
-                // 32-px door art and keep the original 0x0C offset.
-                int mark_y = y + 0x0C;
+                // Gem doors use the 16x16 MAPDOOR tile (0x0BE), whose own red
+                // corner markers outline the gem.  The 8x8 keyhole marker is
+                // for the key doors' 32-px art; drawing it over the gem just
+                // hid the gem and duplicated the outline.
                 const int col = o.x >> 4;
                 const int row = o.y >> 4;
-                if (col >= 0 && col < Board::kCols && row >= 0 &&
+                const bool gem =
+                    col >= 0 && col < Board::kCols && row >= 0 &&
                     row < Board::kRows &&
-                    (map_[col * Board::kRows + row] & 0x3FFF) == 0x0BE) {
-                    mark_y = y + 4;
+                    (map_[col * Board::kRows + row] & 0x3FFF) == 0x0BE;
+                if (!gem) {
+                    draw_shape(fb, 0x0E05, x + 4, y + 0x0C, true);
                 }
-                draw_shape(fb, 0x0E05, x + 4, mark_y, true);
             }
             return;
 

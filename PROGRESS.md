@@ -1,5 +1,19 @@
 # Progress
 
+## 2026-11-14 (optional Nuked OPL3 music core)
+
+* `port/src/third_party/opl3.c/.h` vendors Nuked OPL3 1.8 (LGPL-2.1, notice
+  preserved).  `NukedOpl` exposes the same reset/write/generate surface as the
+  built-in `Opl2`, and `Music` switches between them.
+* `OPTIONS > SOUND > OPL CORE` and `[audio] opl_core` / `--opl-core 0|1`
+  select `BUILTIN OPL2` (default) or `NUKED OPL3`.  `--dump-music` takes the
+  same switch.  The Nuked path is gain-matched to the built-in core.
+* License check: Nuked (LGPL-2.1) is compatible with the PolyForm project when
+  the component source and relink path are shipped.  DOSBox `dbopl` is
+  GPL-2.0 and is therefore not vendored; libADLMIDI is LGPL-3.0 and would
+  require LGPL-3 relink provisions and a large dependency tree, so it is not
+  included.  See THIRD_PARTY_NOTICES.md.
+
 ## 2026-11-14 (tester follow-up: classic frame, gem marker, landing)
 
 * **Classic HUD frame**: the frame now uses the original 8-px side borders and
@@ -9,12 +23,19 @@
   box is the original 64x84 size again (not a full-height column), with its own
   INVENTORY caption strip, and the classic main-menu HI SCORES panel is also
   64x84 with six-pixel rows.
-* **Map gem doors**: the 8x8 keyhole marker is centred 4 px into the 16x16
-  `MAPDOOR` (0x0BE) tile instead of using the 32-px key-door offset, so the red
-  outline surrounds the gem blocker.
-* **Landing**: holding a direction through a landing now keeps the walk pose
-  and `dx`, so there is no kneeling frame or walk interrupt; the soft/hard
-  landing pose still plays when landing without a direction.
+* **Map gem doors**: the 16x16 `MAPDOOR` (0x0BE) tile already carries its own
+  red corner outline around the gem.  The redundant 8x8 keyhole overlay is no
+  longer drawn for gem doors, so there is nothing left to misalign; key doors
+  keep the keyhole at the original `x+4,y+0x0C`.
+* **Landing**: after checking the original handler, the one-tick landing tick
+  and the negative-`p11` landing pose are restored (4 frames soft / 7 hard,
+  cancelled by a held direction on the next ground update).  The temporary
+  "keep walking" shortcut was removed.
+* **Classic side columns**: the playfield is now framed by the 64-px status
+  column on the left and a matching 64-px column on the right, so the classic
+  HUD/menu view is 176 px wide instead of 240.  The classic menu draws an empty
+  64x84 companion panel beside HI SCORES and crops the intro backdrop to the
+  centre 176x158.
 
 ## 2026-11-14 (tester feedback: general fixes)
 

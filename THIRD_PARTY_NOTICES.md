@@ -195,6 +195,24 @@ are not covered by its licence.  Distributing a built `.pkg` therefore also
 distributes those modules.  Build from source, or use the loose `eboot.bin`
 with a loader, if that is not acceptable.
 
+### Nuked OPL3 (optional music core)
+
+`port/src/third_party/opl3.c` and `opl3.h` are Nuked OPL3 1.8 by Nuke.YKT,
+licensed under the **GNU Lesser General Public License 2.1** (or later).  The
+source headers carry the full notice; the copy is unmodified except for being
+compiled into this project.  The built-in OPL2 core remains the default; the
+Nuked core is selected with `OPTIONS > SOUND > OPL CORE` or `--opl-core 1`.
+Because the LGPL component is statically linked, the component's source and
+this project's source are both shipped so the library can be modified and the
+application relinked.  The PolyForm Noncommercial license continues to cover
+the rest of Jill-EX.
+
+**Not included:** DOSBox's `dbopl` is GPL-2.0 and cannot be combined with the
+PolyForm terms; libADLMIDI is LGPL-3.0 and would require LGPL-3 relink/source
+provisions (and adds a large MIDI-synthesis dependency tree), so neither is
+vendored.  If a GPL-compatible build is ever produced, dbopl could be added to
+that separate build only.
+
 ## Used by the Python tools
 
 The extractor and importer import these packages; they are installed

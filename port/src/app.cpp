@@ -1705,6 +1705,8 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                     std::string("PC SPEAKER: ") +
                         (m.pc_speaker ? "ON" : "OFF"),
                     std::string("MIDI OUT: ") + midi_device_label(audio),
+                    std::string("OPL CORE: ") +
+                        (audio.opl_core() ? "NUKED OPL3" : "BUILTIN OPL2"),
                     "SOUND TEST",
                     "BACK"};
         case MenuScreen::Hud:
@@ -2236,16 +2238,21 @@ void draw_classic_menu(Framebuffer& fb, Engine& engine, const Menu& m,
                        bool in_game,
                        const std::vector<uint8_t>& classic_px) {
     if (!in_game) {
-        // The classic viewport is the 240x160 intro-board section.  It is
-        // drawn before the frame so the frame edges cover its border.
-        if (classic_px.size() ==
-            static_cast<size_t>(240) * 160) {
+        // The classic viewport is the centre 176x158 crop of the 240x160
+        // intro-board section.  It is drawn before the frame so the frame
+        // edges cover its border.
+        if (classic_px.size() == static_cast<size_t>(240) * 160) {
             constexpr int vx = 72;
-            constexpr int vy = 20;
-            for (int y = 0; y < 160; ++y) {
-                for (int x = 0; x < 240; ++x) {
+            constexpr int vy = 22;
+            constexpr int vw = 176;
+            constexpr int vh = 158;
+            constexpr int sx0 = (240 - vw) / 2;
+            constexpr int sy0 = (160 - vh) / 2;
+            for (int y = 0; y < vh; ++y) {
+                for (int x = 0; x < vw; ++x) {
                     fb.put(vx + x, vy + y,
-                           classic_px[static_cast<size_t>(y) * 240 + x]);
+                           classic_px[static_cast<size_t>(y + sy0) * 240 +
+                                      sx0 + x]);
                 }
             }
         }
@@ -2253,6 +2260,16 @@ void draw_classic_menu(Framebuffer& fb, Engine& engine, const Menu& m,
         if (m.screen != MenuScreen::HighScores) {
             draw_classic_hiscores(fb, engine, m.hi_scores);
         }
+        // Matching column on the right of the menu playfield.
+        const int rx = Framebuffer::W - 8 - 64;
+        const int ry = 32;
+        const int rw = 64;
+        const int rh = 84;
+        fb.fill_rect(rx, ry, rw, rh, 4);
+        fb.fill_rect(rx, ry, rw, 1, 12);
+        fb.fill_rect(rx, ry + rh - 1, rw, 1, 12);
+        fb.fill_rect(rx, ry, 1, rh, 12);
+        fb.fill_rect(rx + rw - 1, ry, 1, rh, 12);
     }
 
     int maxlen = 0;
@@ -3027,6 +3044,7 @@ int run_sdl(const Options& opt, Engine& engine,
     music_player.set_volume(menu.music_volume / 100.0f);
     music_player.set_sfx_volume(menu.sfx_on ? menu.sfx_volume / 100.0f : 0.0f);
     music_player.set_pc_speaker(menu.pc_speaker);
+    music_player.set_opl_core(opt.opl_core);
     {
         std::string audio_err;
         jill_paths::trace("startup: opening audio");
@@ -3636,7 +3654,7 @@ int run_sdl(const Options& opt, Engine& engine,
                 restore_game_sfx();
                 music_player.set_enabled(menu.music_on);
                 menu.screen = MenuScreen::Audio;
-                menu.audio_sel = 6;
+                menu.audio_sel = 7;
             } else if (menu.screen == MenuScreen::Noisemaker) {
                 restore_game_sfx();
                 noisemaker_engine.reset();
@@ -3898,13 +3916,15 @@ int run_sdl(const Options& opt, Engine& engine,
                 }
                 break;
             case MenuScreen::Audio:
-                if (nav == 5 && sel == 6) {
+                if (nav == 5 && sel == 7) {
                     select_noise_set(menu.noise_set);
                     menu.noise_sel = 0;
                     music_player.set_enabled(false);
                     menu.screen = MenuScreen::SoundTest;
-                } else if (nav == 5 && sel == 7) {
+                } else if (nav == 5 && sel == 8) {
                     menu.screen = MenuScreen::Options;
+                } else if (sel == 6 && (nav == 5 || nav == 3 || nav == 4)) {
+                    music_player.set_opl_core(music_player.opl_core() ? 0 : 1);
                 } else if (sel == 5 && (nav == 3 || nav == 4 || nav == 5)) {
                     const int count =
                         static_cast<int>(MusicPlayer::midi_devices().size());
@@ -3957,7 +3977,7 @@ int run_sdl(const Options& opt, Engine& engine,
                     restore_game_sfx();
                     music_player.set_enabled(menu.music_on);
                     menu.screen = MenuScreen::Audio;
-                    menu.audio_sel = 6;
+                    menu.audio_sel = 7;
                 } else if (sel == 0 && (nav == 3 || nav == 4)) {
                     select_noise_set(menu.noise_set + (nav == 3 ? -1 : 1));
                 } else if (sel == 1 && (nav == 3 || nav == 4)) {
@@ -4955,6 +4975,7 @@ int run_sdl(const Options& opt, Engine& engine,
         ini.set_int("audio", "sfx_volume", menu.sfx_volume);
         ini.set_bool("audio", "pc_speaker", menu.pc_speaker);
         ini.set_int("audio", "midi_device", music_player.midi_device());
+        ini.set_int("audio", "opl_core", music_player.opl_core());
         ini.set_bool("hud", "classic", engine.hud_classic());
         ini.set_bool("hud", "portrait", engine.hud_portrait());
         ini.set_int("hud", "frame", menu.hud_frame);
@@ -5298,7 +5319,7 @@ int run_app(const Options& opt) {
         const float vol =
             std::max(0, std::min(100, opt.music_volume)) / 100.0f;
         if (!MusicPlayer::render_wav(song, opt.dump_music, opt.music_seconds,
-                                     48000, vol, merr)) {
+                                     48000, vol, opt.opl_core, merr)) {
             std::fprintf(stderr, "%s\n", merr.c_str());
             return 2;
         }

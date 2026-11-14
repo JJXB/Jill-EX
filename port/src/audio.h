@@ -24,6 +24,10 @@ public:
     // Swaps in a parsed track (nullptr stops).  Safe before open(): the track
     // is queued and starts with the device.
     void play(std::shared_ptr<const CmfSong> song);
+    // 0 = built-in OPL2, 1 = Nuked OPL3.  Restarts the current song if the
+    // core changes so the register state is rebuilt by the active core.
+    void set_opl_core(int core);
+    int opl_core() const;
     // Loop an externally decoded track (MP3/OGG/M4A/WAV) instead of CMF.
     void play_pcm(std::shared_ptr<const DecodedAudio> audio);
     bool pcm_active() const { return ext_music_ != nullptr; }
@@ -73,7 +77,7 @@ public:
     // Offline render for --dump-music: writes a 16-bit mono WAV.
     static bool render_wav(const CmfSong& song, const std::string& path,
                            double seconds, int sample_rate, float volume,
-                           std::string& err);
+                           int opl_core, std::string& err);
 
 private:
     static void callback(void* user, uint8_t* stream, int len);

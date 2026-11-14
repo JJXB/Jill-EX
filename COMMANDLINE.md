@@ -94,6 +94,7 @@ run.cmd [options]
 | `--sfx-volume N` | Effect volume 0..100 (default 80) |
 | `--pc-speaker` | Play effects as 1-bit PC-speaker square waves |
 | `--midi N` | Play CMF music through system MIDI output device N (`-1` = OPL2) |
+| `--opl-core N` | Music core: `0` = built-in OPL2, `1` = Nuked OPL3 |
 | `--list-midi` | Print the system MIDI output devices and exit |
 | `--audio-check` | Open the device, play 1.5 s and report format/levels |
 
