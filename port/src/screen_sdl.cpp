@@ -44,6 +44,21 @@ public:
         window_ = SDL_CreateWindow("Jill (port skeleton)", 0, 0, window_w,
                                    window_h, 0);
 #else
+#ifdef JILL_VITA
+        // The Vita panel is fixed at 960x544.  Always create the window at the
+        // real display size; the desktop-oriented scale/resolution settings
+        // must never produce a larger drawable than the panel.
+        SDL_DisplayMode dm{};
+        if (SDL_GetDesktopDisplayMode(0, &dm) == 0 && dm.w > 0 && dm.h > 0) {
+            window_w = dm.w;
+            window_h = dm.h;
+        } else {
+            window_w = 960;
+            window_h = 544;
+        }
+        mode = 2;  // always borderless fullscreen on the handheld panel
+        jill_paths::trace("sdl screen: vita mode %dx%d", window_w, window_h);
+#endif
         SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
         window_ = SDL_CreateWindow("Jill (port skeleton)", SDL_WINDOWPOS_CENTERED,
                                    SDL_WINDOWPOS_CENTERED, window_w, window_h,
@@ -87,7 +102,18 @@ public:
 
     void apply(int pixel_w, int pixel_h, int mode, int display_w,
                int display_h) override {
-#ifdef JILL_PS4
+#ifdef JILL_VITA
+        // The panel is the only output; ignore windowed/resolution requests.
+        (void)pixel_w;
+        (void)pixel_h;
+        (void)mode;
+        (void)display_w;
+        (void)display_h;
+        if (window_) {
+            SDL_SetWindowBordered(window_, SDL_FALSE);
+            SDL_SetWindowFullscreen(window_, SDL_WINDOW_FULLSCREEN_DESKTOP);
+        }
+#elif defined(JILL_PS4)
         // PS4 video output is fixed at 1080p; resizing after the window surface
         // is created can invalidate it.
         (void)pixel_w;

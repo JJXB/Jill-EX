@@ -1,5 +1,13 @@
 # Progress
 
+## 2026-11-14 (Vita display cap)
+
+* The Vita build now clamps its window/drawable to the real display mode
+  (maximum 960x544) before creating the SDL window and always uses borderless
+  fullscreen.  The Vita `RESOLUTION` list is reduced to 960x544/640x480/480x272
+  and `window_width/height` are capped, so no menu setting can exceed the
+  panel.  The Vita default `scale` is now 2.
+
 ## 2026-11-14 (CMF translation audit against SBFMDRV)
 
 * Replaced the velocity/TL approximation with the Creative driver's exact

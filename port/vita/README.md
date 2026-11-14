@@ -79,7 +79,10 @@ Saves, high scores and `jill.log` are written next to those files, so
 
 The screen is borderless fullscreen (`window_mode = 2`) and the renderer sets
 a 320x200 logical size every frame, so the 960x544 panel gets an
-aspect-correct letterboxed image.
+aspect-correct letterboxed image.  The window/drawable is clamped to the real
+display mode (maximum 960x544) even if the desktop-oriented scale or
+resolution setting asks for more; the Vita `RESOLUTION` list only offers
+960x544, 640x480 and 480x272.
 
 ## LiveArea artwork
 
@@ -117,6 +120,7 @@ and would break the install.  Nothing may be interlaced.
 * Jill 2/3 and Onesimus content, save/restore, high scores, text pages,
   endings, minimap and the NOISEMAKER screens.
 * Screen fit/letterboxing at 960x544, audio latency and behaviour after
-  suspend/resume.
+  suspend/resume.  The window is now clamped to the panel (960x544), but this
+  still needs a visual check on hardware.
 * `sce_sys/` art is a resized copy of the PS4 icon — replace it when there is
   real artwork (keep it 8-bit indexed).

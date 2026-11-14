@@ -1340,9 +1340,15 @@ struct ResolutionOption {
 };
 
 const ResolutionOption kResolutions[] = {
+#ifdef JILL_VITA
+    // The Vita panel is 960x544; keep every option inside it.
+    {"DESKTOP", 0, 0}, {"960x544", 960, 544}, {"640x480", 640, 480},
+    {"480x272", 480, 272},
+#else
     {"DESKTOP", 0, 0},   {"640x480", 640, 480},   {"800x600", 800, 600},
     {"1024x768", 1024, 768}, {"1280x720", 1280, 720}, {"1600x900", 1600, 900},
     {"1920x1080", 1920, 1080},
+#endif
 };
 constexpr int kResolutionCount =
     static_cast<int>(sizeof(kResolutions) / sizeof(kResolutions[0]));
@@ -1358,13 +1364,21 @@ int match_resolution(int w, int h) {
 const char* const kWindowModes[] = {"WINDOWED", "FULLSCREEN", "BORDERLESS"};
 
 int window_width(const VideoSettings& v) {
-    return v.resolution ? kResolutions[v.resolution].w
-                        : Framebuffer::W * v.scale;
+    int w = v.resolution ? kResolutions[v.resolution].w
+                         : Framebuffer::W * v.scale;
+#ifdef JILL_VITA
+    w = std::min(w, 960);
+#endif
+    return w;
 }
 
 int window_height(const VideoSettings& v) {
-    return v.resolution ? kResolutions[v.resolution].h
-                        : Framebuffer::H * v.scale;
+    int h = v.resolution ? kResolutions[v.resolution].h
+                         : Framebuffer::H * v.scale;
+#ifdef JILL_VITA
+    h = std::min(h, 544);
+#endif
+    return h;
 }
 
 std::string super_jump_name(int n) {
