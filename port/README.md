@@ -25,6 +25,17 @@ Output: `port\build\Release\jill.exe` (SDL2.dll is copied next to it).
 VS2022 `vcvars64.bat` at its default path.  SDL2 is optional: without it the
 code still builds, but only headless mode (`--ticks`) works.
 
+Console targets have their own scripts and SDKs, and never touch `port\build`:
+
+```
+build_ps4.cmd [nopkg]   PS4 eboot/pkg (OpenOrbis + Piglet GLES) -> port\ps4\build
+build_vita.cmd          PS Vita VPK (VitaSDK + SDL2)            -> port\vita\build
+```
+
+Both compile the same `port\src`; the Vita target is `JILL_VITA` and keeps its
+data in `ux0:data/JillEX` (see `port\vita\README.md`), the PS4 target is
+described in `BUILDING.md`.
+
 ## Run
 
 ```
