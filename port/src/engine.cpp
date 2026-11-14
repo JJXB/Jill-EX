@@ -467,6 +467,31 @@ void Engine::tile_prepass() {
                 id = (id >= 0x18A) ? 0x186 : static_cast<uint16_t>(id + 1);
                 cell = static_cast<uint16_t>(id | 0xC000);
             }
+            // Water: 1F28:0006 steps the cell to the next id while
+            // (frame & 3) is odd.  Six groups: four 4-frame groups for the
+            // top/middle/edge tiles (0x190..0x19F) and two 3-frame groups for
+            // the lower corners (0x1A0..0x1A5).  STILLWATER (0x1A6) and the
+            // shallow variants outside that range stay put.
+            if (animated_water_ && (frame_ & 1) != 0 && id >= 0x190 &&
+                id <= 0x1A5) {
+                int base = 0x190;
+                int span = 4;
+                if (id >= 0x1A3) {
+                    base = 0x1A3;
+                    span = 3;
+                } else if (id >= 0x1A0) {
+                    base = 0x1A0;
+                    span = 3;
+                } else if (id >= 0x19C) {
+                    base = 0x19C;
+                } else if (id >= 0x198) {
+                    base = 0x198;
+                } else if (id >= 0x194) {
+                    base = 0x194;
+                }
+                id = static_cast<uint16_t>(base + (id - base + 1) % span);
+                cell = static_cast<uint16_t>(id | 0xC000);
+            }
             // 1F28:01E0: BLINK (0x81) is the blue fading block.  Every 8th
             // frame (phase = frame>>3 & 0xF) the original rewrites tile 0x81's
             // own record: the shape becomes bank-41 frame blink[phase] and
@@ -2988,6 +3013,13 @@ void Engine::render_hud_classic(Framebuffer& fb) {
                    "INVENTORY");
     draw_text_font(fb, px + 2, py + kClassicPanelH - 10, label, 2, 6,
                    "INVENTORY");
+
+    // The original keeps a blank strip under the playfield for the bottom
+    // hint line ("APPLES GIVE YOU HEALTH", save/restore notices).  Clear it
+    // to black so the message never sits on the patterned border.
+    const int msg_y = kClassicViewY + kClassicViewH;
+    fb.fill_rect(kClassicViewX, msg_y, kClassicViewW,
+                 Framebuffer::H - kClassicBorder - msg_y, 0);
 }
 
 // MODERN/MINIMAL HUD (the default): one horizontal strip across the top.
@@ -3452,6 +3484,18 @@ void Engine::draw_bottom_msg(Framebuffer& fb) {
         return;
     }
     const std::string shown = msg_text_.substr(0, len);
+    if (hud_classic_) {
+        // Classic HUD: the bottom hint line lives in the blank strip under
+        // the playfield (render_hud_classic clears it to black).
+        const int max_chars = kClassicViewW / 6;
+        const std::string line =
+            shown.substr(0, static_cast<size_t>(max_chars));
+        const int w = static_cast<int>(line.size()) * 6;
+        const int x = kClassicViewX + (kClassicViewW - w) / 2;
+        draw_text(fb, x, kClassicViewY + kClassicViewH + 3, msg_colour_,
+                  line.c_str());
+        return;
+    }
     int w = static_cast<int>(shown.size()) * 6;
     int x = (Framebuffer::W - w) / 2;
     int y = Framebuffer::H - 14;
@@ -3744,17 +3788,6 @@ void Engine::draw_text_page(Framebuffer& fb) {
     }
     const std::vector<TextPage::Line> body = page_body(*page);
 
-    fb.fill_rect(0, 0, Framebuffer::W, Framebuffer::H, 0);
-    if (ext_visuals_) {
-        if (const ExternalPicture* art = ext_visuals_->text_page(page_number_)) {
-            blit_external_picture(fb, 0, 0, *art);
-        } else {
-            draw_frame(fb, 6, 4, Framebuffer::W - 12, Framebuffer::H - 8);
-        }
-    } else {
-        draw_frame(fb, 6, 4, Framebuffer::W - 12, Framebuffer::H - 8);
-    }
-
     // Title (the page's first line); its colour digit follows the same 0-7
     // rule as the body but colour 1 is remapped so it stays readable.
     std::string title = page->lines.empty() ? std::string() : page->lines[0].text;
@@ -3763,42 +3796,169 @@ void Engine::draw_text_page(Framebuffer& fb) {
     }
     const uint8_t title_colour =
         page->lines.empty() ? 7 : page_colour(page->lines[0].colour);
-    const int title_x =
-        (Framebuffer::W - static_cast<int>(title.size()) * 6) / 2;
-    draw_text_font(fb, std::max(12, title_x), 11, title_colour, 2, 6,
-                   title.c_str());
-    fb.fill_rect(14, 21, Framebuffer::W - 28, 1, 8);
 
-    const int top = 27;
-    const int line_h = 9;
     const int visible = kPageVisibleLines;
     const int max_scroll = std::max(0, static_cast<int>(body.size()) - visible);
     page_scroll_ = std::max(0, std::min(page_scroll_, max_scroll));
-    int y = top;
-    for (int i = page_scroll_;
-         i < static_cast<int>(body.size()) && i < page_scroll_ + visible; ++i) {
-        const TextPage::Line& line = body[static_cast<size_t>(i)];
-        if (!line.text.empty()) {
-            const int x =
-                (Framebuffer::W - static_cast<int>(line.text.size()) * 6) / 2;
-            draw_text_font(fb, std::max(10, x), y, page_colour(line.colour), 2,
-                           6, line.text.c_str());
-        }
-        y += line_h;
-    }
+    const int count = std::min(visible,
+                               static_cast<int>(body.size()) - page_scroll_);
 
+    int maxlen = static_cast<int>(title.size());
+    for (int i = page_scroll_; i < page_scroll_ + count; ++i) {
+        maxlen = std::max(
+            maxlen, static_cast<int>(body[static_cast<size_t>(i)].text.size()));
+    }
+    maxlen = std::max(1, std::min(maxlen, 48));
+
+    // Footer text shared by both styles.
     char info[48];
     std::snprintf(info, sizeof(info), "PAGE %d", page_number_);
-    draw_text_font(fb, 14, Framebuffer::H - 13, 8, 2, 6, info);
+    const std::string page_label = info;
+    std::string screen_label;
     if (max_scroll > 0) {
         const int boxes = (static_cast<int>(body.size()) + visible - 1) / visible;
         std::snprintf(info, sizeof(info), "SCREEN %d/%d",
                       page_scroll_ / visible + 1, boxes);
-        draw_text_font(fb, (Framebuffer::W - static_cast<int>(std::strlen(info)) * 6) / 2,
-                       Framebuffer::H - 13, 8, 2, 6, info);
+        screen_label = info;
     }
-    draw_text_font(fb, Framebuffer::W - 14 - 9 * 6, Framebuffer::H - 13, 8, 2,
-                   6, "ESC CLOSE");
+
+    auto draw_footer = [&](int x, int y, int w, uint8_t colour) {
+        draw_text_font(fb, x + 2, y, colour, 2, 6, page_label.c_str());
+        if (!screen_label.empty()) {
+            const int sw = static_cast<int>(screen_label.size()) * 6;
+            draw_text_font(fb, x + (w - sw) / 2, y, colour, 2, 6,
+                           screen_label.c_str());
+        }
+        const char* close = "ESC CLOSE";
+        const int cw = static_cast<int>(std::strlen(close)) * 6;
+        draw_text_font(fb, x + w - cw - 2, y, colour, 2, 6, close);
+    };
+
+    // A pack's `pages/page_<n>` is a full-page backdrop; the text stays drawn
+    // over it (docs/port-external-assets.md).  Keep the original full-page
+    // layout for that case, independent of the message-box style.
+    const ExternalPicture* ext_page =
+        ext_visuals_ ? ext_visuals_->text_page(page_number_) : nullptr;
+    if (ext_page) {
+        fb.fill_rect(0, 0, Framebuffer::W, Framebuffer::H, 0);
+        blit_external_picture(fb, 0, 0, *ext_page);
+        const int title_x =
+            (Framebuffer::W - static_cast<int>(title.size()) * 6) / 2;
+        draw_text_font(fb, std::max(12, title_x), 11, title_colour, 2, 6,
+                       title.c_str());
+        fb.fill_rect(14, 21, Framebuffer::W - 28, 1, 8);
+        int y = 27;
+        for (int i = page_scroll_; i < page_scroll_ + count; ++i) {
+            const TextPage::Line& line = body[static_cast<size_t>(i)];
+            if (!line.text.empty()) {
+                const int x =
+                    (Framebuffer::W -
+                     static_cast<int>(line.text.size()) * 6) / 2;
+                draw_text_font(fb, std::max(10, x), y,
+                               page_colour(line.colour), 2, 6,
+                               line.text.c_str());
+            }
+            y += 9;
+        }
+        draw_footer(12, Framebuffer::H - 13, Framebuffer::W - 24, 8);
+        return;
+    }
+
+    if (message_box_style_ == 2) {
+        // CLASSIC: the original news-bulletin window - a shape-7 patterned
+        // frame, a blue title, then a blue plate with the page text.
+        constexpr int kLineH = 8;
+        const int bw = std::max(200, std::min(300, maxlen * 6 + 40));
+        const int bh = std::max(120, count * kLineH + 58);
+        const int bx = (Framebuffer::W - bw) / 2;
+        const int by = (Framebuffer::H - bh) / 2;
+
+        draw_menu_window(fb, bx, by, bw, bh);
+
+        const int tw8 = static_cast<int>(title.size()) * 8;
+        const bool title_big = tw8 <= bw - 20;
+        const int adv = title_big ? 8 : 6;
+        const int bank = title_big ? 1 : 2;
+        const int tw = static_cast<int>(title.size()) * adv;
+        const int tx = std::max(bx + 10, bx + (bw - tw) / 2);
+        draw_text_font(fb, tx + 1, by + 12, 0, bank, adv, title.c_str());
+        draw_text_font(fb, tx, by + 11, title_colour, bank, adv,
+                       title.c_str());
+
+        const int panel_x = bx + 10;
+        const int panel_y = by + 22;
+        const int panel_w = bw - 20;
+        const int panel_h = bh - 32;
+        fb.fill_rect(panel_x, panel_y, panel_w, panel_h, 0);
+        fb.fill_rect(panel_x + 1, panel_y + 1, panel_w - 2, panel_h - 2, 1);
+
+        int y = panel_y + 5;
+        for (int i = page_scroll_; i < page_scroll_ + count; ++i) {
+            const TextPage::Line& line = body[static_cast<size_t>(i)];
+            if (!line.text.empty()) {
+                const int x =
+                    panel_x + (panel_w -
+                               static_cast<int>(line.text.size()) * 6) / 2;
+                draw_text_font(fb, std::max(panel_x + 2, x), y,
+                               page_colour(line.colour), 2, 6,
+                               line.text.c_str());
+            }
+            y += kLineH;
+        }
+        draw_footer(panel_x, panel_y + panel_h - 10, panel_w, 15);
+        return;
+    }
+
+    // MODERN: a centred, semi-transparent card over the live screen instead
+    // of a full-screen black page.  Three of every four pixels are cleared so
+    // the board stays visible behind the text without swallowing the letters.
+    constexpr int kLineH = 8;
+    const int bw = std::max(196, std::min(296, maxlen * 6 + 36));
+    const int bh = std::min(170, std::max(88, count * kLineH + 42));
+    const int bx = (Framebuffer::W - bw) / 2;
+    const int by = (Framebuffer::H - bh) / 2;
+    for (int y = by; y < by + bh; ++y) {
+        for (int x = bx; x < bx + bw; ++x) {
+            // 2x2 ordered dither: one pixel in four stays visible.
+            if (!((x & 1) == 0 && (y & 1) == 0)) {
+                fb.put(x, y, 0);
+            }
+        }
+    }
+    fb.fill_rect(bx, by, bw, 1, 8);
+    fb.fill_rect(bx, by + bh - 1, bw, 1, 8);
+    fb.fill_rect(bx, by, 1, bh, 8);
+    fb.fill_rect(bx + bw - 1, by, 1, bh, 8);
+
+    // Solid title/footer strips keep the small type readable; the body stays
+    // translucent so the board is still visible behind it.
+    fb.fill_rect(bx + 1, by + 1, bw - 2, 14, 0);
+    fb.fill_rect(bx + 1, by + bh - 14, bw - 2, 13, 0);
+
+    const int tw = static_cast<int>(title.size()) * 6;
+    draw_text_font(fb, std::max(bx + 3, bx + (bw - tw) / 2) + 1, by + 6, 0,
+                   2, 6, title.c_str());
+    draw_text_font(fb, std::max(bx + 4, bx + (bw - tw) / 2), by + 5,
+                   title_colour, 2, 6, title.c_str());
+    fb.fill_rect(bx + 6, by + 15, bw - 12, 1, 8);
+
+    const int body_top = by + 20;
+    const int body_h = bh - 34;
+    int y = body_top + std::max(0, (body_h - count * kLineH) / 2);
+    for (int i = page_scroll_; i < page_scroll_ + count; ++i) {
+        const TextPage::Line& line = body[static_cast<size_t>(i)];
+        if (!line.text.empty()) {
+            const int x =
+                (Framebuffer::W - static_cast<int>(line.text.size()) * 6) / 2;
+            draw_text_font(fb, std::max(bx + 3, x + 1), y + 1, 0, 2, 6,
+                           line.text.c_str());
+            draw_text_font(fb, std::max(bx + 2, x), y,
+                           page_colour(line.colour), 2, 6,
+                           line.text.c_str());
+        }
+        y += kLineH;
+    }
+    draw_footer(bx, by + bh - 12, bw, 8);
 }
 
 void Engine::show_text_page(int number) {
@@ -4197,11 +4357,16 @@ void Engine::draw_object(int i, Framebuffer& fb) {
             return;
 
         case 24:  // DOOR (1644:3a00)
-            // The 0xE05 marker is always drawn; the original's two sliding
+            // The 0xE05 marker is the world-map door/keyhole icon and the
+            // original only draws it while DGROUP:0x120E is set, i.e. on the
+            // hub map (25EB:09C0 sets it, ESC clears it).  Drawing it in a
+            // level put a red keyhole border at the bottom of every closed
+            // door, misaligned with the door art.  The original's two sliding
             // panel shapes live in DGROUP 0x88F4/0x88FC, whose writer is not
-            // recovered, so the port leaves the map cells themselves in place
-            // (see docs/jill1-kind-handlers.md, kind 24 [open]).
-            draw_shape(fb, 0x0E05, x + 4, y + 0x0C, true);
+            // recovered, so the port leaves the map cells in place.
+            if (map_mode_) {
+                draw_shape(fb, 0x0E05, x + 4, y + 0x0C, true);
+            }
             return;
 
         case 25:  // FALLDOOR (1644:3da3)
@@ -5327,11 +5492,13 @@ void Engine::process_pending_warp() {
             }
         }
         // Restoring the stashed hub bypasses load_board(), so the level track
-        // would keep playing on the map.  Start the hub track again.
+        // would keep playing on the map.  Always re-request the hub track:
+        // last_music_ can already name it (a demo save, a previous return)
+        // while the audio device is still on the level's song.
         const std::string hub_music = first_board_music(objects_);
         jill_paths::trace("warp !: board=%s hub track=%s", board_name_.c_str(),
                           hub_music.c_str());
-        if (!hub_music.empty() && hub_music != last_music_) {
+        if (!hub_music.empty()) {
             music_request_ = hub_music;
             last_music_ = hub_music;
         }

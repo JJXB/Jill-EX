@@ -140,6 +140,7 @@ void usage() {
         "  --classic-message-box original shape-7 caption/reminder windows\n"
         "  --air-jump-buffer keep the original hold-jump-through-a-fall buffer\n"
         "  --minimap      draw a small board overview in the lower-right corner\n"
+        "  --no-animated-water  freeze the 4-frame water tiles\n"
         "  --center-fish-shot  centre the fish form's shot vertically\n"
         "  --turtle       Jill 3 TURTLE mode: run the game at half speed\n"
         "  --jill-look N   0 = game default, N = installed game N (Jill Select)\n"
@@ -289,6 +290,8 @@ int main(int argc, char** argv) {
         opt.air_jump_buffer = ini.get_bool("gameplay", "air_jump_buffer",
                                            opt.air_jump_buffer);
         opt.minimap = ini.get_bool("gameplay", "minimap", opt.minimap);
+        opt.animated_water = ini.get_bool("gameplay", "animated_water",
+                                          opt.animated_water);
         opt.center_fish_shot = ini.get_bool("gameplay", "center_fish_shot",
                                             opt.center_fish_shot);
         opt.turtle = ini.get_bool("gameplay", "turtle", opt.turtle);
@@ -459,6 +462,8 @@ int main(int argc, char** argv) {
             opt.air_jump_buffer = true;
         } else if (a == "--minimap") {
             opt.minimap = true;
+        } else if (a == "--no-animated-water") {
+            opt.animated_water = false;
         } else if (a == "--center-fish-shot") {
             opt.center_fish_shot = true;
         } else if (a == "--turtle") {

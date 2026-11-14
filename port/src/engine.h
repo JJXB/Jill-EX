@@ -180,6 +180,11 @@ public:
     // Enhancement: small 1-px-per-tile board overview in the lower-right corner.
     void set_minimap(bool on) { minimap_ = on; }
     bool minimap() const { return minimap_; }
+    // Enhancement (default ON): cycle the four-frame water tile groups.  The
+    // original tile hook animates 0x190..0x1A5 on odd sub-frames; retail
+    // releases differ over whether the water is animated at all.
+    void set_animated_water(bool on) { animated_water_ = on; }
+    bool animated_water() const { return animated_water_; }
     // Enhancement: centre the fish form's shot vertically on the player.
     void set_center_fish_shot(bool on) { center_fish_shot_ = on; }
     bool center_fish_shot() const { return center_fish_shot_; }
@@ -499,6 +504,7 @@ private:
     int menu_theme_ = 0;
     bool air_jump_buffer_ = false;  // enhancement: hold jump through a fall
     bool minimap_ = false;          // enhancement: board overview overlay
+    bool animated_water_ = true;    // enhancement: 4-frame water tile cycle
     bool center_fish_shot_ = false; // enhancement: centre the fish shot
     // Jill Select: source and target player colour tables (16 x palette index).
     std::array<uint8_t, 16> player_base_xlate_{};

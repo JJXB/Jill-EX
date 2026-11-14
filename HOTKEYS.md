@@ -66,13 +66,18 @@ interpolation stretches each update across two 18.2 Hz ticks, so movement stays
 continuous instead of stepping.  It is stored as `[gameplay] turtle = 0/1` and
 can be started with `--turtle`.
 
+`OPTIONS > GAMEPLAY > ANIMATED WATER` cycles the four-frame water tile groups
+(`0x190`..`0x1A5`) like the original tile hook; retail releases differ on
+whether the water moves.  It defaults to ON, is stored as
+`[gameplay] animated_water = 1`, and can be frozen with `--no-animated-water`.
+
 `OPTIONS > VIDEO > MESSAGE BOX` cycles three styles:
 
 | Style | Behaviour |
 | --- | --- |
 | OFF | Plain text hints; the level-title card keeps its port frame |
-| MODERN | Port frame behind the bottom hint and the level-title box |
-| CLASSIC | Original shape-7 windows: the 64x70 Jill portrait caption and the titled `Reminder` card |
+| MODERN | Port frame behind the bottom hint and the level-title box; full text pages become a centred translucent card |
+| CLASSIC | Original shape-7 windows: the 64x70 Jill portrait caption, the titled `Reminder` card, and the news-bulletin/text pages (patterned frame + blue plate) |
 
 CLASSIC is stored as `[gameplay] message_box = 2` (`1` = MODERN, `0` = OFF) and
 can be selected with `--classic-message-box`.  The original portrait is shape

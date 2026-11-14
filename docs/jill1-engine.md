@@ -909,8 +909,10 @@ confirms the object layout independently of the runtime.
 1. **Object record bytes `0x0E`-`0x12` and `0x1B`** - kind-specific; each handler
    interprets them, so a port can copy them verbatim.
 2. **Tile attribute bits** (`attr` in `jill.dma`, copied to table `+2` as `0x4006 ^
-   attr`): only the low two (collision class) and the BRIDGER test are identified.
-   Which bits mean foreground / shading / water animation is unmapped.
+   attr`): the low two (collision class), the BRIDGER test and bit `0x20`
+   (tile-hook animation) are identified.  Bit `0x20` drives lava (`0x186`..`0x18A`)
+   and the six water groups (`0x190`..`0x1A5`); the remaining bits
+   (foreground / shading) are still unmapped.
 3. **`jill1.cfg` option block**: the 22-byte block at `0x3DCE` loads/saves correctly
    but the meaning of its 11 words is unknown; `0x3DCE` itself doubles as a
    sound/overlay flag elsewhere in the code.

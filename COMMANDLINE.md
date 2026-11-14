@@ -78,6 +78,7 @@ run.cmd [options]
 | `--fast-dialogs` | Four characters per tick for captions/pages |
 | `--air-jump-buffer` | Keep the original hold-jump-through-a-fall buffer |
 | `--center-fish-shot` | Centre the fish form's shot vertically |
+| `--no-animated-water` | Freeze the four-frame water tiles (`[gameplay] animated_water = 0`) |
 | `--turtle` | Jill 3-style TURTLE mode: half-speed game logic |
 | `--max-knives N` | Knife cap: 3 or 5 |
 | `--jill-look N` | `0` = game default, `N` = installed game N (Jill Select) |

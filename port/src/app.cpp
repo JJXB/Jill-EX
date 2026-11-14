@@ -779,6 +779,7 @@ bool apply_selection(Engine& engine, const std::vector<GameDef>& games,
     const int message_box = engine.message_box();
     const bool air_jump = engine.air_jump_buffer();
     const bool minimap = engine.minimap();
+    const bool animated_water = engine.animated_water();
     const bool center_fish = engine.center_fish_shot();
     const int player_look = engine.player_look();
     const int player_suit = engine.player_suit();
@@ -825,6 +826,7 @@ bool apply_selection(Engine& engine, const std::vector<GameDef>& games,
     engine.set_message_box(message_box);
     engine.set_air_jump_buffer(air_jump);
     engine.set_minimap(minimap);
+    engine.set_animated_water(animated_water);
     engine.set_center_fish_shot(center_fish);
     apply_player_look(engine, games, player_look, player_suit);
     apply_hud_frame(engine, games, hud_frame);
@@ -1833,6 +1835,8 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                         player_look_name(games, engine.player_look()),
                     std::string("JILL COLOUR: ") +
                         player_suit_name(engine.player_suit()),
+                    std::string("ANIMATED WATER: ") +
+                        (engine.animated_water() ? "ON" : "OFF"),
                     std::string("TURTLE MODE: ") +
                         (engine.turtle() ? "ON" : "OFF"),
                     "BACK"};
@@ -2777,6 +2781,7 @@ bool start_game(Engine& engine, const std::vector<GameDef>& games, int index,
     const int message_box = engine.message_box();
     const bool air_jump = engine.air_jump_buffer();
     const bool minimap = engine.minimap();
+    const bool animated_water = engine.animated_water();
     const bool center_fish = engine.center_fish_shot();
     const int player_look = engine.player_look();
     const int player_suit = engine.player_suit();
@@ -2829,6 +2834,7 @@ bool start_game(Engine& engine, const std::vector<GameDef>& games, int index,
     engine.set_message_box(message_box);
     engine.set_air_jump_buffer(air_jump);
     engine.set_minimap(minimap);
+    engine.set_animated_water(animated_water);
     engine.set_center_fish_shot(center_fish);
     apply_player_look(engine, games, player_look, player_suit);
     apply_hud_frame(engine, games, hud_frame);
@@ -3107,6 +3113,7 @@ int run_sdl(const Options& opt, Engine& engine,
         menu.screen = MenuScreen::Main;
         menu.main_sel = 1;  // DEMO row
         game_started = false;
+        play_music(engine.game().title_music);
     };
     auto finish_ending = [&]() {
         ending.active = false;
@@ -3121,6 +3128,13 @@ int run_sdl(const Options& opt, Engine& engine,
         menu.screen = MenuScreen::Main;
         menu.main_sel = 0;
         game_started = false;
+        play_music(engine.game().title_music);
+    };
+    // Returning to the front end from a level used to leave that level's song
+    // playing under the map/menu backdrop (Jill 1: 1.jn1 -> map screen).  The
+    // front end always uses the game's title track.
+    auto front_end_music = [&]() {
+        play_music(engine.game().title_music);
     };
     bool running = true;
     int page_axis_x = 0;  // text-page stick edge latches
@@ -3568,6 +3582,8 @@ int run_sdl(const Options& opt, Engine& engine,
                 }
                 engine.set_player_suit(suit);
             } else if (menu.screen == MenuScreen::Enhancements && sel == 9) {
+                engine.set_animated_water(!engine.animated_water());
+            } else if (menu.screen == MenuScreen::Enhancements && sel == 10) {
                 engine.set_turtle(!engine.turtle());
             }
         };
@@ -3694,6 +3710,7 @@ int run_sdl(const Options& opt, Engine& engine,
                                 menu.main_sel = 0;
                                 menu.screen = MenuScreen::Main;
                                 game_started = false;
+                                front_end_music();
                             } else {
                                 menu.screen = MenuScreen::Closed;
                             }
@@ -4173,7 +4190,7 @@ int run_sdl(const Options& opt, Engine& engine,
                 break;
             }
             case MenuScreen::Enhancements:
-                if (nav == 5 && sel == 10) {
+                if (nav == 5 && sel >= static_cast<int>(items.size()) - 1) {
                     menu.screen = MenuScreen::Options;
                 } else {
                     toggle_option();
@@ -4261,6 +4278,7 @@ int run_sdl(const Options& opt, Engine& engine,
                         menu.screen = MenuScreen::Main;
                         menu.main_sel = 0;
                         game_started = false;
+                        front_end_music();
                     }
                 }
                 continue;
@@ -4658,6 +4676,7 @@ int run_sdl(const Options& opt, Engine& engine,
                 menu.screen = MenuScreen::Main;
                 menu.main_sel = 0;
                 game_started = false;
+                front_end_music();
             }
         }
 
@@ -4962,6 +4981,7 @@ int run_sdl(const Options& opt, Engine& engine,
         ini.set_int("gameplay", "message_box", engine.message_box());
         ini.set_bool("gameplay", "air_jump_buffer", engine.air_jump_buffer());
         ini.set_bool("gameplay", "minimap", engine.minimap());
+        ini.set_bool("gameplay", "animated_water", engine.animated_water());
         ini.set_bool("gameplay", "center_fish_shot", engine.center_fish_shot());
         ini.set_bool("gameplay", "turtle", engine.turtle());
         ini.set_int("gameplay", "player_look", engine.player_look());
@@ -5182,6 +5202,7 @@ int run_app(const Options& opt) {
     engine.set_message_box(opt.message_box);
     engine.set_air_jump_buffer(opt.air_jump_buffer);
     engine.set_minimap(opt.minimap);
+    engine.set_animated_water(opt.animated_water);
     engine.set_center_fish_shot(opt.center_fish_shot);
     apply_player_look(engine, games, opt.player_look, opt.player_suit);
     engine.set_hud_bg(opt.hud_bg);

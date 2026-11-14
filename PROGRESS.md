@@ -1,5 +1,36 @@
 # Progress
 
+## 2026-11-14 (tester feedback: general fixes)
+
+Seven fixes from desktop testers, all in shared code (desktop/PS4/Vita):
+
+* **Locked-door marker**: `0x0E05` (the red keyhole/border) is the world-map
+  icon, not an in-level overlay.  It is now drawn only when `map_mode_` is set,
+  matching the original's `DGROUP:0x120E` gate (`25EB:09C0` sets it on the hub,
+  ESC clears it).  The misplaced keyhole at the bottom of level doors is gone.
+* **Sound remap table**: `SfxBank::remap()` had the 50-byte table shifted after
+  logical id `0x14`, so several effects addressed the wrong (often empty)
+  sample.  It is now byte-identical to `DGROUP:0x1212`; in particular the
+  stalactite drop (`0x2F -> 0x23`) plays again, and `0x1B` (landing) now maps
+  to `0x30`.
+* **Map-screen music**: returning to the front end from a level restarts the
+  game's title track instead of leaving that level's song playing, and the hub
+  restore always re-requests the map track (it no longer trusts a stale
+  `last_music_`).
+* **Animated water** (new enhancement, default ON): the tile prepass cycles the
+  six original water groups `0x190`..`0x1A5` on odd sub-frames, exactly as
+  `1F28:0006` mode 2 does.  `OPTIONS > GAMEPLAY > ANIMATED WATER` and
+  `[gameplay] animated_water` / `--no-animated-water` control it.
+* **Classic HUD message strip**: the area under the 240x160 playfield is now a
+  black 12-px bar, and `put_bottom_msg` hints ("APPLES GIVE YOU HEALTH", save /
+  restore notices) are centred there instead of over the patterned border.
+* **Classic text pages**: with `VIDEO > MESSAGE BOX: CLASSIC`, the news
+  bulletin / help / story pages use the screenshot presentation - shape-7
+  patterned window, blue title, blue text plate, paging footer.
+* **Modern text pages**: a centred translucent card (three of every four body
+  pixels darkened, solid title/footer strips) instead of a full-screen black
+  page, so the board stays visible behind the popup.
+
 ## 2026-11-14 (VitaSDK toolchain + PS Vita build target)
 
 * VitaSDK `2026.08` installed natively on Windows through the vdpm PowerShell

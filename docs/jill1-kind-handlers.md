@@ -218,7 +218,8 @@ Shapes are written `tileset<<8 | frame`. `O(i).f` is object field `f` (see 6.1).
 - Port: used as the world-map avatar (`map.jn3`). `tiny_update` keeps the 2 px/tick 8-way movement with the `0x200` walkable mask, the `p11` animation counter and `tile_touch`; the `p13` swim/run channel (never entered on the map because it starts at 0) is omitted. `has_player` accepts kind 23 as well as kind 0.
 
 ### 24. DOOR (1644:3a00) [verified]
-- draw: `_drawshape(0x0E05, x+4, y+0xC)` behind the inventory flag `DGROUP:0x120E`.  While
+- draw: `_drawshape(0x0E05, x+4, y+0xC)` only while `DGROUP:0x120E != 0` (the
+  world-map flag; `25EB:09C0` sets it and ESC clears it).  While
   it opens it also draws two panels at `y-state` and `y+state+0x10` using the words at
   `DGROUP:0x88F4`/`0x88FC` and repaints the map cells around it (`22AB:140b`).  Those
   two words are zero in the on-disk image and no writer was found in the exported
