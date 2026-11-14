@@ -41,8 +41,13 @@ public:
         ending_done_ = false;
         return v;
     }
-    // Replay a recorded `*.mac` input script (the `&end*.mac` ending macros).
+    // Replay a recorded `*.mac` input script (the `&end*.mac` ending macros
+    // and the attract demos).
     void start_macro(const std::string& name);
+    // True while the scripted inputs are still being fed to the update.
+    bool macro_active() const { return macro_playing_; }
+    // Stop playback and hand control back to the normal input poller.
+    void stop_macro();
     int save_slots() const {
         const int slots = game_.save_slots > 0
                               ? game_.save_slots

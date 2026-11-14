@@ -106,6 +106,7 @@ run.cmd [options]
 | `--dump-splash PREFIX` | Write the selected splash pages as `PREFIX1.ppm`, ... |
 | `--start X,Y` | With `--ticks`: place the player at X,Y |
 | `--level N` | With `--ticks`: override the board header level id |
+| `--macro NAME` | With `--ticks`: replay a recorded `.mac` input script (demo/debug) |
 | `--watch-tile N` | With `--ticks`: print tile N's live record each tick |
 | `--invincible` | Debug: no damage (F5 toggles) |
 | `--super-jump N` | Treat N feathers as carried (0..15) |

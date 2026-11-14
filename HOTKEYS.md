@@ -79,10 +79,11 @@ can be selected with `--classic-message-box`.  The original portrait is shape
 entry 24, also exported as `portrait.png` by the extractor.  A fresh game shows
 the `Reminder` card after the first level-title caption.
 
-The main menu always has `RESTORE GAME` and `HIGH SCORES`.  On `RESTORE GAME`,
-Left/Right changes the episode and the slots then show that game's saves.
-`HIGH SCORES` also uses Left/Right to switch episodes.  Each game/mod keeps its
-own table in `hiscore_<game id>.txt`.
+The front-end main menu is `START GAME`, `DEMO`, `RESTORE GAME`, `HIGH SCORES`,
+`OPTIONS`, `NOISEMAKER`, `QUIT`.  It always has `RESTORE GAME` and `HIGH
+SCORES`.  On `RESTORE GAME`, Left/Right changes the episode and the slots then
+show that game's saves.  `HIGH SCORES` also uses Left/Right to switch episodes.
+Each game/mod keeps its own table in `hiscore_<game id>.txt`.
 
 While a game is running the main menu also shows `QUIT TO MAIN MENU`, which
 returns to the front end and records the current score if it makes the table.
@@ -200,6 +201,32 @@ its `intro` board at the `NOISE BLASTER` page.
 | --- | --- |
 | QWERTY row, digits, `-`, `=`, brackets, punctuation | Play raw sound slots 1..45 |
 | Esc / pad B / Back | Return to the main menu |
+
+## Front-end DEMO
+
+`DEMO` on the front-end main menu plays the attract demos shipped with the
+installed games.  The first screen lists the episodes that have demos
+(`Jill of the Jungle`, `Jill goes Underground`, `Jill Saves the Prince`;
+Onesimus ships none and is omitted).  An episode with a single demo starts it
+directly, otherwise `DEMO 1/2/3` picks one.
+
+| Key | Action |
+| --- | --- |
+| Up / Down | Choose the episode or the demo |
+| Left / Right | Change the episode on the first screen |
+| Enter / pad A | Start the highlighted demo |
+| Esc, Enter / pad B, Back, Start | Leave the demo |
+
+| Episode | Demos (board / macro) |
+| --- | --- |
+| Jill of the Jungle | `0.dem`, `2.dem`, `1.dem` - all `jn1demo.mac` |
+| Jill goes Underground | `3.jn2`, `9.jn2`, `17.jn2` - `jn2dem1..3.mac` |
+| Jill Saves the Prince | `1.jn3`, `5.jn3`, `12.jn3` - `jn3dem1..3.mac` |
+
+Playback loads the demo board and level, replays the macro, and returns to the
+main menu when the script runs out or the route reaches an ending marker.
+`--macro NAME` replays the same scripts headless (`--ticks`), e.g.
+`jill.exe --game jill2 --board 3.jn2 --level 3 --macro jn2dem1.mac --ticks 1100`.
 
 ## Extractor viewer
 

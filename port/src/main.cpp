@@ -92,6 +92,7 @@ void usage() {
         "  --dump-objects FILE  with --ticks: write the object table as text\n"
         "  --start X,Y    with --ticks: put the player at X,Y (debug)\n"
         "  --level N      with --ticks: set the board header level id (debug)\n"
+        "  --macro NAME   replay a recorded .mac input script (debug/demos)\n"
         "  --scale N      windowed integer scale, 1..6 (default 3)\n"
         "  --high-fps N   presentation rate: 0 (18.2 Hz), 60, 90, 120 or 144\n"
         "  --no-interpolate  disable high-framerate sprite smoothing\n"
@@ -337,6 +338,8 @@ int main(int argc, char** argv) {
             if (opt.level < 0) {
                 opt.level = 0;
             }
+        } else if (a == "--macro") {
+            opt.macro_file = value("--macro");
         } else if (a == "--scale") {
             opt.scale = std::atoi(value("--scale"));
         } else if (a == "--high-fps") {

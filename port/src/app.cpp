@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <map>
 #include <memory>
 #include <string>
@@ -154,13 +155,15 @@ std::string track_path(const GameDef& g, const std::string& name) {
         (name[1] == ':' || name[0] == '/' || name[0] == '\\')) {
         return name;
     }
-    return g.data_dir + "/" + name;
+    return jill_paths::resolve_file(g.data_dir + "/" + name);
 }
 
 std::shared_ptr<CmfSong> load_track(const GameDef& g, const std::string& name,
                                     std::string& err) {
     auto song = std::make_shared<CmfSong>();
-    if (!cmf_load(track_path(g, name), *song, err)) {
+    const std::string path = track_path(g, name);
+    jill_paths::trace("music: %s -> %s", name.c_str(), path.c_str());
+    if (!cmf_load(path, *song, err)) {
         return nullptr;
     }
     return song;
@@ -267,6 +270,9 @@ int run_headless(Engine& engine, const Options& opt) {
     }
     if (opt.text_page > 0) {
         engine.show_text_page(opt.text_page);
+    }
+    if (!opt.macro_file.empty()) {
+        engine.start_macro(opt.macro_file);
     }
     if (opt.blade) {
         engine.debug_spawn_blade();
@@ -941,11 +947,72 @@ std::string save_label_for(const GameDef& g, int slot) {
     return buf;
 }
 
+// Attract demos shipped with the three Jill episodes.  The board/macro pairs
+// are the original tables (docs/jill23-frontend-flow.md section 3); Jill 1 has
+// no demo table of its own and reuses jn1demo.mac for its three intro-board
+// warps.  Onesimus ships no recorded demos, so it has no entries here.
+struct DemoDef {
+    const char* game;
+    const char* board;
+    int level;
+    const char* macro;
+};
+
+constexpr DemoDef kDemos[] = {
+    {"jill1", "0.dem", 0, "jn1demo.mac"},
+    {"jill1", "2.dem", 0, "jn1demo.mac"},
+    {"jill1", "1.dem", 0, "jn1demo.mac"},
+    {"jill2", "3.jn2", 3, "jn2dem1.mac"},
+    {"jill2", "9.jn2", 9, "jn2dem2.mac"},
+    {"jill2", "17.jn2", 17, "jn2dem3.mac"},
+    {"jill3", "1.jn3", 1, "jn3dem1.mac"},
+    {"jill3", "5.jn3", 5, "jn3dem2.mac"},
+    {"jill3", "12.jn3", 12, "jn3dem3.mac"},
+};
+
+int demo_count_for(const GameDef& g) {
+    int n = 0;
+    for (const DemoDef& d : kDemos) {
+        if (g.id == d.game) {
+            ++n;
+        }
+    }
+    return n;
+}
+
+const DemoDef* demo_at(const GameDef& g, int index) {
+    if (index < 0) {
+        return nullptr;
+    }
+    for (const DemoDef& d : kDemos) {
+        if (g.id != d.game) {
+            continue;
+        }
+        if (index-- == 0) {
+            return &d;
+        }
+    }
+    return nullptr;
+}
+
+// Indices into `games` that have at least one demo, in installed order.
+std::vector<int> demo_games(const std::vector<GameDef>& games) {
+    std::vector<int> out;
+    for (size_t i = 0; i < games.size(); ++i) {
+        if (demo_count_for(games[i]) > 0) {
+            out.push_back(static_cast<int>(i));
+        }
+    }
+    return out;
+}
+
 // Front end: main menu -> episode select / options -> controls/enhancements.
 enum class MenuScreen {
     Closed,
     Main,
     Episodes,
+    DemoSelect,   // choose an installed game that ships attract demos
+    DemoChoice,   // choose which recorded demo of that game to play
     Options,
     Hud,
     Video,
@@ -974,6 +1041,9 @@ struct Menu {
     std::string menu_font;  // external font set ("" = game font)
     int main_sel = 0;
     int ep_sel = 0;
+    int demo_game = -1;   // chosen game index (into `games`)
+    int demo_game_sel = 0;  // row on the game selector
+    int demo_sel = 0;     // which recorded demo of that game
     int opt_sel = 0;
     int hud_sel = 0;
     int video_sel = 0;
@@ -1036,6 +1106,10 @@ int& menu_sel(Menu& m) {
     switch (m.screen) {
         case MenuScreen::Episodes:
             return m.ep_sel;
+        case MenuScreen::DemoSelect:
+            return m.demo_game_sel;
+        case MenuScreen::DemoChoice:
+            return m.demo_sel;
         case MenuScreen::Options:
             return m.opt_sel;
         case MenuScreen::Hud:
@@ -1499,6 +1573,7 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                 v.push_back("QUIT");
             } else {
                 v.push_back("START GAME");
+                v.push_back("DEMO");
                 v.push_back("RESTORE GAME");
                 v.push_back("HIGH SCORES");
                 v.push_back("OPTIONS");
@@ -1521,6 +1596,27 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
             std::vector<std::string> v;
             for (const GameDef& g : games) {
                 v.push_back(upper_ascii(g.title.c_str()));
+            }
+            v.push_back("BACK");
+            return v;
+        }
+        case MenuScreen::DemoSelect: {
+            std::vector<std::string> v;
+            for (int i : demo_games(games)) {
+                v.push_back(upper_ascii(games[static_cast<size_t>(i)].title.c_str()));
+            }
+            v.push_back("BACK");
+            return v;
+        }
+        case MenuScreen::DemoChoice: {
+            std::vector<std::string> v;
+            if (m.demo_game >= 0 &&
+                m.demo_game < static_cast<int>(games.size())) {
+                const int count =
+                    demo_count_for(games[static_cast<size_t>(m.demo_game)]);
+                for (int i = 0; i < count; ++i) {
+                    v.push_back("DEMO " + std::to_string(i + 1));
+                }
             }
             v.push_back("BACK");
             return v;
@@ -2201,6 +2297,8 @@ void draw_menu(Framebuffer& fb, Engine& engine, Menu& m, bool started,
     const char* sub = "MAIN MENU";
     switch (m.screen) {
         case MenuScreen::Episodes: sub = "SELECT EPISODE"; break;
+        case MenuScreen::DemoSelect: sub = "SELECT EPISODE"; break;
+        case MenuScreen::DemoChoice: sub = "SELECT DEMO"; break;
         case MenuScreen::Options: sub = "OPTIONS"; break;
         case MenuScreen::Hud: sub = "HUD"; break;
         case MenuScreen::Video: sub = "VIDEO"; break;
@@ -2611,7 +2709,9 @@ void draw_ending_viewer(Framebuffer& fb, Engine& engine,
 // Start a fresh game on a game's first board, keeping the current
 // display/engine options.
 bool start_game(Engine& engine, const std::vector<GameDef>& games, int index,
-                int hud_frame, int menu_frame) {
+                int hud_frame, int menu_frame,
+                const std::string& board = std::string(), int level = -1,
+                const std::string& macro = std::string()) {
     if (index < 0 || index >= static_cast<int>(games.size())) {
         return false;
     }
@@ -2656,10 +2756,16 @@ bool start_game(Engine& engine, const std::vector<GameDef>& games, int index,
     engine.set_fast_dialogs(fast_dialogs);
     engine.set_message_box(message_box);
     engine.set_hud_classic(hud);  // camera centre depends on the HUD style
-    if (!engine.load_board(g.first_board, err)) {
-        std::fprintf(stderr, "load %s: %s\n", g.first_board.c_str(),
+    const std::string& start_board = board.empty() ? g.first_board : board;
+    if (!engine.load_board(start_board, err)) {
+        std::fprintf(stderr, "load %s: %s\n", start_board.c_str(),
                      err.c_str());
         return false;
+    }
+    if (level >= 0) {
+        // Demo tables store the level id explicitly; the recorded macro was
+        // made on that level and CHECKPT/entrance matching depends on it.
+        engine.set_level_id(level);
     }
     engine.set_hud_classic(hud);
     engine.set_hud_portrait(hud_portrait);
@@ -2682,7 +2788,27 @@ bool start_game(Engine& engine, const std::vector<GameDef>& games, int index,
     apply_hud_frame(engine, games, hud_frame);
     apply_theme_frame(engine, games, menu_theme);
     apply_menu_frame(engine, games, menu_frame, menu_theme);
+    if (!macro.empty()) {
+        engine.start_macro(macro);
+    }
     return true;
+}
+
+// Load a demo board and begin its recorded input macro.  The macro drives the
+// engine exactly like the ending scripts, so the normal input poller is
+// bypassed until playback ends or the player backs out.
+bool start_demo(Engine& engine, const std::vector<GameDef>& games,
+                int game_index, int demo_index, int hud_frame, int menu_frame) {
+    if (game_index < 0 || game_index >= static_cast<int>(games.size())) {
+        return false;
+    }
+    const DemoDef* demo = demo_at(games[static_cast<size_t>(game_index)],
+                                  demo_index);
+    if (!demo) {
+        return false;
+    }
+    return start_game(engine, games, game_index, hud_frame, menu_frame,
+                      demo->board, demo->level, demo->macro);
 }
 
 int run_sdl(const Options& opt, Engine& engine,
@@ -2890,7 +3016,18 @@ int run_sdl(const Options& opt, Engine& engine,
         return true;
     };
     auto play_music = [&](const std::string& name) {
-        if (!name.empty()) {
+        if (name.empty()) {
+            music_player.stop();
+            return;
+        }
+#ifdef JILL_PS4
+        // Trace writes to jill.log and flushes, so track changes survive a
+        // hang or the stdout/g_log double-redirect.
+        jill_paths::trace("music: %s", name.c_str());
+#else
+        std::printf("music: %s\n", name.c_str());
+#endif
+        {
             std::string rel;
             std::shared_ptr<const DecodedAudio> audio;
             if (ext_assets.mounted() && ext_assets.find_music(name, rel) &&
@@ -2899,15 +3036,12 @@ int run_sdl(const Options& opt, Engine& engine,
                 return;
             }
         }
-        if (name.empty()) {
-            music_player.stop();
-            return;
-        }
         std::string merr;
         auto song = load_track(engine.game(), name, merr);
         if (song) {
             music_player.play(song);
         } else {
+            jill_paths::trace("music: FAILED %s (%s)", name.c_str(), merr.c_str());
             std::fprintf(stderr, "%s\n", merr.c_str());
         }
     };
@@ -2918,6 +3052,14 @@ int run_sdl(const Options& opt, Engine& engine,
         menu.screen = MenuScreen::Closed;  // explicit --board run: skip the menu
     }
     bool game_started = !opt.board.empty();
+    bool demo_active = false;  // playing a recorded attract demo
+    auto finish_demo = [&]() {
+        demo_active = false;
+        engine.stop_macro();
+        menu.screen = MenuScreen::Main;
+        menu.main_sel = 1;  // DEMO row
+        game_started = false;
+    };
     auto finish_ending = [&]() {
         ending.active = false;
         ending.index = 0;
@@ -3147,19 +3289,41 @@ int run_sdl(const Options& opt, Engine& engine,
         music_player.set_sfx_overrides(overrides);
     };
     auto refresh_external_visuals = [&]() {
-        if (ext_assets.mounted()) {
-            if (!engine.apply_external(ext_assets, palette)) {
-                std::fprintf(stderr, "external: %s has no usable art\n",
-                             ext_assets.active() ? ext_assets.active()->name.c_str()
-                                                 : "autoload");
+        try {
+            if (ext_assets.mounted()) {
+                if (!engine.apply_external(ext_assets, palette)) {
+                    std::fprintf(stderr, "external: %s has no usable art\n",
+                                 ext_assets.active() ? ext_assets.active()->name.c_str()
+                                                     : "autoload");
+                }
+            } else {
+                engine.apply_external(ext_assets, palette);  // clears overrides
             }
-        } else {
-            engine.apply_external(ext_assets, palette);  // clears overrides
+        } catch (const std::exception& e) {
+            // Console filesystems throw on calls the desktop tolerates; never
+            // let a pack with bad art take the whole game down.
+            jill_paths::trace("external: visuals failed: %s", e.what());
         }
     };
     auto apply_pack = [&](int index) {
-        if (index < 0 || index >= static_cast<int>(ext_assets.packs().size())) {
-            ext_assets.unmount();
+        try {
+            if (index < 0 || index >= static_cast<int>(ext_assets.packs().size())) {
+                ext_assets.unmount();
+                refresh_external_visuals();
+                build_sfx_overrides();
+                if (!engine.game().title_music.empty()) {
+                    play_music(engine.game().title_music);
+                } else {
+                    music_player.stop();
+                }
+                return;
+            }
+            std::string mount_err;
+            if (!ext_assets.mount(index, mount_err)) {
+                std::fprintf(stderr, "external: %s\n", mount_err.c_str());
+                return;
+            }
+            std::printf("external: mounted %s\n", ext_assets.active()->name.c_str());
             refresh_external_visuals();
             build_sfx_overrides();
             if (!engine.game().title_music.empty()) {
@@ -3167,20 +3331,8 @@ int run_sdl(const Options& opt, Engine& engine,
             } else {
                 music_player.stop();
             }
-            return;
-        }
-        std::string mount_err;
-        if (!ext_assets.mount(index, mount_err)) {
-            std::fprintf(stderr, "external: %s\n", mount_err.c_str());
-            return;
-        }
-        std::printf("external: mounted %s\n", ext_assets.active()->name.c_str());
-        refresh_external_visuals();
-        build_sfx_overrides();
-        if (!engine.game().title_music.empty()) {
-            play_music(engine.game().title_music);
-        } else {
-            music_player.stop();
+        } catch (const std::exception& e) {
+            jill_paths::trace("external: pack switch failed: %s", e.what());
         }
     };
     // Mount the initial pack from --pack / [external] pack.
@@ -3395,7 +3547,9 @@ int run_sdl(const Options& opt, Engine& engine,
                 restore_game_sfx();
                 noisemaker_engine.reset();
                 menu.screen = MenuScreen::Main;
-                menu.main_sel = game_started ? 6 : 4;
+                menu.main_sel = game_started ? 6 : 5;
+            } else if (menu.screen == MenuScreen::DemoChoice) {
+                menu.screen = MenuScreen::DemoSelect;
             } else {
                 menu.screen = MenuScreen::Main;
             }
@@ -3482,6 +3636,25 @@ int run_sdl(const Options& opt, Engine& engine,
                             }
                             break;
                         case 1: {
+                            // DEMO: choose one of the installed games that
+                            // ships a recorded attract macro, then the demo.
+                            const std::vector<int> demos = demo_games(games);
+                            if (demos.empty()) {
+                                break;
+                            }
+                            menu.demo_game_sel = 0;
+                            const int cur =
+                                game_index_for_id(games, engine.game().id);
+                            for (size_t i = 0; i < demos.size(); ++i) {
+                                if (demos[i] == cur) {
+                                    menu.demo_game_sel = static_cast<int>(i);
+                                    break;
+                                }
+                            }
+                            menu.screen = MenuScreen::DemoSelect;
+                            break;
+                        }
+                        case 2: {
                             int idx = game_index_for_id(games, engine.game().id);
                             if (idx < 0) idx = 0;
                             menu.screen = MenuScreen::LoadGame;
@@ -3490,7 +3663,7 @@ int run_sdl(const Options& opt, Engine& engine,
                             ensure_load_labels(menu, games, idx);
                             break;
                         }
-                        case 2: {
+                        case 3: {
                             int idx = game_index_for_id(games, engine.game().id);
                             if (idx < 0) idx = 0;
                             ensure_hiscores(menu, games, idx);
@@ -3498,8 +3671,8 @@ int run_sdl(const Options& opt, Engine& engine,
                             menu.screen = MenuScreen::HighScores;
                             break;
                         }
-                        case 3: menu.screen = MenuScreen::Options; break;
-                        case 4: {
+                        case 4: menu.screen = MenuScreen::Options; break;
+                        case 5: {
                             int idx = game_index_for_id(games, engine.game().id);
                             if (idx < 0) idx = 0;
                             menu.nm_sel = idx;
@@ -3529,6 +3702,55 @@ int run_sdl(const Options& opt, Engine& engine,
                     }
                 } else {
                     menu.screen = MenuScreen::Main;
+                }
+                break;
+            }
+            case MenuScreen::DemoSelect: {
+                const std::vector<int> demos = demo_games(games);
+                const int count = static_cast<int>(demos.size());
+                if (count <= 0) {
+                    menu.screen = MenuScreen::Main;
+                    break;
+                }
+                if (nav == 3 || nav == 4) {
+                    menu.demo_game_sel =
+                        (menu.demo_game_sel + (nav == 3 ? count - 1 : 1)) %
+                        count;
+                } else if (sel < count) {
+                    menu.demo_game = demos[static_cast<size_t>(sel)];
+                    const int dc = demo_count_for(
+                        games[static_cast<size_t>(menu.demo_game)]);
+                    if (dc <= 0) {
+                        menu.screen = MenuScreen::Main;
+                    } else if (dc == 1) {
+                        if (start_demo(engine, games, menu.demo_game, 0,
+                                       menu.hud_frame, menu.menu_frame)) {
+                            demo_active = true;
+                            menu.screen = MenuScreen::Closed;
+                        }
+                    } else {
+                        menu.demo_sel = 0;
+                        menu.screen = MenuScreen::DemoChoice;
+                    }
+                } else {
+                    menu.screen = MenuScreen::Main;
+                }
+                break;
+            }
+            case MenuScreen::DemoChoice: {
+                const int dc =
+                    (menu.demo_game >= 0 &&
+                     menu.demo_game < static_cast<int>(games.size()))
+                        ? demo_count_for(games[static_cast<size_t>(menu.demo_game)])
+                        : 0;
+                if (sel < dc) {
+                    if (start_demo(engine, games, menu.demo_game, sel,
+                                   menu.hud_frame, menu.menu_frame)) {
+                        demo_active = true;
+                        menu.screen = MenuScreen::Closed;
+                    }
+                } else {
+                    menu.screen = MenuScreen::DemoSelect;
                 }
                 break;
             }
@@ -4030,6 +4252,16 @@ int run_sdl(const Options& opt, Engine& engine,
                 }
             } else if (ev.type == SDL_CONTROLLERBUTTONDOWN) {
                 const int b = ev.cbutton.button;
+                if (demo_active) {
+                    // Any of the usual back/pause buttons leaves the demo;
+                    // everything else belongs to the recorded script.
+                    if (b == SDL_CONTROLLER_BUTTON_B ||
+                        b == SDL_CONTROLLER_BUTTON_BACK ||
+                        b == SDL_CONTROLLER_BUTTON_START) {
+                        finish_demo();
+                    }
+                    continue;
+                }
                 if (menu.screen == MenuScreen::Noisemaker) {
                     if (b == SDL_CONTROLLER_BUTTON_B ||
                         b == SDL_CONTROLLER_BUTTON_BACK ||
@@ -4037,7 +4269,7 @@ int run_sdl(const Options& opt, Engine& engine,
                         restore_game_sfx();
                         noisemaker_engine.reset();
                         menu.screen = MenuScreen::Main;
-                        menu.main_sel = game_started ? 6 : 4;
+                        menu.main_sel = game_started ? 6 : 5;
                     }
                     continue;
                 }
@@ -4120,12 +4352,22 @@ int run_sdl(const Options& opt, Engine& engine,
                     }
                     continue;
                 }
+                if (demo_active) {
+                    // Esc/Enter leaves the demo; other keys are ignored so the
+                    // recorded macro remains in charge of the inputs.
+                    if (sc == SDL_SCANCODE_ESCAPE ||
+                        sc == SDL_SCANCODE_RETURN ||
+                        sc == SDL_SCANCODE_KP_ENTER) {
+                        finish_demo();
+                    }
+                    continue;
+                }
                 if (menu.screen == MenuScreen::Noisemaker) {
                     if (sc == SDL_SCANCODE_ESCAPE) {
                         restore_game_sfx();
                         noisemaker_engine.reset();
                         menu.screen = MenuScreen::Main;
-                        menu.main_sel = game_started ? 6 : 4;
+                        menu.main_sel = game_started ? 6 : 5;
                     } else {
                         const int slot = noisemaker_slot(sc);
                         if (slot > 0) {
@@ -4309,7 +4551,16 @@ int run_sdl(const Options& opt, Engine& engine,
                 finish_ending();
             }
         }
-        if (!ending.active && engine.take_ending()) {
+        if (demo_active) {
+            // A demo ends when its recorded script runs out (the original
+            // macros finish with the keys that select the next attract demo)
+            // or when the recorded route reaches an ending marker.
+            const bool ended = engine.take_ending();
+            if (ended || !engine.macro_active()) {
+                finish_demo();
+            }
+        }
+        if (!demo_active && !ending.active && engine.take_ending()) {
             // The state-3 CHECKPT is the in-map ending event.  Show the
             // board's text cards, then return to the front end.
             if (!start_ending_viewer(engine, ending)) {

@@ -1,8 +1,11 @@
 * Fixes
   * Neaten up Classic Menus/HUD
-* Near goals
   * Stereo Rendering - SBS, Interlaced - Code Disabled,
   * Fix PS4 Crashes
+    * External pack select: `fs::relative`/`realpath` abort (fixed 2026-11-13)
+    * Quit: Still broken.
+  * Check Version? 
+  * Demo option on main menu for original demos (added 2026-11-14; user test pending)
 * Least Important Ideas
   * Other Games
     * Xargon Support? - no. Separate Project. Use this and xargon's own source code as a base for it.

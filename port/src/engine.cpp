@@ -276,6 +276,8 @@ bool Engine::load_board(const std::string& name, std::string& err) {
     // begins on zeppelin.ddt, the hub on funky.ddt, and so on.
     music_request_ = first_board_music(objects_);
     last_music_ = music_request_;
+    jill_paths::trace("board: %s objects=%zu track=%s", board_name_.c_str(),
+                      objects_.size(), music_request_.c_str());
 
     // Level id: derive it from a numeric board name first (Jill 2/3 store 0 in
     // most headers), otherwise trust the header (map/intro boards).
@@ -5130,6 +5132,17 @@ void Engine::start_macro(const std::string& name) {
     macro_playing_ = !macro_.empty();
 }
 
+void Engine::stop_macro() {
+    macro_playing_ = false;
+    macro_.clear();
+    macro_pos_ = 0;
+    macro_tick_ = 0;
+    macro_last_ = 0;
+    macro_held1_ = false;
+    macro_held2_ = false;
+    in_ = InputState{};
+}
+
 void Engine::apply_macro_input() {
     while (macro_pos_ < macro_.size() &&
            macro_[macro_pos_].time <= macro_tick_) {
@@ -5308,6 +5321,15 @@ void Engine::process_pending_warp() {
                 break;
             }
         }
+        // Restoring the stashed hub bypasses load_board(), so the level track
+        // would keep playing on the map.  Start the hub track again.
+        const std::string hub_music = first_board_music(objects_);
+        jill_paths::trace("warp !: board=%s hub track=%s", board_name_.c_str(),
+                          hub_music.c_str());
+        if (!hub_music.empty() && hub_music != last_music_) {
+            music_request_ = hub_music;
+            last_music_ = hub_music;
+        }
     }
 }
 
@@ -5480,6 +5502,31 @@ bool Engine::load_game(int slot, std::string& err) {
     if (map_mode_) {
         hub_name_ = game_.map_board;
     }
+    // A save stores the board contents and level id but not the board file
+    // name.  Recover the name so Ctrl+R reloads the right board and the status
+    // line reports it.
+    if (map_mode_) {
+        board_name_ = game_.map_board;
+    } else {
+        const int saved_level = header_[0] | (header_[1] << 8);
+        for (const std::string& b : game_.boards) {
+            int v = 0;
+            if (numeric_stem(b, v) && v == saved_level) {
+                board_name_ = b;
+                break;
+            }
+        }
+    }
+    if (!board_name_.empty() && !has_extension(board_name_)) {
+        board_name_ += game_.board_ext;
+    }
+    // Restart the level's start track.  A save can be made anywhere on the
+    // board, so waiting for the player to touch the `*track.ddt` checkpoint
+    // would leave the previous (menu/level) track playing.
+    music_request_ = first_board_music(objects_);
+    last_music_ = music_request_;
+    jill_paths::trace("save load: board=%s track=%s", board_name_.c_str(),
+                      music_request_.c_str());
     has_player_ = objects_[0].kind == 0 || objects_[0].kind == 23;
     for (BoardObject& o : objects_) {
         o.prev_x = o.x;

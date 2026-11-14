@@ -1,5 +1,92 @@
 # Progress
 
+## 2026-11-14 (front-end DEMO playback)
+
+* Front-end main menu now has `DEMO` at row 2: `START GAME`, `DEMO`,
+  `RESTORE GAME`, `HIGH SCORES`, `OPTIONS`, `NOISEMAKER`, `QUIT`.  The row is
+  front-end only (the in-game pause menu is unchanged).
+* `DEMO` lists the installed episodes that ship attract demos (Onesimus has
+  none, so it is skipped), then `DEMO 1/2/3` when the episode has more than one.
+  The table is hardcoded from the original demo code (docs/episode-profiles.md
+  section 5.1): Jill 1 `0.dem`/`2.dem`/`1.dem` with `jn1demo.mac`, Jill 2
+  `3.jn2`/`9.jn2`/`17.jn2` with `jn2dem1..3.mac` (levels 3/9/17), Jill 3
+  `1.jn3`/`5.jn3`/`12.jn3` with `jn3dem1..3.mac` (levels 1/5/12).
+* Playback reuses `start_game` with board/level/macro overrides and
+  `Engine::start_macro`, so the recorded inputs drive the normal update.  The
+  macro's key-bit records are ignored by the port; the demo ends when the script
+  runs out (or a state-3 CHECKPT fires) and returns to the main menu with `DEMO`
+  still selected.  Esc/Enter, pad B/Back/Start leave early.
+* `Engine::stop_macro()` and `macro_active()` added for that exit path.
+* New debug switch `--macro NAME` replays a `.mac` headlessly with `--ticks`.
+  All nine routes were run this way (x64): macros load and Jill moves on every
+  board; Jill 2 demos end with a level-id change on some routes (same behaviour
+  as the original death/respawn, not yet investigated further).
+* x64, x86 and PS4 (`build_ps4.cmd nopkg`) all rebuilt with the change;
+  only the known `stb_vorbis` warning.
+
+## 2026-11-13 (exit crash root cause, case-insensitive tracks)
+
+* The real-console quit log showed `videoout: unregister failed 0x80290009`
+  (`ORBIS_VIDEO_OUT_ERROR_RESOURCE_BUSY`): the display still owned the buffers,
+  and the old code then unmapped and released the direct memory *while the
+  videoout port was still open*.  That is the retail CE-34878-0 on quit.
+  `shutdown()` now closes the port first, and if the close fails it leaves the
+  display memory alone (process exit reclaims it) instead of unmapping it.
+* Music: `track_path()` resolves through the new `jill_paths::resolve_file()`,
+  which falls back to a case-insensitive match in the game's data directory.
+  The PS4 data filesystem is case-sensitive while the DOS-era assets (and FTP
+  copies) are not consistently cased; a miss silently kept the previous track
+  playing.  Both the fallback and the resolved path are traced
+  (`path: ... -> ...`, `music: <name> -> <path>`).
+
+## 2026-11-13 (external pack crash, exit cleanup)
+
+* Selecting an external pack aborted the game (`std::filesystem::filesystem_error:
+  in canonical: Function not implemented`).  `ExternalAssets::files()` used
+  `fs::relative()`, which libc++ implements through `weakly_canonical()` ->
+  `realpath()`, and the PS4 kernel does not implement `realpath` on the data
+  filesystem.  Replaced it with a lexical prefix strip (`relative_to()`); the
+  iterator only yields paths under the pack root, so this is exact.
+* `directory_entry::is_regular_file()` calls now take an `error_code`, and
+  `apply_pack` / `refresh_external_visuals` catch `std::exception` so a bad pack
+  can no longer terminate the process.
+* Exit cleanup: `sceVideoOutUnregisterBuffers` was called for attribute indices
+  0, 1 and 2; only 0 exists (shadPS4: "Invalid attribute index 1/2"), so the
+  buffers stayed registered while their memory was unmapped - a scanout of freed
+  memory, i.e. the retail CE-34878-0 on quit.  Now unregisters index 0 once and
+  logs a failure.  `shutdown()` is idempotent (the destructor called it twice,
+  which printed "videoout: shut down" twice).
+
+## 2026-11-12 (PS4 music tracing, round 2)
+
+* Round 1 log (22:28) proved track *selection* is correct on console:
+  `music: funky.ddt` (hub/menu) then `music: zeppelin.ddt` on board 1.
+* Added PS4 traces: `board: <name> objects=<n> track=<music>`,
+  `save load: board=... track=...`, `warp !: ... hub track=...`,
+  `music: FAILED <name> (<err>)`, and `audio: start <title> (midi=0)` from
+  `MusicPlayer::mix` when the OPL sequencer picks up a pending song.
+* A new console log now shows whether a track was requested, whether it loaded,
+  and whether the mixer actually restarted on it.
+
+## 2026-11-12 (music state after save load / hub return)
+
+* Level music could get stuck on one track because two paths replace the board
+  without going through `Engine::load_board()`:
+  * `Engine::load_game()` restored the saved map/objects but left
+    `music_request_` pointing at whatever was playing (usually the title or hub
+    track), so every restored level kept the same music.  It now derives the
+    board name from the saved level id (also fixes Ctrl+R reload and the status
+    line) and restarts that board's first `*track.ddt`/`*track.ark`.
+  * Finishing a level through `!` restores the stashed hub board directly; the
+    level track kept playing on the map.  The hub's first track is now
+    requested again.
+* `play_music()` logs `music: <track>` whenever it changes track, so a real
+  run can be checked against `docs/music-catalog.md`.
+* Verified headless: `--board map --load <level save>` now reports the saved
+  board and its track (`1.jn1` / `zeppelin.ddt`), and `--board 1 --start` on
+  either `!` checkpoint returns to `map.jn1` / `funky.ddt`.  PC and PS4 builds
+  pass.
+
 ## 2026-11-12 (PS4 port: first build)
 
 * Added `PS4_PORT_PLAN.md`: verified toolchain facts, `/data/JillEX` layout,
@@ -1559,3 +1646,9 @@ offsets, board list, title table).
 * Classic HUD and menu frames can borrow another installed game's shape bank:
   `OPTIONS > HUD > FRAME` / `OPTIONS > MENUS > BORDER`, `--hud-frame N`,
   `--menu-frame N`, `[hud] frame` and `[menus] frame`.
+
+* PS4 music diagnosis: play_music() now reports the requested track through
+  jill_paths::trace (always on for PS4, flushed to jill.log) instead of
+  printf.  The 22:20 console log had no music: lines at all, which points at
+  the stdout redirect on PS4 rather than at track selection.  PC still prints
+  music: zeppelin.ddt for --board 1.

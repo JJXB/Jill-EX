@@ -44,6 +44,7 @@ struct Options {
     int face = 0;               // --face N: debug, force facing (-1/1)
     bool fire = false;          // --fire: debug, press throw on the first tick
     int text_page = 0;          // --text-page N: open a .vcl page at start
+    std::string macro_file;     // --macro NAME: replay a recorded .mac script
     int watch_tile = -1;        // --watch-tile N: headless, dump one tile record
     int max_knives = 3;         // --max-knives N: enhancement default (3/5)
     int hud_bg = -2;            // --hud-bg: palette index, -2 suit, -3 vibrant
