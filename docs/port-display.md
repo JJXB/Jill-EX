@@ -33,7 +33,6 @@ port\build\Release\jill.exe --game jill1 --board 1 --ticks 5 --filter 2 --dump c
 ```
 
 ## FPS counter
-
 `OPTIONS > VIDEO > FPS COUNTER` toggles a small `NN FPS` overlay (default
 **OFF**), stored as `[video] fps_counter = 0/1`.  It shows the measured
 presentation rate (the loop's start-of-frame interval, smoothed with a 0.9/0.1
@@ -42,6 +41,29 @@ tracks the selected rate.  In the classic HUD it sits at the left end of the
 title strip; in the modern HUD it sits just under the top bar.  It is drawn
 into the 320x200 frame before the palette conversion, so the filters and the
 Vita/PS4 backends see it like any other pixel.
+
+## Menu and HUD scaling
+
+Menus and the in-game HUD scale independently; the rendered game and the menu
+backdrop keep their original pixel size.  All values are percentages of the
+original 6x8 cell, and **100% is the default**, which leaves every existing
+layout exactly as before.
+
+| Option | Ini key | Effect |
+| --- | --- | --- |
+| `OPTIONS > MENUS > SCALE` | `[menus] scale` | Zooms the whole menu: window, padding, row spacing and text |
+| `OPTIONS > MENUS > TEXT SIZE` | `[menus] font_scale` | Text size relative to that zoom (100% = the zoomed size) |
+| `OPTIONS > HUD > FONT SIZE` | `[hud] font_scale` | Text size of the modern top bar |
+
+Each offers `50 / 75 / 100 / 125 / 150 / 200%`.  Glyphs are drawn with a
+nearest-neighbour pixel scale, so 200% gives doubled 12x16 cells.  The menu
+recomputes its box and row height from the scale and shrinks long labels back
+to fit the 320x200 frame; the 14-row CHEATS screen still fits at 200%.  The
+modern HUD grows its bar to fit the font and drops the `HEALTH` word when the
+scaled layout leaves no room (the pips still show the value).  The classic
+64-px HUD panel keeps the original cells because doubled text cannot fit, and
+its `FONT SIZE` setting therefore has no visible effect while `STYLE: CLASSIC`
+is selected.
 
 ## Object and kind limits
 

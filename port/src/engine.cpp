@@ -3054,6 +3054,10 @@ void Engine::render_hud_classic(Framebuffer& fb) {
 // MODERN/MINIMAL HUD (the default): one horizontal strip across the top.
 //   LEVEL n   <item icon><count> ...   HEALTH <pips>   SCORE n
 void Engine::render_hud_modern(Framebuffer& fb) {
+    if (hud_font_scale_ != 100) {
+        render_hud_modern_scaled(fb, hud_font_scale_);
+        return;
+    }
     const uint8_t kLabel = static_cast<uint8_t>(hud_text_);
     constexpr int kBarH = 12;
 
@@ -3131,6 +3135,90 @@ void Engine::render_hud_modern(Framebuffer& fb) {
                   static_cast<unsigned>(score()));
     int score_w = 6 * static_cast<int>(std::strlen(buf));
     draw_text(fb, Framebuffer::W - 2 - score_w, 3, kLabel, buf);
+}
+
+// Scaled modern bar: same fields as above, measured with the scaled advance so
+// the bar grows with the font.  The HEALTH word is dropped when the scaled
+// layout leaves no room for it; the pips still carry the value.
+void Engine::render_hud_modern_scaled(Framebuffer& fb, int pct) {
+    const uint8_t label = static_cast<uint8_t>(hud_text_);
+    const int adv = text_advance_pct(6, pct);
+    const int glyph_h = std::max(8, (8 * pct + 99) / 100);
+    const int pad = std::max(2, (2 * pct + 50) / 100);
+    const int bar_h = std::max(12, glyph_h + 2 * pad);
+    const int ty = (bar_h - glyph_h) / 2;
+    // Gaps scale with the text so the packing stays proportional.
+    const int gap = std::max(2, (2 * pct + 50) / 100);
+
+    bool external_panel = false;
+    if (ext_visuals_) {
+        const ExternalPicture* panel = ext_visuals_->hud(hud_panel_, false);
+        if (!panel && !hud_panel_.empty()) {
+            panel = ext_visuals_->hud(std::string(), false);
+        }
+        if (panel) {
+            blit_external_picture(fb, 0, 0, *panel);
+            external_panel = true;
+        }
+    }
+    if (!external_panel) {
+        fb.fill_rect(0, 0, Framebuffer::W, bar_h,
+                     static_cast<uint8_t>(hud_bg_colour()));
+    }
+    if (hud_bg_ == -2 && !external_panel) {
+        fb.fill_rect(0, bar_h, Framebuffer::W, 1, 0);
+        for (int x = 1; x < Framebuffer::W; x += 2) {
+            fb.put(x, bar_h + 1, 0);
+        }
+    }
+
+    char buf[32];
+    const int level = level_id();
+    if (level == 0x7F) {
+        std::snprintf(buf, sizeof(buf), "LEVEL");
+    } else {
+        std::snprintf(buf, sizeof(buf), "LEVEL %d", level);
+    }
+    draw_text_pct(fb, pad, ty, label, buf, pct);
+    int x = pad + adv * static_cast<int>(std::strlen(buf)) + 5 * gap;
+
+    const int icon_y = std::max(0, (bar_h - 16) / 2);
+    for (int id = 0; id < 16; ++id) {
+        const int count = inv_count(id);
+        if (count <= 0) {
+            continue;
+        }
+        const int frame = profile_->item_icons[id];
+        if (!frame) {
+            continue;
+        }
+        draw_shape(fb, icon_shape(frame), x, icon_y, true);
+        std::snprintf(buf, sizeof(buf), "%d", count);
+        draw_text_pct(fb, x + (13 * pct + 50) / 100, ty, label, buf, pct);
+        x += (13 * pct + 50) / 100 + adv * static_cast<int>(std::strlen(buf)) +
+             4 * gap;
+    }
+
+    std::snprintf(buf, sizeof(buf), "SCORE %u",
+                  static_cast<unsigned>(score()));
+    const int score_w = adv * static_cast<int>(std::strlen(buf));
+    draw_text_pct(fb, Framebuffer::W - pad - score_w, ty, label, buf, pct);
+
+    const int hp = std::max(0, std::min(8, health()));
+    constexpr int kPipBlockW = 26;
+    const int hp_x =
+        Framebuffer::W - pad - score_w - 4 * gap - kPipBlockW;
+    const int pip_y = std::max(0, (bar_h - 7) / 2);
+    if (hp > 0) {
+        for (int i = 0; i < hp - 1; ++i) {
+            draw_health_pip(fb, 0x2A, hp_x + 2 + i * 3, pip_y);
+        }
+        draw_health_pip(fb, 0x2B, hp_x, pip_y);
+    }
+    const int health_w = adv * 6;
+    if (hp_x - health_w - gap >= x) {
+        draw_text_pct(fb, hp_x - health_w - gap, ty, label, "HEALTH", pct);
+    }
 }
 
 // Enhancement: one pixel per 16x16 tile, lower-right corner.  Solid cells are
@@ -3486,6 +3574,67 @@ void Engine::draw_text(Framebuffer& fb, int x, int y, uint8_t colour,
 void Engine::draw_text_8(Framebuffer& fb, int x, int y, uint8_t colour,
                          const char* s) {
     draw_text_font(fb, x, y, colour, 1, 8, s);
+}
+
+// Nearest-neighbour scaled glyph.  The cell size is rounded up so a glyph
+// never disappears at small percentages; 100 maps one source pixel to one
+// destination pixel.
+void Engine::draw_shape_text_pct(Framebuffer& fb, int shape, int x, int y,
+                                 uint8_t colour, int pct) {
+    if (pct <= 0) {
+        return;
+    }
+    const int entry = (shape >> 8) & 0x3F;
+    const int index = shape & 0xFF;
+    const ShapeFrame* f = shape_frame(entry, index);
+    if (!f || f->w <= 0 || f->h <= 0) {
+        return;
+    }
+    if (pct == 100) {
+        for (int sy = 0; sy < f->h; ++sy) {
+            for (int sx = 0; sx < f->w; ++sx) {
+                const uint8_t c = f->px[static_cast<size_t>(sy) * f->w + sx];
+                if (c == 0 || c == 3) {
+                    continue;
+                }
+                fb.put(x + sx, y + sy, colour);
+            }
+        }
+        return;
+    }
+    const int dw = std::max(1, (f->w * pct + 99) / 100);
+    const int dh = std::max(1, (f->h * pct + 99) / 100);
+    for (int dy = 0; dy < dh; ++dy) {
+        const int sy = std::min(f->h - 1, dy * f->h / dh);
+        for (int dx = 0; dx < dw; ++dx) {
+            const int sx = std::min(f->w - 1, dx * f->w / dw);
+            const uint8_t c = f->px[static_cast<size_t>(sy) * f->w + sx];
+            if (c == 0 || c == 3) {
+                continue;
+            }
+            fb.put(x + dx, y + dy, colour);
+        }
+    }
+}
+
+void Engine::draw_text_pct_font(Framebuffer& fb, int x, int y, uint8_t colour,
+                                int bank, int advance, const char* s, int pct) {
+    const int adv = text_advance_pct(advance, pct);
+    for (int i = 0; s[i]; ++i) {
+        draw_shape_text_pct(
+            fb, (bank << 8) | (static_cast<uint8_t>(s[i]) & 0x7F),
+            x + i * adv, y, colour, pct);
+    }
+}
+
+void Engine::draw_text_pct(Framebuffer& fb, int x, int y, uint8_t colour,
+                           const char* s, int pct) {
+    draw_text_pct_font(fb, x, y, colour, 2, 6, s, pct);
+}
+
+void Engine::draw_text_hud(Framebuffer& fb, int x, int y, uint8_t colour,
+                           const char* s) {
+    draw_text_pct(fb, x, y, colour, s, hud_font_scale_);
 }
 
 void Engine::put_bottom_msg(const std::string& text, int colour) {

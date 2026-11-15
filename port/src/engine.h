@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -318,6 +319,20 @@ public:
         return (game_.hud_icon_bank << 8) | (frame & 0xFF);
     }
     void draw_text(Framebuffer& fb, int x, int y, uint8_t colour, const char* s);
+    // Percent-scaled 6-px text (100 = the original cell).  Used by the menus,
+    // where the app owns the layout scale, and by the scaled HUD.  The advance
+    // grows with the scale, so callers can measure with text_advance_pct().
+    void draw_text_pct(Framebuffer& fb, int x, int y, uint8_t colour,
+                       const char* s, int pct);
+    static int text_advance_pct(int advance, int pct) {
+        return std::max(1, (advance * pct + 50) / 100);
+    }
+    // In-game HUD text size (percent).  Applies to the modern top bar; the
+    // classic 64-px panel keeps the original cells because 2x cannot fit.
+    void set_hud_font_scale(int pct) {
+        hud_font_scale_ = (pct < 50) ? 50 : (pct > 200 ? 200 : pct);
+    }
+    int hud_font_scale() const { return hud_font_scale_; }
     // 8-pixel font (bank 1), used by the start-up splash titles.
     void draw_text_8(Framebuffer& fb, int x, int y, uint8_t colour, const char* s);
 
@@ -441,6 +456,15 @@ private:
     // `colour`, level 3 (anti-alias/serif) is skipped.
     void draw_shape_text(Framebuffer& fb, int shape, int x, int y,
                          uint8_t colour);
+    // Percent-scaled glyph cell (nearest-neighbour); 100 draws as-is.
+    void draw_shape_text_pct(Framebuffer& fb, int shape, int x, int y,
+                             uint8_t colour, int pct);
+    void draw_text_pct_font(Framebuffer& fb, int x, int y, uint8_t colour,
+                            int bank, int advance, const char* s, int pct);
+    // HUD text using hud_font_scale_.
+    void draw_text_hud(Framebuffer& fb, int x, int y, uint8_t colour,
+                       const char* s);
+    void render_hud_modern_scaled(Framebuffer& fb, int pct);
     // Text with a selectable font: bank 2 = 6 px cells (advance 6), bank 1 =
     // 8 px cells (advance 8).  Used by TEXT6 (20) / TEXT8 (21).
     void draw_text_font(Framebuffer& fb, int x, int y, uint8_t colour, int bank,
@@ -503,6 +527,7 @@ private:
     int max_knives_ = 3;
     int hud_bg_ = -2;  // -2 = suit colour (default), -3 = vibrant suit
     int hud_text_ = 7; // HUD label colour (palette index)
+    int hud_font_scale_ = 100;  // HUD text size (percent)
     int hud_health_ = -1;  // -1 = original pip art, else palette index
     int suit_colour_ = -1;
     int suit_vibrant_ = -1;

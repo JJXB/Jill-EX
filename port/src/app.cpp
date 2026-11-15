@@ -1123,11 +1123,16 @@ struct Menu {
     int video_sel = 0;
     int audio_sel = 0;
     int menus_sel = 0;
+    int menu_scale = 100;       // whole-menu zoom, percent
+    int menu_font_scale = 100;  // menu text size, percent of the zoomed cell
     int ctrl_sel = 0;
     int deadzone = kPadDeadzoneDefault;  // analog stick deadzone, percent
     int cheat_sel = 0;
     int enh_sel = 0;
     int save_sel = 0;
+    // Where SAVE GAME / RESTORE GAME goes on BACK or after saving: the main
+    // menu when opened from there, Closed (resume the game) for the S/R keys.
+    MenuScreen save_return = MenuScreen::Main;
     int load_game_index = -1;      // episode shown on RESTORE GAME
     std::vector<std::string> load_labels;
     int hi_sel = 0;
@@ -1302,6 +1307,39 @@ const char* hud_text_name(int c) {
 }
 
 int next_hud_text(int c) { return (c + 1) & 0x0F; }
+
+// HUD/menu text size and menu layout zoom.  Percent of the original cells;
+// 100 is the default and leaves every existing layout byte-identical.
+const int kUiScales[] = {50, 75, 100, 125, 150, 200};
+constexpr int kUiScaleCount =
+    static_cast<int>(sizeof(kUiScales) / sizeof(kUiScales[0]));
+
+std::string ui_scale_name(int pct) { return std::to_string(pct) + "%"; }
+
+int ui_scale_step(int pct, int dir) {
+    int i = 0;
+    for (int k = 0; k < kUiScaleCount; ++k) {
+        if (kUiScales[k] == pct) {
+            i = k;
+            break;
+        }
+    }
+    i = (i + (dir < 0 ? kUiScaleCount - 1 : 1)) % kUiScaleCount;
+    return kUiScales[i];
+}
+
+int clamp_ui_scale(int pct) {
+    int best = kUiScales[2];  // 100
+    int best_delta = 1000000;
+    for (int k = 0; k < kUiScaleCount; ++k) {
+        const int delta = std::abs(pct - kUiScales[k]);
+        if (delta < best_delta) {
+            best_delta = delta;
+            best = kUiScales[k];
+        }
+    }
+    return best;
+}
 
 // HUD health colour: -1 keeps the original pip art, 0..15 repaints the pips.
 const char* hud_health_name(int c) {
@@ -1773,6 +1811,8 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                         hud_panel_name(m.hud_panel),
                     std::string("FRAME: ") +
                         frame_source_name(m.hud_frame, games),
+                    std::string("FONT SIZE: ") +
+                        ui_scale_name(engine.hud_font_scale()),
                     "BACK"};
         case MenuScreen::Menus:
             return {std::string("STYLE: ") +
@@ -1787,6 +1827,9 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                         (m.live_background ? "LIVE GAME" : "THEME"),
                     std::string("SPLASH: ") + splash_name(video.splash, games),
                     std::string("FONT: ") + font_name(m.menu_font),
+                    std::string("SCALE: ") + ui_scale_name(m.menu_scale),
+                    std::string("TEXT SIZE: ") +
+                        ui_scale_name(m.menu_font_scale),
                     "BACK"};
         case MenuScreen::Controls: {
             std::vector<std::string> v;
@@ -2247,9 +2290,17 @@ void ensure_theme_backdrop(ThemeBackdrop& tb, int theme,
     }
 }
 
-void menu_title(Framebuffer& fb, Engine& engine, int y, const char* s) {
-    int w = static_cast<int>(std::strlen(s)) * 6;
-    engine.draw_text(fb, (Framebuffer::W - w) / 2, y, 7, s);
+// Centred menu title with a percent-scaled cell, shrunk to fit the frame.
+void menu_title_pct(Framebuffer& fb, Engine& engine, int y, const char* s,
+                    int pct) {
+    if (!s || !*s) {
+        return;
+    }
+    const int len = static_cast<int>(std::strlen(s));
+    const int max_adv = std::max(1, (Framebuffer::W - 4) / len);
+    const int fit = std::min(pct, max_adv * 100 / 6);
+    const int adv = Engine::text_advance_pct(6, fit);
+    engine.draw_text_pct(fb, (Framebuffer::W - adv * len) / 2, y, 7, s, fit);
 }
 
 void draw_classic_hiscores(Framebuffer& fb, Engine& engine,
@@ -2356,11 +2407,31 @@ void draw_classic_menu(Framebuffer& fb, Engine& engine, const Menu& m,
     for (const std::string& item : items) {
         maxlen = std::max(maxlen, static_cast<int>(item.size()));
     }
-    const int line_h = items.size() > 12 ? 9 : 10;
-    int boxw = 32 + (maxlen + 2) * 6;
-    boxw = std::max(168, std::min(boxw, 232));
+    const int S = m.menu_scale;
+    int T = std::max(50, std::min(300, S * m.menu_font_scale / 100));
+    const int padx = 32 * S / 100;
+    const int avail = 232;
+    const int max_adv =
+        std::max(1, (avail - padx) / std::max(1, maxlen + 2));
+    T = std::max(50, T);
+    if (T > 100) {
+        T = std::min(T, std::max(100, max_adv * 100 / 6));
+    }
+    const int adv = Engine::text_advance_pct(6, T);
+    int line_h = std::max((items.size() > 12 ? 9 : 10) * S / 100,
+                          std::max(8, (8 * T + 99) / 100));
+    int boxw = std::max(168 * S / 100, padx + (maxlen + 2) * adv);
+    boxw = std::min(boxw, avail);
     boxw = ((boxw + 7) / 8) * 8;
-    int boxh = 20 + static_cast<int>(items.size()) * line_h + 8;
+    int boxh = 20 * S / 100 + static_cast<int>(items.size()) * line_h +
+               8 * S / 100;
+    if (boxh > 152 && S != 100 && !items.empty()) {
+        const int room = (152 - 28 * S / 100) /
+                         static_cast<int>(items.size());
+        line_h = std::max(4, std::min(line_h, room));
+        boxh = 20 * S / 100 + static_cast<int>(items.size()) * line_h +
+               8 * S / 100;
+    }
     boxh = std::min(boxh, 152);
     boxh = ((boxh + 7) / 8) * 8;
 
@@ -2371,9 +2442,10 @@ void draw_classic_menu(Framebuffer& fb, Engine& engine, const Menu& m,
 
     const char* header =
         (m.screen == MenuScreen::Main) ? "PICK A CHOICE:" : sub;
-    engine.draw_text(fb, bx + 12, by + 10, 15, header);
+    engine.draw_text_pct(fb, bx + 12 * S / 100, by + 10 * S / 100, 15,
+                         header, T);
 
-    int y = by + 20;
+    int y = by + 20 * S / 100;
     for (int i = 0; i < static_cast<int>(items.size()); ++i) {
         char line[96];
         std::snprintf(line, sizeof(line), "%c %s",
@@ -2388,7 +2460,7 @@ void draw_classic_menu(Framebuffer& fb, Engine& engine, const Menu& m,
                        std::string::npos) {
             colour = 12;
         }
-        engine.draw_text(fb, bx + 10, y, colour, line);
+        engine.draw_text_pct(fb, bx + 10 * S / 100, y, colour, line, T);
         y += line_h;
     }
 
@@ -2403,10 +2475,8 @@ void draw_classic_menu(Framebuffer& fb, Engine& engine, const Menu& m,
     } else if (m.screen == MenuScreen::Assets) {
         hint = "UP/DOWN MOVE   ENTER MOUNT   ESC BACK";
     }
-    const int w = static_cast<int>(std::strlen(hint)) * 6;
     // The classic hint line lives in the plain black strip below the frame.
-    const int footer_y = Framebuffer::H - 7;
-    engine.draw_text(fb, (Framebuffer::W - w) / 2, footer_y, 7, hint);
+    menu_title_pct(fb, engine, Framebuffer::H - 7, hint, T);
 }
 
 void draw_menu(Framebuffer& fb, Engine& engine, Menu& m, bool started,
@@ -2474,18 +2544,50 @@ void draw_menu(Framebuffer& fb, Engine& engine, Menu& m, bool started,
                           backdrop.classic_px);
         return;
     }
-    menu_title(fb, engine, 16,
-               upper_ascii(engine.game().title.c_str()).c_str());
-    menu_title(fb, engine, 28, sub);
+    const int S = m.menu_scale;
+    int T = std::max(50, std::min(300, S * m.menu_font_scale / 100));
+    // Keep both titles above the panel even when the zoom moves the box down
+    // the screen as far as the fonts allow.
+    const int sub_y = std::min(28 * S / 100, 34);
+    const int title_y = std::max(0, std::min(16 * S / 100, sub_y - 12));
+    menu_title_pct(fb, engine, title_y,
+                   upper_ascii(engine.game().title.c_str()).c_str(), T);
+    menu_title_pct(fb, engine, sub_y, sub, T);
     int maxlen = 0;
     for (const std::string& item : items) {
         maxlen = std::max(maxlen, static_cast<int>(item.size()));
     }
-    int boxw = std::max(200, 34 + (maxlen + 2) * 6);
-    boxw = std::min(boxw, Framebuffer::W - 12);
-    // 10 px rows (2 px gap); the 14-row CHEATS screen uses 9 px so it fits.
-    const int line_h = items.size() > 12 ? 9 : 10;
-    int boxh = 8 + static_cast<int>(items.size()) * line_h + 6;
+    const int padx = 34 * S / 100;
+    const int avail = Framebuffer::W - 12;
+    const int max_adv =
+        std::max(1, (avail - padx) / std::max(1, maxlen + 2));
+    T = std::max(50, T);
+    if (T > 100) {
+        T = std::min(T, std::max(100, max_adv * 100 / 6));
+    }
+    const int adv = Engine::text_advance_pct(6, T);
+    int cell_h = std::max(8, (8 * T + 99) / 100);
+    const int base_lh = items.size() > 12 ? 9 : 10;
+    // Whole-menu zoom: row spacing and panel padding grow with SCALE, and the
+    // text with SCALE x TEXT SIZE.  Everything shrinks back to fit 320x200 so
+    // the 14-row CHEATS screen still fits at 200%.
+    int line_h = std::max(cell_h, base_lh * S / 100);
+    int boxw = std::max(200 * S / 100, padx + (maxlen + 2) * adv);
+    boxw = std::min(boxw, avail);
+    constexpr int kMenuMaxH = 144;
+    int boxh = 8 * S / 100 + static_cast<int>(items.size()) * line_h +
+               6 * S / 100;
+    if (boxh > kMenuMaxH && !items.empty()) {
+        const int room = (kMenuMaxH - 14 * S / 100) /
+                         static_cast<int>(items.size());
+        if (cell_h > room) {
+            T = std::max(50, room * 100 / 8);
+            cell_h = std::max(4, (8 * T + 99) / 100);
+        }
+        line_h = std::max(cell_h, std::min(line_h, room));
+        boxh = 8 * S / 100 + static_cast<int>(items.size()) * line_h +
+               6 * S / 100;
+    }
     // BORDER = THEME (-1) keeps the existing theme-tile border.  Any explicit
     // game source uses that game's shape-7 nine-slice, independently of THEME.
     const bool shape_border = m.menu_frame >= 0;
@@ -2538,14 +2640,15 @@ void draw_menu(Framebuffer& fb, Engine& engine, Menu& m, bool started,
     // The nine-slice window has an 8 px top border, unlike the 1 px plain
     // frame / open tiled panel.  Start text below that border so it does not
     // clip into the frame on themed or game borders.
-    const int text_top = shape_border ? by + 10 : by + 5;
+    const int text_top = shape_border ? by + 10 * S / 100 : by + 5 * S / 100;
     for (int i = 0; i < static_cast<int>(items.size()); ++i) {
         char line[96];
         std::snprintf(line, sizeof(line), "%c %s", i == sel ? '>' : ' ',
                       items[static_cast<size_t>(i)].c_str());
         uint8_t colour = (i == sel && m.rebind_action >= 0) ? 6
                           : (i == sel ? 7 : 5);
-        engine.draw_text(fb, bx + 14, text_top + i * line_h, colour, line);
+        engine.draw_text_pct(fb, bx + 14 * S / 100, text_top + i * line_h,
+                             colour, line, T);
     }
     if (m.screen == MenuScreen::Hud) {
         // Live background preview: the bar uses the chosen palette index.
@@ -2564,20 +2667,23 @@ void draw_menu(Framebuffer& fb, Engine& engine, Menu& m, bool started,
     }
     const int footer_y = std::min(Framebuffer::H - 12, by + boxh + 2);
     if (m.rebind_action >= 0) {
-        menu_title(fb, engine, footer_y, "PRESS A KEY OR PAD BUTTON");
-        menu_title(fb, engine, footer_y + 9, "ESC CANCELS");
+        menu_title_pct(fb, engine, footer_y, "PRESS A KEY OR PAD BUTTON", T);
+        menu_title_pct(fb, engine,
+                       footer_y + std::max(9, (8 * T + 99) / 100 + 2),
+                       "ESC CANCELS", T);
     } else if (m.screen == MenuScreen::SoundTest) {
-        menu_title(fb, engine, footer_y,
-                   "LEFT/RIGHT CHANGE   ENTER PLAY   ESC BACK");
+        menu_title_pct(fb, engine, footer_y,
+                       "LEFT/RIGHT CHANGE   ENTER PLAY   ESC BACK", T);
     } else if (m.screen == MenuScreen::LoadGame ||
                m.screen == MenuScreen::HighScores) {
-        menu_title(fb, engine, footer_y,
-                   "LEFT/RIGHT EPISODE   UP/DOWN MOVE   ESC BACK");
+        menu_title_pct(fb, engine, footer_y,
+                       "LEFT/RIGHT EPISODE   UP/DOWN MOVE   ESC BACK", T);
     } else if (m.screen == MenuScreen::Assets) {
-        menu_title(fb, engine, footer_y,
-                   "UP/DOWN MOVE   ENTER MOUNT   ESC BACK");
+        menu_title_pct(fb, engine, footer_y,
+                       "UP/DOWN MOVE   ENTER MOUNT   ESC BACK", T);
     } else {
-        menu_title(fb, engine, footer_y, "UP/DOWN MOVE   ENTER SELECT   ESC BACK");
+        menu_title_pct(fb, engine, footer_y,
+                       "UP/DOWN MOVE   ENTER SELECT   ESC BACK", T);
     }
 }
 
@@ -3309,6 +3415,10 @@ int run_sdl(const Options& opt, Engine& engine,
             load_bindings_ini(ini, base_bindings);
             menu.deadzone = clamp_pad_deadzone(
                 ini.get_int("controls", "deadzone", menu.deadzone));
+            menu.menu_scale = clamp_ui_scale(
+                ini.get_int("menus", "scale", menu.menu_scale));
+            menu.menu_font_scale = clamp_ui_scale(
+                ini.get_int("menus", "font_scale", menu.menu_font_scale));
             for (const std::string& sec : ini.sections()) {
                 static const std::string kPrefix = "controls.";
                 if (sec.compare(0, kPrefix.size(), kPrefix) == 0 &&
@@ -3743,7 +3853,7 @@ int run_sdl(const Options& opt, Engine& engine,
                 }
             } else if (menu.screen == MenuScreen::SaveGame ||
                        menu.screen == MenuScreen::LoadGame) {
-                menu.screen = MenuScreen::Main;
+                menu.screen = menu.save_return;
             } else if (menu.screen == MenuScreen::Enhancements ||
                        menu.screen == MenuScreen::Controls ||
                        menu.screen == MenuScreen::Hud ||
@@ -3787,10 +3897,15 @@ int run_sdl(const Options& opt, Engine& engine,
                 if (game_started) {
                     switch (sel) {
                         case 0: menu.screen = MenuScreen::Closed; break;
-                        case 1: menu.screen = MenuScreen::SaveGame; menu.save_sel = 0; break;
+                        case 1:
+                            menu.save_return = MenuScreen::Main;
+                            menu.screen = MenuScreen::SaveGame;
+                            menu.save_sel = 0;
+                            break;
                         case 2: {
                             int idx = game_index_for_id(games, engine.game().id);
                             if (idx < 0) idx = 0;
+                            menu.save_return = MenuScreen::Main;
                             menu.screen = MenuScreen::LoadGame;
                             menu.save_sel = 0;
                             menu.load_labels.clear();
@@ -4138,14 +4253,19 @@ int run_sdl(const Options& opt, Engine& engine,
                 }
                 break;
             case MenuScreen::Hud:
-                if (nav == 5 && sel == 7) {
+                if (nav == 5 && sel == 8) {
                     menu.screen = MenuScreen::Options;
+                } else if (sel == 7) {
+                    if (nav == 3 || nav == 4 || nav == 5) {
+                        engine.set_hud_font_scale(ui_scale_step(
+                            engine.hud_font_scale(), nav == 3 ? -1 : 1));
+                    }
                 } else if (sel >= 0 && sel <= 6) {
                     toggle_option();
                 }
                 break;
             case MenuScreen::Menus:
-                if (nav == 5 && sel == 6) {
+                if (nav == 5 && sel == 8) {
                     menu.screen = MenuScreen::Options;
                 } else if (sel == 0 && (nav == 5 || nav == 3 || nav == 4)) {
                     menu.classic = !menu.classic;
@@ -4175,6 +4295,12 @@ int run_sdl(const Options& opt, Engine& engine,
                     menu.menu_font = font_name_next(
                         engine.font_name(), engine.external_visuals());
                     engine.set_font_name(menu.menu_font);
+                } else if (sel == 6 && (nav == 3 || nav == 4 || nav == 5)) {
+                    menu.menu_scale =
+                        ui_scale_step(menu.menu_scale, nav == 3 ? -1 : 1);
+                } else if (sel == 7 && (nav == 3 || nav == 4 || nav == 5)) {
+                    menu.menu_font_scale = ui_scale_step(
+                        menu.menu_font_scale, nav == 3 ? -1 : 1);
                 }
                 break;
             case MenuScreen::Controls:
@@ -4265,12 +4391,14 @@ int run_sdl(const Options& opt, Engine& engine,
                     break;
                 }
                 if (sel >= engine.save_slots()) {
-                    menu.screen = MenuScreen::Main;
+                    menu.screen = menu.save_return;
                     break;
                 }
                 std::string err;
                 if (!engine.save_game(sel, err)) {
                     std::fprintf(stderr, "save: %s\n", err.c_str());
+                } else {
+                    menu.screen = menu.save_return;
                 }
                 break;
             }
@@ -4292,7 +4420,7 @@ int run_sdl(const Options& opt, Engine& engine,
                     break;  // episode row: use Left/Right to change it
                 }
                 if (sel > slots) {
-                    menu.screen = MenuScreen::Main;
+                    menu.screen = menu.save_return;
                     break;
                 }
                 const int idx = menu.load_game_index;
@@ -4676,13 +4804,19 @@ int run_sdl(const Options& opt, Engine& engine,
                                 std::fprintf(stderr, "reload: %s\n", err.c_str());
                             }
                         } else if (game_started) {
+                            int idx = game_index_for_id(games, engine.game().id);
+                            if (idx < 0) idx = 0;
+                            menu.save_return = MenuScreen::Closed;
                             menu.screen = MenuScreen::LoadGame;
                             menu.save_sel = 0;
+                            menu.load_labels.clear();
+                            ensure_load_labels(menu, games, idx);
                         }
                         break;
                     case SDL_SCANCODE_S:
                         // Original in-game SAVE key (22AB jump table: S).
                         if (game_started) {
+                            menu.save_return = MenuScreen::Closed;
                             menu.screen = MenuScreen::SaveGame;
                             menu.save_sel = 0;
                         }
@@ -5149,6 +5283,9 @@ int run_sdl(const Options& opt, Engine& engine,
         ini.set_bool("menus", "live_background", menu.live_background);
         ini.set_int("menus", "frame", menu.menu_frame);
         ini.set("menus", "font", engine.font_name());
+        ini.set_int("menus", "scale", menu.menu_scale);
+        ini.set_int("menus", "font_scale", menu.menu_font_scale);
+        ini.set_int("hud", "font_scale", engine.hud_font_scale());
         game_bindings[bindings_game] = bindings;
         ini.set_int("controls", "deadzone", menu.deadzone);
         save_bindings_ini(ini, base_bindings);
@@ -5366,6 +5503,7 @@ int run_app(const Options& opt) {
     apply_player_look(engine, games, opt.player_look, opt.player_suit);
     engine.set_hud_bg(opt.hud_bg);
     engine.set_hud_text(opt.hud_text);
+    engine.set_hud_font_scale(clamp_ui_scale(opt.hud_font_scale));
     engine.set_hud_health(opt.hud_health);
     apply_hud_frame(engine, games, run_opt.hud_frame);
     apply_theme_frame(engine, games, run_opt.menu_theme);

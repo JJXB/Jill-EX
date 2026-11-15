@@ -266,6 +266,7 @@ int main(int argc, char** argv) {
             }
         }
         opt.hud_text = ini.get_int("hud", "text", opt.hud_text) & 0xFF;
+        opt.hud_font_scale = ini.get_int("hud", "font_scale", opt.hud_font_scale);
         const std::string health = ini.get("hud", "health");
         if (!health.empty()) {
             if (ini_lower(health) == "original") {

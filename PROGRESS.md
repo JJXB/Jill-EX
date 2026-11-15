@@ -1,5 +1,20 @@
 # Progress
 
+## 2026-11-15 (save/restore return, menu/HUD scaling)
+
+* SAVE GAME / RESTORE GAME now return to the screen that opened them: the
+  pause/main menu from `OPTIONS`, the game for the in-game `S`/`R` keys.  BACK
+  and a successful save use the same target; the hotkey restore screen also
+  loads its slot labels (it used to open empty on a fresh boot).
+* New `OPTIONS > MENUS > SCALE` (whole-menu zoom) and `TEXT SIZE` (text relative
+  to the zoom), plus `OPTIONS > HUD > FONT SIZE`.  Values 50/75/100/125/150/200%,
+  default 100% (layouts unchanged).  Menu boxes/rows recompute from the scale
+  and shrink long labels to fit; the modern HUD bar grows with its font and
+  drops the HEALTH word when there is no room.  Stored as `[menus] scale` /
+  `[menus] font_scale` / `[hud] font_scale`.
+* The classic 64-px HUD panel keeps fixed cells (2x text cannot fit); the
+  classic menu still honours the scale with a tighter box.
+
 ## 2026-11-15 (title popup pause + stick deadzone)
 
 * The level-title dialog box now freezes the world: `Engine::tick()` advances

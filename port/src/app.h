@@ -62,6 +62,7 @@ struct Options {
     int sfx_volume = 80;        // --sfx-volume N: 0..100
     bool pc_speaker = false;    // --pc-speaker: 1-bit square-wave effects
     int pad_deadzone = 25;      // [controls] deadzone: 0..50 percent of full tilt
+    int hud_font_scale = 100;   // [hud] font_scale: 50..200 percent
     int midi_device = -1;       // --midi N: system MIDI out, -1 = OPL2
     bool list_midi = false;     // --list-midi: print devices and exit
     std::string dump_music;     // --dump-music FILE: render a CMF to WAV

@@ -60,6 +60,10 @@ saved offset/segment words are only used as "has string" flags.  The port uses
   QUIT.
 * In-game `S` opens SAVE GAME; `R` opens RESTORE GAME.  `Ctrl+R` keeps the old
   debug board reload.
+* Both screens return to whatever opened them: the pause/main menu when entered
+  from `OPTIONS`, and the game (menu closed) when opened with `S`/`R`.
+  `BACK` follows the same rule, and a successful save returns immediately;
+  restoring a slot already resumes the game.
 * Six slots are listed as `SLOT n: LV x  score` (empty slots show `EMPTY`).
   Slot labels are derived from the saved header; the original's 12-byte
   player-entered labels are not reproduced.
