@@ -154,7 +154,11 @@ Select with **OPTIONS > SOUND > OPL CORE** (cycles through the three),
 `--dump-music` uses the same switch for offline A/B comparison.  All three are
 gain-matched to the built-in core, so switching does not jump in volume.
 Changing the core restarts the current track so the new core rebuilds its
-register state.  See `THIRD_PARTY_NOTICES.md` for the LGPL obligations.
+register state.  The selection survives both exits and restarts: the audio
+device rebuilds its sequencer at the negotiated rate
+(`MusicPlayer::rebuild_at()`), which keeps the chosen core instead of falling
+back to the built-in one.  See `THIRD_PARTY_NOTICES.md` for the LGPL
+obligations.
 
 ## Sampled effects
 

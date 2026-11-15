@@ -82,6 +82,9 @@ public:
 private:
     static void callback(void* user, uint8_t* stream, int len);
     void mix(uint8_t* stream, int len);
+    // Rebuild the sequencer at a new device rate, keeping the selected OPL
+    // core (assignment used to drop it back to the built-in core).
+    void rebuild_at(int rate);
 
 #ifdef JILL_PS4
     // Native audio output.  SDL2's PS4 audio driver waits for the previous

@@ -32,6 +32,12 @@ MusicPlayer::MusicPlayer() : music_(48000) {}
 
 MusicPlayer::~MusicPlayer() { close(); }
 
+void MusicPlayer::rebuild_at(int rate) {
+    const Music::OplCore core = music_.opl_core();
+    music_ = Music(rate);
+    music_.set_opl_core(core);
+}
+
 bool MusicPlayer::open(std::string& err) {
 #ifdef JILL_PS4
     return ps4_open(err);
@@ -78,7 +84,7 @@ bool MusicPlayer::open(std::string& err) {
     format_ = have.format;
     // The sequencer runs at the device rate so pitch and envelopes are right
     // even if the system refused 48 kHz.
-    music_ = Music(rate_);
+    rebuild_at(rate_);
     sfx_.set_volume(sfx_volume_);
     std::fprintf(stderr, "audio: %d Hz, %d channel(s), %s\n", rate_, channels_,
                  format_ == AUDIO_F32SYS ? "float" : "s16");
@@ -161,7 +167,7 @@ bool MusicPlayer::ps4_open(std::string& err) {
     rate_ = 48000;
     channels_ = 2;
     format_ = AUDIO_S16SYS;
-    music_ = Music(rate_);
+    rebuild_at(rate_);
     sfx_.set_volume(sfx_volume_);
     ps4_run_ = true;
     ps4_thread_ =

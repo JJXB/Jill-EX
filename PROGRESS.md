@@ -1,5 +1,16 @@
 # Progress
 
+## 2026-11-15 (OPL core selection now persists)
+
+* Fixed `[audio] opl_core` saving back as 0 on every exit.  `MusicPlayer::open()`
+  rebuilt the sequencer with `music_ = Music(device_rate)`, which reset
+  `Music::core_` to the built-in OPL2 core; the save block then wrote that
+  default.  The rebuild now goes through `MusicPlayer::rebuild_at()`, which
+  keeps the selected core (SDL and native PS4 paths).
+* Verified on desktop with a temporary data directory: `--opl-core 2` and an
+  `opl_core = 2` ini value both survive a clean quit (`opl_core = 2` after the
+  rewrite), and a restart keeps the selection.
+
 ## 2026-11-15 (optional FPS counter)
 
 * `OPTIONS > VIDEO > FPS COUNTER` toggles a small `NN FPS` overlay (default
