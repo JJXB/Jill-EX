@@ -124,6 +124,45 @@ struct ExternalBorder {
     std::unordered_map<int, ShapeFrame> frames;
 };
 
+// A `.hudlayout` tile stamp: draw shape entry/frame at screen x,y.
+struct HudLayoutTile {
+    int x = 0;
+    int y = 0;
+    int entry = 0;
+    int frame = 0;
+};
+
+// A `.hudlayout` part.  `kind` is the tool's part kind; the engine draws
+// text/rect/box/pips/grid parts and uses reserved names for live values
+// (level-value, score-value, health-bar, inventory-grid, ...).
+struct HudLayoutPart {
+    std::string name;
+    std::string kind;
+    std::string text;
+    std::string note;
+    std::string role;
+    std::string file;
+    int x = 0;
+    int y = 0;
+    int w = 0;
+    int h = 0;
+    int colour = 7;
+    int cell_w = 16;
+    int cell_h = 16;
+    int cols = 3;
+    int rows = 3;
+};
+
+// A complete HUD layout loaded from `*.hudlayout` in a pack or autoload.
+struct HudLayout {
+    std::string name;   // file stem, used in jill.ini and the HUD menu
+    std::string file;   // relative path inside the pack/autoload layer
+    int width = 320;
+    int height = 200;
+    std::vector<HudLayoutTile> tiles;
+    std::vector<HudLayoutPart> parts;
+};
+
 // Palette-indexed overrides ready for the engine's 8-bit framebuffer.
 class ExternalVisuals {
 public:
@@ -136,7 +175,8 @@ public:
     bool empty() const {
         return shapes_.empty() && boards_.empty() && !has_hud_classic_ &&
                !has_hud_modern_ && huds_.empty() && borders_.empty() &&
-               fonts_.empty() && pages_.empty() && !has_portrait_;
+               fonts_.empty() && pages_.empty() && !has_portrait_ &&
+               layouts_.empty();
     }
 
     const ShapeFrame* shape(int id) const;
@@ -159,6 +199,12 @@ public:
     const std::vector<std::string>& font_names() const { return font_names_; }
     const ShapeFrame* font_shape(const std::string& name, int entry,
                                  int code) const;
+    // `*.hudlayout` files discovered in the mounted pack and autoload layers.
+    const std::vector<HudLayout>& layouts() const { return layouts_; }
+    const std::vector<std::string>& layout_names() const {
+        return layout_names_;
+    }
+    const HudLayout* layout(const std::string& name) const;
     const ExternalPicture* text_page(int number) const {
         auto it = pages_.find(number);
         return it == pages_.end() ? nullptr : &it->second;
@@ -184,4 +230,6 @@ private:
     ExternalPicture portrait_;
     bool has_portrait_ = false;
     std::unordered_map<int, ExternalPicture> pages_;
+    std::vector<HudLayout> layouts_;
+    std::vector<std::string> layout_names_;
 };

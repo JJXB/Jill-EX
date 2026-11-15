@@ -813,6 +813,7 @@ bool apply_selection(Engine& engine, const std::vector<GameDef>& games,
     const int player_look = engine.player_look();
     const int player_suit = engine.player_suit();
     const std::string hud_panel = engine.hud_panel();
+    const std::string hud_layout = engine.hud_layout();
     const std::string font_name = engine.font_name();
     const int menu_border_ext = engine.menu_border_ext();
     const bool turtle = engine.turtle();
@@ -828,6 +829,7 @@ bool apply_selection(Engine& engine, const std::vector<GameDef>& games,
         engine = std::move(fresh);
     }
     engine.set_hud_panel(hud_panel);
+    engine.set_hud_layout(hud_layout);
     engine.set_font_name(font_name);
     engine.set_menu_border_ext(menu_border_ext);
     engine.set_turtle(turtle);
@@ -1110,6 +1112,7 @@ struct Menu {
     bool live_background = false;  // modern menu over the live game screen
     int hud_frame = 0;     // classic HUD art source (0 = current game)
     std::string hud_panel;  // external HUD panel name ("" = default)
+    std::string hud_layout;  // .hudlayout name ("" = original classic HUD)
     int menu_frame = -1;   // border: -1 theme, 0 current, N = game,
                            // > games = external border
     std::string menu_font;  // external font set ("" = game font)
@@ -1593,6 +1596,38 @@ std::string hud_panel_next(const std::string& current, bool classic,
     return idx == 0 ? std::string() : names[static_cast<size_t>(idx - 1)];
 }
 
+std::string hud_layout_name(const ExternalVisuals* ext,
+                            const std::string& name) {
+    if (name.empty()) {
+        return "ORIGINAL";
+    }
+    if (ext && ext->layout(name)) {
+        return upper_ascii(name.c_str());
+    }
+    return upper_ascii(name.c_str()) + " (MISSING)";
+}
+
+std::string hud_layout_next(const ExternalVisuals* ext,
+                            const std::string& current, int dir) {
+    std::vector<std::string> names;
+    names.push_back(std::string());
+    if (ext) {
+        for (const std::string& name : ext->layout_names()) {
+            names.push_back(name);
+        }
+    }
+    int idx = -1;
+    for (size_t i = 0; i < names.size(); ++i) {
+        if (names[i] == current) {
+            idx = static_cast<int>(i);
+            break;
+        }
+    }
+    const int count = static_cast<int>(names.size());
+    idx = (idx + (dir < 0 ? count - 1 : 1)) % count;
+    return names[static_cast<size_t>(idx)];
+}
+
 std::string font_name_next(const std::string& current,
                            const ExternalVisuals* ext) {
     const int count =
@@ -1811,6 +1846,9 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                         hud_panel_name(m.hud_panel),
                     std::string("FRAME: ") +
                         frame_source_name(m.hud_frame, games),
+                    std::string("LAYOUT: ") +
+                        hud_layout_name(engine.external_visuals(),
+                                        m.hud_layout),
                     std::string("FONT SIZE: ") +
                         ui_scale_name(engine.hud_font_scale()),
                     "BACK"};
@@ -2990,6 +3028,7 @@ bool start_game(Engine& engine, const std::vector<GameDef>& games, int index,
     const int player_look = engine.player_look();
     const int player_suit = engine.player_suit();
     const std::string hud_panel = engine.hud_panel();
+    const std::string hud_layout = engine.hud_layout();
     const std::string font_name = engine.font_name();
     const int menu_border_ext = engine.menu_border_ext();
     const bool turtle = engine.turtle();
@@ -3005,6 +3044,7 @@ bool start_game(Engine& engine, const std::vector<GameDef>& games, int index,
         engine = std::move(fresh);
     }
     engine.set_hud_panel(hud_panel);
+    engine.set_hud_layout(hud_layout);
     engine.set_font_name(font_name);
     engine.set_menu_border_ext(menu_border_ext);
     engine.set_turtle(turtle);
@@ -3231,9 +3271,11 @@ int run_sdl(const Options& opt, Engine& engine,
     menu.live_background = opt.live_menu_bg;
     menu.hud_frame = opt.hud_frame;
     menu.hud_panel = opt.hud_panel;
+    menu.hud_layout = opt.hud_layout;
     menu.menu_frame = opt.menu_frame;
     menu.menu_font = opt.menu_font;
     engine.set_hud_panel(menu.hud_panel);
+    engine.set_hud_layout(menu.hud_layout);
     engine.set_font_name(menu.menu_font);
     engine.set_turtle(opt.turtle);
     menu.music_on = opt.music;
@@ -4253,12 +4295,19 @@ int run_sdl(const Options& opt, Engine& engine,
                 }
                 break;
             case MenuScreen::Hud:
-                if (nav == 5 && sel == 8) {
+                if (nav == 5 && sel == 9) {
                     menu.screen = MenuScreen::Options;
-                } else if (sel == 7) {
+                } else if (sel == 8) {
                     if (nav == 3 || nav == 4 || nav == 5) {
                         engine.set_hud_font_scale(ui_scale_step(
                             engine.hud_font_scale(), nav == 3 ? -1 : 1));
+                    }
+                } else if (sel == 7) {
+                    if (nav == 3 || nav == 4 || nav == 5) {
+                        menu.hud_layout = hud_layout_next(
+                            engine.external_visuals(), menu.hud_layout,
+                            nav == 3 ? -1 : 1);
+                        engine.set_hud_layout(menu.hud_layout);
                     }
                 } else if (sel >= 0 && sel <= 6) {
                     toggle_option();
@@ -5250,6 +5299,7 @@ int run_sdl(const Options& opt, Engine& engine,
         ini.set_bool("hud", "portrait", engine.hud_portrait());
         ini.set_int("hud", "frame", menu.hud_frame);
         ini.set("hud", "panel", engine.hud_panel());
+        ini.set("hud", "layout", engine.hud_layout());
         std::string bg_name;
         if (engine.hud_bg() == -2) {
             bg_name = "suit";
@@ -5508,6 +5558,7 @@ int run_app(const Options& opt) {
     apply_hud_frame(engine, games, run_opt.hud_frame);
     apply_theme_frame(engine, games, run_opt.menu_theme);
     engine.set_hud_panel(run_opt.hud_panel);
+    engine.set_hud_layout(run_opt.hud_layout);
     engine.set_font_name(run_opt.menu_font);
     engine.set_turtle(run_opt.turtle);
     jill_paths::trace("startup: options applied");

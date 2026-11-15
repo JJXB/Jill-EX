@@ -1,5 +1,22 @@
 # Progress
 
+## 2026-11-15 (in-game .hudlayout HUDs)
+
+* `*.hudlayout` files are now discovered in the mounted pack and the
+  `external/autoload` layer.  `OPTIONS > HUD > LAYOUT` lists ORIGINAL plus each
+  file stem; the choice is stored as `[hud] layout` and can be started with
+  `--hud-layout NAME`.
+* The engine draws a selected layout as the CLASSIC HUD: SHA-backed frame tiles
+  through the running game's shape bank, plus boxes, text, the live health bar,
+  pips, the inventory grid and the hint strip.  Reserved part names
+  (`health-bar`, `level-value`, `score-value`, `inventory-grid`, `title`, ...)
+  use live values; the layout's own `sha` paths and image-backed sheets are
+  editor-only for now.
+* A selected layout takes priority over a `hud/classic.png` panel.  The
+  camera/view stays 80,16 232x160, so layouts should keep that `view` rect.
+* Tested with the user's 320x190 layout in autoload via `--hud-layout classic`
+  and `[hud] layout = classic`.
+
 ## 2026-11-15 (measured classic HUD layout)
 
 * Rebuilt the classic frame to the measured 320x190 layout: 16-px top strip,

@@ -26,6 +26,7 @@ run.cmd [options]
 | `--pack ID` | Mount a pack folder or `.zip` at start-up |
 | `--list-packs` | Print discovered packs and exit |
 | `--hud-panel NAME` | Select a named external HUD panel (empty = default) |
+| `--hud-layout NAME` | Select a `.hudlayout` from a pack/autoload (empty = original) |
 | `--menu-font NAME` | Select a named external font set |
 | `--episode N` | N-th installed game, 1-based |
 | `--data DIR` | Override the manifest asset directory |

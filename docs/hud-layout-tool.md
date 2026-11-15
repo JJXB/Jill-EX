@@ -7,10 +7,11 @@ tiles), and saves a small text layout (`.hudlayout`) that can be read back
 when the engine drawing needs to line up with an original screen or a
 hand-drawn panel.
 
-It does not read game data and it does not modify the engine.  The editor and
-its format are authoring aids; the game keeps its normal external HUD panels
-(`hud/classic.png`, `hud/modern.png`, ...) and always draws labels, icons and
-pips itself.  See [EXTASSETS.md](../EXTASSETS.md) for the pack layout.
+The editor itself does not modify the engine.  Its format is an authoring
+aid: the port can load a saved layout as an in-game classic HUD (see
+[Using a layout in the game](#using-a-layout-in-the-game)), and it keeps the
+normal external HUD panels (`hud/classic.png`, `hud/modern.png`, ...) as a
+separate option.
 
 Requirements: Python 3.10+ with tkinter, and Pillow (`pip install pillow`).
 Both are already needed by `jill_extractor.py`.
@@ -171,6 +172,39 @@ frames = 10,0
 
 `cols` addresses the generated palette sheet; `frames` is the shape frame the
 engine would draw.  The summary prints both.
+
+## Using a layout in the game
+
+Save the layout and copy the `.hudlayout` into `external\autoload\` (or
+`external\autoload\hud\`, or a pack's `hud\` folder).  Restart the port so the
+external layer is scanned, then choose it in **OPTIONS > HUD > LAYOUT**
+(switch **STYLE** to CLASSIC first).  The selection is stored as
+`[hud] layout = <file stem>` and can be started with `--hud-layout <stem>`.
+
+The port draws the layout's frame tiles with the **running game's** shape
+bank; the `sha` paths in the file are only used by the editor, so the layout is
+portable between Jill 1/2/3 as long as the entry/frame ids match the art you
+want.  Image-backed sheets and `image` parts are not drawn in-game; use SHA
+shape sheets for HUDs.
+
+These part names are driven by live game values (other parts are drawn as
+authored):
+
+| Part | Meaning |
+| --- | --- |
+| `health-bar` (rect) | current health as a framed bar |
+| `level-value` (text) | current level, `MAP` for 0, blank for `0x7F` |
+| `score-value` (text) | current score, right-aligned to the part's x+w |
+| `inventory-grid` (grid) | the carried item icons |
+| `title` (text) | the game title; also suppresses the default title |
+| `hint-strip` (rect) | black strip behind the bottom hint |
+| `pips` | health pips using the game's icon bank |
+| `box` | a classic 1-px framed HUD box |
+| `frame`, `view` (rects) | guides only |
+
+The camera still uses the classic viewport 80,16 232x160, so keep your `view`
+part at those coordinates.  A selected in-game layout takes priority over a
+`hud/classic.png` image panel.
 
 ## The file format
 

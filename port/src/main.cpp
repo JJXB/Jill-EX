@@ -125,6 +125,7 @@ void usage() {
         "  --theme-menu   use the theme backdrop for the modern menu (default)\n"
         "  --hud-frame N  classic HUD art: 0 current, N = N-th game's shapes\n"
         "  --hud-panel NAME  select an external HUD panel (empty = default)\n"
+        "  --hud-layout NAME select a .hudlayout from a pack/autoload\n"
         "  --menu-frame N menu border: -1 theme, 0 current, N = N-th game\n"
         "                 N beyond the game list = external border\n"
         "  --menu-font NAME  select an external font set\n"
@@ -252,6 +253,7 @@ int main(int argc, char** argv) {
         opt.hud_portrait = ini.get_bool("hud", "portrait", opt.hud_portrait);
         opt.hud_frame = ini.get_int("hud", "frame", opt.hud_frame);
         opt.hud_panel = ini.get("hud", "panel", opt.hud_panel);
+        opt.hud_layout = ini.get("hud", "layout", opt.hud_layout);
         opt.menu_frame = ini.get_int("menus", "frame", opt.menu_frame);
         opt.menu_font = ini.get("menus", "font", opt.menu_font);
         const std::string bg = ini.get("hud", "background");
@@ -437,6 +439,8 @@ int main(int argc, char** argv) {
             opt.hud_frame = (n < 0) ? 0 : (n > 16 ? 16 : n);
         } else if (a == "--hud-panel") {
             opt.hud_panel = value("--hud-panel");
+        } else if (a == "--hud-layout") {
+            opt.hud_layout = value("--hud-layout");
         } else if (a == "--menu-frame") {
             int n = std::atoi(value("--menu-frame"));
             opt.menu_frame = (n < -1) ? -1 : (n > 79 ? 79 : n);

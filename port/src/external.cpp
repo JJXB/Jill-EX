@@ -7,6 +7,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <unordered_set>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -662,6 +663,19 @@ const ShapeFrame* ExternalVisuals::font_shape(const std::string& name, int entry
     return nullptr;
 }
 
+const HudLayout* ExternalVisuals::layout(const std::string& name) const {
+    if (name.empty()) {
+        return nullptr;
+    }
+    const std::string want = lower(name);
+    for (const HudLayout& layout : layouts_) {
+        if (layout.name == want) {
+            return &layout;
+        }
+    }
+    return nullptr;
+}
+
 namespace {
 
 void add_kind_sheet(ExternalAssets& ext, ShapeBank& shapes,
@@ -987,6 +1001,239 @@ void add_border_frame(ExternalAssets& ext, const uint8_t palette[768],
     names.push_back(key);
 }
 
+// --- .hudlayout parsing ----------------------------------------------------
+
+std::string layout_trim(const std::string& s) {
+    size_t a = 0;
+    size_t b = s.size();
+    while (a < b && std::isspace(static_cast<unsigned char>(s[a]))) {
+        ++a;
+    }
+    while (b > a && std::isspace(static_cast<unsigned char>(s[b - 1]))) {
+        --b;
+    }
+    return s.substr(a, b - a);
+}
+
+struct LayoutSection {
+    std::string name;
+    std::vector<std::pair<std::string, std::string>> values;
+};
+
+std::vector<LayoutSection> layout_sections(const std::string& text) {
+    std::vector<LayoutSection> out;
+    size_t current = static_cast<size_t>(-1);
+    size_t pos = 0;
+    while (pos <= text.size()) {
+        size_t end = text.find('\n', pos);
+        if (end == std::string::npos) {
+            end = text.size();
+        }
+        std::string line = layout_trim(text.substr(pos, end - pos));
+        pos = end + 1;
+        if (line.empty() || line[0] == '#' || line[0] == ';') {
+            continue;
+        }
+        if (line.front() == '[' && line.back() == ']') {
+            LayoutSection section;
+            section.name = lower(layout_trim(
+                line.substr(1, line.size() - 2)));
+            out.push_back(std::move(section));
+            current = out.size() - 1;
+            continue;
+        }
+        if (current == static_cast<size_t>(-1)) {
+            continue;
+        }
+        const size_t eq = line.find('=');
+        if (eq == std::string::npos) {
+            continue;
+        }
+        out[current].values.emplace_back(
+            lower(layout_trim(line.substr(0, eq))),
+            layout_trim(line.substr(eq + 1)));
+    }
+    return out;
+}
+
+std::string layout_get(const LayoutSection& section, const std::string& key) {
+    for (auto it = section.values.rbegin(); it != section.values.rend();
+         ++it) {
+        if (it->first == key) {
+            return it->second;
+        }
+    }
+    return std::string();
+}
+
+int layout_int(const std::string& value, int fallback) {
+    if (value.empty()) {
+        return fallback;
+    }
+    char* end = nullptr;
+    const long parsed = std::strtol(value.c_str(), &end, 10);
+    if (end == value.c_str()) {
+        return fallback;
+    }
+    return static_cast<int>(parsed);
+}
+
+std::pair<int, int> layout_pair(const std::string& value,
+                                int fallback_x, int fallback_y) {
+    std::string text = value;
+    for (char& c : text) {
+        if (c == 'x' || c == 'X' || c == ',' || c == ' ') {
+            c = ' ';
+        }
+    }
+    int values[2] = {fallback_x, fallback_y};
+    int count = 0;
+    size_t pos = 0;
+    while (pos < text.size() && count < 2) {
+        while (pos < text.size() && text[pos] == ' ') {
+            ++pos;
+        }
+        if (pos >= text.size()) {
+            break;
+        }
+        char* end = nullptr;
+        const long v = std::strtol(text.c_str() + pos, &end, 10);
+        if (end == text.c_str() + pos) {
+            break;
+        }
+        values[count++] = static_cast<int>(v);
+        pos = static_cast<size_t>(end - text.c_str());
+    }
+    return {values[0], values[1]};
+}
+
+std::vector<int> layout_list(const std::string& value) {
+    std::vector<int> out;
+    size_t pos = 0;
+    while (pos <= value.size()) {
+        size_t comma = value.find(',', pos);
+        if (comma == std::string::npos) {
+            comma = value.size();
+        }
+        const std::string item = layout_trim(value.substr(pos, comma - pos));
+        if (!item.empty()) {
+            out.push_back(layout_int(item, 0));
+        }
+        pos = comma + 1;
+    }
+    return out;
+}
+
+std::string layout_stem(const std::string& rel) {
+    const size_t slash = rel.find_last_of('/');
+    std::string name = slash == std::string::npos ? rel
+                                                  : rel.substr(slash + 1);
+    const size_t dot = name.find_last_of('.');
+    if (dot != std::string::npos) {
+        name = name.substr(0, dot);
+    }
+    return name.empty() ? "layout" : name;
+}
+
+void parse_hud_layout(const std::string& rel, const std::string& text,
+                      HudLayout& out) {
+    out = HudLayout{};
+    out.name = layout_stem(rel);
+    out.file = rel;
+
+    struct LayoutSheet {
+        std::string source = "image";
+        int entry = 0;
+        int columns = 16;
+        int tile_w = 16;
+        int tile_h = 16;
+    };
+    std::map<std::string, LayoutSheet> sheets;
+    const std::vector<LayoutSection> sections = layout_sections(text);
+    for (const LayoutSection& section : sections) {
+        if (section.name.compare(0, 6, "sheet.") != 0) {
+            continue;
+        }
+        const std::string id = section.name.substr(6);
+        LayoutSheet sheet;
+        sheet.source = lower(layout_get(section, "source"));
+        if (sheet.source.empty()) {
+            sheet.source = "image";
+        }
+        sheet.entry = layout_int(layout_get(section, "entry"), 0);
+        sheet.columns = layout_int(layout_get(section, "columns"), 16);
+        const auto tile = layout_pair(layout_get(section, "tile"),
+                                      sheet.tile_w, sheet.tile_h);
+        sheet.tile_w = std::max(1, tile.first);
+        sheet.tile_h = std::max(1, tile.second);
+        sheet.columns = std::max(1, sheet.columns);
+        sheets[id] = sheet;
+    }
+
+    for (const LayoutSection& section : sections) {
+        if (section.name == "run") {
+            const std::string id = layout_get(section, "sheet");
+            auto it = sheets.find(id);
+            if (it == sheets.end() || it->second.source != "sha") {
+                continue;
+            }
+            const LayoutSheet& sheet = it->second;
+            const int x = layout_int(layout_get(section, "x"), 0);
+            const int y = layout_int(layout_get(section, "y"), 0);
+            const int row = layout_int(layout_get(section, "row"), 0);
+            const std::vector<int> cols =
+                layout_list(layout_get(section, "cols"));
+            for (size_t i = 0; i < cols.size(); ++i) {
+                HudLayoutTile tile;
+                tile.x = x + static_cast<int>(i) * sheet.tile_w;
+                tile.y = y;
+                tile.entry = sheet.entry & 0x3F;
+                tile.frame = (row * sheet.columns + cols[i]) & 0xFF;
+                out.tiles.push_back(tile);
+            }
+            continue;
+        }
+        if (section.name.compare(0, 5, "part.") != 0) {
+            continue;
+        }
+        HudLayoutPart part;
+        part.name = section.name.substr(5);
+        part.kind = lower(layout_get(section, "kind"));
+        part.x = layout_int(layout_get(section, "x"), 0);
+        part.y = layout_int(layout_get(section, "y"), 0);
+        const auto size = layout_pair(layout_get(section, "size"), 0, 0);
+        part.w = std::max(0, size.first);
+        part.h = std::max(0, size.second);
+        part.colour = std::max(
+            0, std::min(15, layout_int(layout_get(section, "colour"), 7)));
+        part.text = layout_get(section, "text");
+        part.note = layout_get(section, "note");
+        part.role = lower(layout_get(section, "role"));
+        part.file = layout_get(section, "file");
+        const auto cell = layout_pair(layout_get(section, "cell"), 16, 16);
+        part.cell_w = std::max(1, cell.first);
+        part.cell_h = std::max(1, cell.second);
+        const auto cells = layout_pair(layout_get(section, "cells"), 3, 3);
+        part.cols = std::max(1, cells.first);
+        part.rows = std::max(1, cells.second);
+        if (part.kind == "text" && part.w == 0) {
+            part.w = static_cast<int>(part.text.size()) * 6;
+            if (part.h == 0) {
+                part.h = 8;
+            }
+        }
+        if (part.kind == "grid") {
+            part.w = part.cell_w * part.cols;
+            part.h = part.cell_h * part.rows;
+        }
+        if (part.kind == "pips") {
+            part.w = part.cell_w * part.cols + std::max(0, part.cols - 1);
+            part.h = part.cell_h;
+        }
+        out.parts.push_back(std::move(part));
+    }
+}
+
 }  // namespace
 
 bool ExternalVisuals::build(const ExternalAssets& ext, ShapeBank& shapes,
@@ -994,8 +1241,38 @@ bool ExternalVisuals::build(const ExternalAssets& ext, ShapeBank& shapes,
                             const uint8_t palette[768], int board_w,
                             int board_h) {
     clear();
+    layouts_.clear();
+    layout_names_.clear();
     if (!ext.mounted()) {
         return false;
+    }
+    // HUD layouts are text files; they can live in a pack's hud/ folder or
+    // directly in autoload.  The engine resolves their SHA entry/frame ids
+    // against the running game's shape bank.
+    for (const std::string& rel : ext.files("")) {
+        if (rel.size() < 10 ||
+            rel.compare(rel.size() - 10, 10, ".hudlayout") != 0) {
+            continue;
+        }
+        std::vector<uint8_t> data;
+        if (!ext.read(rel, data)) {
+            continue;
+        }
+        HudLayout layout;
+        parse_hud_layout(rel, std::string(data.begin(), data.end()), layout);
+        if (layout.tiles.empty() && layout.parts.empty()) {
+            continue;
+        }
+        std::string name = layout.name;
+        for (int n = 2;
+             std::find(layout_names_.begin(), layout_names_.end(), name) !=
+             layout_names_.end();
+             ++n) {
+            name = layout.name + "-" + std::to_string(n);
+        }
+        layout.name = name;
+        layout_names_.push_back(name);
+        layouts_.push_back(std::move(layout));
     }
     ExternalAssets& mutable_ext = const_cast<ExternalAssets&>(ext);
     PaletteMap pm;

@@ -2985,6 +2985,13 @@ void Engine::render_hud_classic(Framebuffer& fb) {
     const int py = kClassicPanelY;
     const int hp = std::max(0, std::min(8, health()));
 
+    if (ext_visuals_ && !hud_layout_.empty()) {
+        if (const HudLayout* layout = ext_visuals_->layout(hud_layout_)) {
+            draw_hud_layout(fb, *layout);
+            return;
+        }
+    }
+
     if (ext_visuals_) {
         const ExternalPicture* panel = ext_visuals_->hud(hud_panel_, true);
         if (!panel && !hud_panel_.empty()) {
@@ -3100,6 +3107,177 @@ void Engine::render_hud_classic(Framebuffer& fb) {
     classic_box(fb, px, cap_y, kClassicPanelW, 14, 8);
     draw_text_font(fb, px + 1, cap_y + 7, 0, 2, 6, "INVENTORY");
     draw_text_font(fb, px, cap_y + 6, label, 2, 6, "INVENTORY");
+}
+
+// External `.hudlayout` presentation: the layout's entry-3 frame tiles plus
+// live parts.  Reserved part names drive the live values; everything else is
+// drawn as authored.
+void Engine::draw_hud_layout(Framebuffer& fb, const HudLayout& layout) {
+    int vx = kClassicViewX;
+    int vy = kClassicViewY;
+    int vw = kClassicViewW;
+    int vh = kClassicViewH;
+    for (const HudLayoutPart& part : layout.parts) {
+        if (part.kind == "rect" && part.name == "view") {
+            vx = part.x;
+            vy = part.y;
+            vw = part.w;
+            vh = part.h;
+            break;
+        }
+    }
+    // Black presentation area outside the playfield (the tool's preview).
+    if (vy > 0) {
+        fb.fill_rect(0, 0, Framebuffer::W, vy, 0);
+    }
+    if (vy + vh < Framebuffer::H) {
+        fb.fill_rect(0, vy + vh, Framebuffer::W,
+                     Framebuffer::H - (vy + vh), 0);
+    }
+    if (vx > 0) {
+        fb.fill_rect(0, vy, vx, vh, 0);
+    }
+    if (vx + vw < Framebuffer::W) {
+        fb.fill_rect(vx + vw, vy, Framebuffer::W - (vx + vw), vh, 0);
+    }
+
+    for (const HudLayoutTile& tile : layout.tiles) {
+        draw_shape(fb, (tile.entry << 8) | tile.frame, tile.x, tile.y, true);
+    }
+
+    const int hp = std::max(0, std::min(8, health()));
+    auto draw_value = [&](const HudLayoutPart& part, const std::string& text,
+                          bool right) {
+        if (text.empty()) {
+            return;
+        }
+        int x = part.x;
+        if (right) {
+            x = part.x + part.w - static_cast<int>(text.size()) * 6;
+        }
+        draw_text(fb, x, part.y,
+                  static_cast<uint8_t>(part.colour & 0xFF), text.c_str());
+    };
+
+    bool has_title = false;
+    for (const HudLayoutPart& part : layout.parts) {
+        if (part.name == "title") {
+            has_title = true;
+        }
+        if (part.kind == "box") {
+            classic_box(fb, part.x, part.y, part.w, part.h,
+                        static_cast<uint8_t>(part.colour & 0xFF));
+            continue;
+        }
+        if (part.kind == "rect") {
+            if (part.name == "health-bar") {
+                const int w = std::max(1, part.w);
+                const int h = std::max(1, part.h);
+                fb.fill_rect(part.x, part.y, w, h, 0);
+                fb.fill_rect(part.x, part.y, w, 1, 8);
+                fb.fill_rect(part.x, part.y + h - 1, w, 1, 8);
+                fb.fill_rect(part.x, part.y, 1, h, 8);
+                fb.fill_rect(part.x + w - 1, part.y, 1, h, 8);
+                if (hp > 0 && w > 2 && h > 2) {
+                    const uint8_t colour = static_cast<uint8_t>(
+                        hud_health_ >= 0 ? hud_health_ : part.colour);
+                    fb.fill_rect(part.x + 1, part.y + 1,
+                                 std::max(1, (w - 2) * hp / 8), h - 2,
+                                 colour);
+                }
+            } else if (part.name == "hint-strip") {
+                fb.fill_rect(part.x, part.y, part.w, part.h, 0);
+            }
+            continue;
+        }
+        if (part.kind == "pips") {
+            if (hp > 0) {
+                for (int i = 0; i < hp - 1; ++i) {
+                    draw_health_pip(fb, 0x2A, part.x + i * 3, part.y);
+                }
+                draw_health_pip(fb, 0x2B, part.x + (hp - 1) * 3 - 2,
+                                part.y);
+            }
+            continue;
+        }
+        if (part.kind == "grid") {
+            const int n = header_[4] | (header_[5] << 8);
+            const int rows = std::max(1, part.rows);
+            for (int i = 0; i < n && i < 15; ++i) {
+                const int id = header_[6 + i * 2] |
+                               (header_[7 + i * 2] << 8);
+                if (id < 0 || id >= 16) {
+                    continue;
+                }
+                const int frame = profile_->item_icons[id];
+                if (!frame) {
+                    continue;
+                }
+                draw_shape(fb, icon_shape(frame),
+                           part.x + (i / rows) * part.cell_w,
+                           part.y + (i % rows) * part.cell_h, true);
+            }
+            continue;
+        }
+        if (part.kind != "text") {
+            continue;
+        }
+        std::string role = part.role;
+        if (role.empty()) {
+            if (part.name.find("level-value") != std::string::npos) {
+                role = "level";
+            } else if (part.name.find("score-value") != std::string::npos) {
+                role = "score";
+            } else if (part.name == "title") {
+                role = "title";
+            }
+        }
+        if (role == "level") {
+            const int level = level_id();
+            std::string text;
+            if (level == 0) {
+                text = "MAP";
+            } else if (level != 0x7F) {
+                text = std::to_string(level);
+            }
+            draw_value(part, text, false);
+        } else if (role == "score") {
+            draw_value(part,
+                       std::to_string(static_cast<unsigned>(score())), true);
+        } else if (role == "health") {
+            draw_value(part, std::to_string(hp), false);
+        } else if (role == "title") {
+            draw_value(part, game_.title, false);
+        } else if (!part.text.empty()) {
+            draw_value(part, part.text, false);
+        }
+    }
+
+    if (!has_title) {
+        // Keep the classic title in the strip above the viewport.
+        const std::string& title = game_.title;
+        int adv = 8;
+        int bank = 1;
+        if (static_cast<int>(title.size()) * adv > vw - 10) {
+            adv = 6;
+            bank = 2;
+        }
+        const int tw = static_cast<int>(title.size()) * adv;
+        const int tx = vx + (vw - tw) / 2;
+        const int clean_x = std::max(vx + 2, tx);
+        const int ty = std::max(0, (vy - 8) / 2);
+        if (adv == 8) {
+            draw_text_font(fb, clean_x, ty,
+                           static_cast<uint8_t>(hud_text_), bank, adv,
+                           title.c_str());
+        } else {
+            draw_text_font(fb, clean_x + 1, ty + 1, 0, bank, adv,
+                           title.c_str());
+            draw_text_font(fb, clean_x, ty,
+                           static_cast<uint8_t>(hud_text_), bank, adv,
+                           title.c_str());
+        }
+    }
 }
 
 // MODERN/MINIMAL HUD (the default): one horizontal strip across the top.

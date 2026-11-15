@@ -53,6 +53,7 @@ struct Options {
     int hud_health = -1;        // --hud-health: -1 original pips, else palette
     int hud_frame = 0;          // --hud-frame: 0 current, N = games[N-1] art
     std::string hud_panel;      // --hud-panel NAME: external HUD panel
+    std::string hud_layout;     // --hud-layout NAME: autoload/pack .hudlayout
     int menu_frame = -1;        // --menu-frame: -1 theme, 0 current, N = game
                                 // N > game count = external border N-games-1
     std::string menu_font;      // --menu-font NAME: external font set

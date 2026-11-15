@@ -133,6 +133,9 @@ public:
     // Selected external HUD panel (empty = the pack's classic/modern default).
     void set_hud_panel(const std::string& name) { hud_panel_ = name; }
     const std::string& hud_panel() const { return hud_panel_; }
+    // Selected `.hudlayout` from a pack/autoload (empty = built-in classic HUD).
+    void set_hud_layout(const std::string& name) { hud_layout_ = name; }
+    const std::string& hud_layout() const { return hud_layout_; }
     // Selected external menu border (index into ExternalVisuals::borders()).
     void set_menu_border_ext(int index) { menu_border_ext_ = index; }
     int menu_border_ext() const { return menu_border_ext_; }
@@ -479,6 +482,8 @@ private:
     void draw_text_page(Framebuffer& fb);         // VCL page viewer
     void draw_frame(Framebuffer& fb, int x, int y, int w, int h);
     void render_hud_classic(Framebuffer& fb);  // original 64x84 panel
+    // Draw one external `.hudlayout` (frame tiles + live parts).
+    void draw_hud_layout(Framebuffer& fb, const HudLayout& layout);
     void render_hud_modern(Framebuffer& fb);   // single top-of-screen bar
     int suit_colour();                         // cached per-episode suit shade
     void follow_camera();
@@ -610,6 +615,7 @@ private:
     std::shared_ptr<const ExternalVisuals> ext_visuals_;
     uint8_t ext_palette_[768] = {};
     std::string hud_panel_;
+    std::string hud_layout_;
     std::string font_name_;
     int menu_border_ext_ = -1;
     bool turtle_ = false;
