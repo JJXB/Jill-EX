@@ -1,5 +1,16 @@
 # Progress
 
+## 2026-11-15 (optional FPS counter)
+
+* `OPTIONS > VIDEO > FPS COUNTER` toggles a small `NN FPS` overlay (default
+  OFF, `[video] fps_counter` in `jill.ini`).  It is drawn into the 320x200
+  frame before the palette conversion, so the filters and the SDL/Vita2D/PS4
+  backends present it like any other pixel: left end of the classic title strip,
+  or just under the modern top bar, with a 1-px black shadow.
+* The value is the measured presentation rate (start-of-frame interval, 0.9/0.1
+  EMA), not the fixed 18.2 Hz world tick, so it reports what HIGH FRAMERATE is
+  actually achieving on each target.
+
 ## 2026-11-14 (Vita display cap + libvita2d)
 
 * The Vita build now clamps its window/drawable to the real display mode

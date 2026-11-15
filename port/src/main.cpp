@@ -232,6 +232,7 @@ int main(int argc, char** argv) {
         opt.resolution = ini.get_int("video", "resolution", opt.resolution);
         opt.high_fps = ini.get_int("video", "high_fps", opt.high_fps);
         opt.interpolate = ini.get_bool("video", "interpolate", opt.interpolate);
+        opt.fps_counter = ini.get_bool("video", "fps_counter", opt.fps_counter);
         opt.splash = ini.get_int("video", "splash", opt.splash);
         const std::string filter = ini.get("video", "filter");
         if (!filter.empty()) {

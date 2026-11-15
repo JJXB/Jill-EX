@@ -32,6 +32,17 @@ port\build\Release\jill.exe --game jill1 --board 1 --ticks 5 --filter 1 --dump s
 port\build\Release\jill.exe --game jill1 --board 1 --ticks 5 --filter 2 --dump crt.ppm
 ```
 
+## FPS counter
+
+`OPTIONS > VIDEO > FPS COUNTER` toggles a small `NN FPS` overlay (default
+**OFF**), stored as `[video] fps_counter = 0/1`.  It shows the measured
+presentation rate (the loop's start-of-frame interval, smoothed with a 0.9/0.1
+EMA), so with HIGH FRAMERATE off it reads about 18, and with 60/90/120/144 it
+tracks the selected rate.  In the classic HUD it sits at the left end of the
+title strip; in the modern HUD it sits just under the top bar.  It is drawn
+into the 320x200 frame before the palette conversion, so the filters and the
+Vita/PS4 backends see it like any other pixel.
+
 ## Object and kind limits
 
 The display work also raised two total-conversion limits:

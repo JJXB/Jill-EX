@@ -28,6 +28,7 @@ struct Options {
     int scale = 3;              // windowed integer scale (1..6)
     int high_fps = 60;          // presentation rate: 0 = 18.2 Hz, else 60..144
     bool interpolate = true;    // --no-interpolate: no high-fps smoothing
+    bool fps_counter = false;   // VIDEO menu: frame-rate counter overlay
     int filter = 0;             // --filter N: 0 none, 1 smooth, 2 CRT
     std::string renderer = "auto";  // PS4 display: auto, gl or sdl
     bool debug = false;         // PS4 only: FPS/profiler overlay (--debug)

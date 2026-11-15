@@ -101,6 +101,22 @@ void draw_debug_overlay(Framebuffer& fb, Engine& engine, const PerfStats& p,
 }
 #endif  // JILL_PS4
 
+// Optional frame-rate counter (VIDEO menu).  It sits at the left end of the
+// classic title strip (titles are centred, so the space is free) or just under
+// the modern top bar; a black shadow keeps it readable over the patterned
+// frame.  The value is the measured presentation rate, not the world tick rate.
+void draw_fps_counter(Framebuffer& fb, Engine& engine, double fps) {
+    if (fps < 0.5) {
+        return;  // first frame, no interval measured yet
+    }
+    char text[16];
+    std::snprintf(text, sizeof(text), "%d FPS", static_cast<int>(fps + 0.5));
+    const int x = engine.hud_classic() ? 10 : 2;
+    const int y = engine.hud_classic() ? 9 : 14;
+    engine.draw_text(fb, x + 1, y + 1, 0, text);
+    engine.draw_text(fb, x, y, 15, text);
+}
+
 #ifdef JILL_HAVE_SDL
 // The original NOISEMAKER maps this QWERTY scan order to raw sound slots 1..45
 // (the string at 2cff:1246 in the Jill executables).
@@ -1296,6 +1312,7 @@ struct VideoSettings {
     int high_fps = 60;   // presentation rate, 0 = 18.2 Hz
     int splash = -1;     // -1 auto, 0 off, N = games[N-1] splash
     bool interpolate = true;  // high-framerate smoothing (needs high_fps > 0)
+    bool fps_counter = false; // frame-rate counter overlay
     int filter = 0;      // 0 none, 1 smooth (light blur), 2 CRT
     int stereo = 0;      // 0 off, 1 row-interlaced, 2 half-width SBS
     int stereo_depth = 2;  // per-eye horizontal separation in source pixels
@@ -1707,6 +1724,8 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                     std::string("MESSAGE BOX: ") +
                         message_box_name(engine.message_box()),
                     std::string("FILTER: ") + filter_name(video.filter),
+                    std::string("FPS COUNTER: ") +
+                        (video.fps_counter ? "ON" : "OFF"),
                     "BACK"};
         }
         case MenuScreen::Audio:
@@ -2993,6 +3012,7 @@ int run_sdl(const Options& opt, Engine& engine,
     video.high_fps = opt.high_fps;
     video.splash = opt.splash;
     video.interpolate = opt.interpolate;
+    video.fps_counter = opt.fps_counter;
     video.filter = opt.filter;
     video.stereo = kStereoEnabled && opt.stereo == 1 ? 1 : 0;
     video.stereo_depth = opt.stereo_depth;
@@ -3255,6 +3275,9 @@ int run_sdl(const Options& opt, Engine& engine,
     double accumulator = 0.0;
     uint64_t last = SDL_GetPerformanceCounter();
     const double freq = static_cast<double>(SDL_GetPerformanceFrequency());
+    // FPS counter: exponential average of the presentation interval.
+    double fps_display = 0.0;
+    uint64_t fps_last = SDL_GetPerformanceCounter();
     uint32_t title_timer = SDL_GetTicks();
 
     // Bindings: `[controls]` is the base; `[controls.<game id>]` overrides it
@@ -4070,7 +4093,7 @@ int run_sdl(const Options& opt, Engine& engine,
                 break;
             }
             case MenuScreen::Video:
-                if (nav == 5 && sel == 7) {
+                if (nav == 5 && sel == 8) {
                     menu.screen = MenuScreen::Options;
                 } else if (sel == 4) {
                     if (nav == 5 || nav == 3 || nav == 4) {
@@ -4084,6 +4107,10 @@ int run_sdl(const Options& opt, Engine& engine,
                 } else if (sel == 6) {
                     if (nav == 5 || nav == 3 || nav == 4) {
                         video.filter = filter_next(video.filter);
+                    }
+                } else if (sel == 7) {
+                    if (nav == 5 || nav == 3 || nav == 4) {
+                        video.fps_counter = !video.fps_counter;
                     }
                 } else if (nav == 3) {
                     video_step(-1);
@@ -4292,6 +4319,16 @@ int run_sdl(const Options& opt, Engine& engine,
 #endif
     while (running) {
         const uint64_t frame_start = SDL_GetPerformanceCounter();
+        if (video.fps_counter) {
+            const double dt = static_cast<double>(frame_start - fps_last) / freq;
+            if (dt > 0.0001) {
+                const double inst = 1.0 / dt;
+                fps_display = fps_display <= 0.0 ? inst
+                                                 : fps_display * 0.9 +
+                                                       inst * 0.1;
+            }
+        }
+        fps_last = frame_start;
 #ifdef JILL_PS4
         if (opt.debug) {
             const double dt =
@@ -4880,6 +4917,9 @@ int run_sdl(const Options& opt, Engine& engine,
         if (score_entry.active) {
             draw_hiscore_entry(fb, engine, score_entry);
         }
+        if (video.fps_counter) {
+            draw_fps_counter(fb, engine, fps_display);
+        }
 #ifdef JILL_PS4
         if (opt.debug) {
             draw_debug_overlay(fb, engine, perf, music_player.mix_ms(),
@@ -5030,6 +5070,7 @@ int run_sdl(const Options& opt, Engine& engine,
         ini.set_int("video", "high_fps", video.high_fps);
         ini.set_int("video", "splash", video.splash);
         ini.set_bool("video", "interpolate", video.interpolate);
+        ini.set_bool("video", "fps_counter", video.fps_counter);
         ini.set_int("video", "filter", video.filter);
         ini.set_bool("audio", "music", menu.music_on);
         ini.set_int("audio", "volume", menu.music_volume);

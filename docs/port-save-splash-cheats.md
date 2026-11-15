@@ -216,6 +216,10 @@ to frames `0x5410..0x5413`, four ticks each.  Headless `--watch-tile 166` on
 * **Interpolation:** `OPTIONS > VIDEO > INTERPOLATE` (default ON) is a separate
   toggle for high-framerate sprite smoothing.  It only has an effect when HIGH
   FRAMERATE is not OFF; `--no-interpolate` disables it.
+* **FPS counter:** `OPTIONS > VIDEO > FPS COUNTER` (default OFF, stored as
+  `[video] fps_counter`) draws the measured presentation rate in the frame
+  itself; see [port-display.md](port-display.md#fps-counter).  The PS4 `--debug`
+  overlay is still separate and also reports tick/draw/present/audio timings.
 * **Splash:** the splash is now a two-page sequence found from the intro board:
   1. the publisher/logo cluster (largest MEGA/EPIC cluster; the EPIC MEGA logo
      in Jill 1/2/3, the top ARK/Onesimus logo cluster), then
