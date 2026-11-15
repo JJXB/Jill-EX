@@ -116,6 +116,50 @@ tiles = 45,45
 `cols` is still the palette cell; `tiles` is what a board's tile map or the
 engine would see, and the summary prints both ids and names.
 
+## HUD/UI shape entries
+
+HUD and menu art is **not** in the `.dma` table.  It is made of frames inside
+shape entries, which is why a DMA-only import shows board tiles but no panel
+pieces.  Use *Tilesets > Shape...* to load those frames:
+
+| Entry | Art |
+| --- | --- |
+| `1` | 8x8 text font (128 glyphs) |
+| `2` | 6x8 text font (128 glyphs) |
+| `3` | classic HUD/frame patterns: 8-px edges, corners, 16x12 strips, fill |
+| `4` | 4x5 score digits |
+| `7` | nine-slice menu window |
+| `14` | item icons, health pips and the inventory art |
+
+The dialog defaults to entries `3,4,7,14` (the usual HUD/UI set); change the
+comma-separated list to load others.  Each entry becomes its own sheet,
+labelled `entry:frame` in the palette (e.g. `3:10` is the 16x16 frame fill,
+`14:42` is a health pip).  *Find tile/frame* accepts either `42` (frame in the
+active entry) or `14:42` (entry and frame).  Cell `16x16` suits HUD pieces;
+`auto` uses the largest frame in that entry.
+
+Frames are top-left aligned, matching the engine blitter, and the sheet uses
+one cell size per entry.  A piece smaller than the cell keeps transparent
+padding on the right/bottom, so stamping at the cell's top-left puts the art
+exactly where the engine draws it.  Oversized frames are clipped unless you
+set a larger cell or use `auto`.
+
+Like DMA sheets, shape sheets are rebuilt from the `.sha` path when the layout
+is opened.  Each `[run]` records the frame numbers:
+
+```ini
+[run]
+sheet = sha3
+x = 8
+y = 22
+row = 0
+cols = 10,0
+frames = 10,0
+```
+
+`cols` addresses the generated palette sheet; `frames` is the shape frame the
+engine would draw.  The summary prints both.
+
 ## The file format
 
 UTF-8 text, INI-like `[section]` / `key = value` lines.  `#` and `;` start a
@@ -210,9 +254,21 @@ tile = 16x16
 columns = 16
 ```
 
+A HUD/UI shape sheet stores one entry of the same bank:
+
+```ini
+[sheet.sha14]
+source = sha
+sha = ../jillt/jill1.sha
+palette = ../profiles/onesimus.pal   # optional
+entry = 14
+tile = 16x16
+columns = 16
+```
+
 The id is the name used by `[run]` sections; it is sanitised to letters,
-digits, `_` and `-`.  `columns` fixes the palette layout, so the cell to tile id
-mapping stays stable between sessions.
+digits, `_` and `-`.  `columns` fixes the palette layout, so the cell to
+tile-id/frame mapping stays stable between sessions.
 
 ### `[run]`
 
@@ -236,6 +292,21 @@ tiles = 45,46,47
 
 `cols` addresses the generated palette sheet; `tiles` is the id a board map or
 the engine uses.  The summary prints both, plus the tile names.
+
+For a shape sheet the extra line is `frames` (shape entry frames):
+
+```ini
+[run]
+sheet = sha3
+x = 8
+y = 22
+row = 0
+cols = 10,0
+frames = 10,0
+```
+
+The sheet's `[sheet]` section names the entry, so `frames` is enough to redraw
+the same piece; the summary prints `frames` next to the pixel/grid position.
 
 ### `[part.<name>]`
 
@@ -288,9 +359,13 @@ warnings, so a layout can be checked without opening the editor.
 * One reference image per layout, and any number of tileset sheets (one image
   each, or one DMA/SHA pair each).  Use several sheets for mixed art.
 * A DMA sheet needs the episode's `.sha`; the `.dma` alone is only a lookup
-  table.  Sheet cells follow DMA record order, so tile ids are not sequential
-  across a row.  Oversized tiles (16x8, 16x20, 16x22) are clipped to the cell
-  unless you rebuild the sheet with a taller cell size.
+  table and contains board tiles, not HUD/UI panel pieces.  Sheet cells follow
+  DMA record order, so tile ids are not sequential across a row.  Oversized
+  tiles (16x8, 16x20, 16x22) are clipped to the cell unless you rebuild the
+  sheet with a taller cell size.
+* HUD/UI art comes from shape entries (3, 4, 7, 14, fonts 1/2).  Shape sheets
+  store one entry each and use a fixed cell size; a frame larger than the cell
+  is clipped unless you use `auto` or a larger cell.
 * Part guides and the reference are editor-only.  PNG export contains tiles
   and `image` parts, not the reference or guide rectangles.
 * Part names must be unique; they become section names.

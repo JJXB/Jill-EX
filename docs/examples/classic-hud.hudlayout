@@ -26,7 +26,7 @@ x = 8
 y = 12
 size = 304x180
 colour = 7
-note = patterned frame ring + title strip
+note = patterned frame ring (E3 frames 0/3/4/6/8/10) + title strip
 
 [part.view]
 kind = rect

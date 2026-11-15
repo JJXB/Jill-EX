@@ -14,6 +14,8 @@ Features
 * Tile stamping from any PNG/JPG tileset, or straight from a Jill game's
   `.dma` tile table plus the episode's `.sha` shape bank (tile ids/names are
   shown in the palette, and runs record their tile ids on save).
+* HUD/UI shape entries: load one or more `.sha` entries (3 = classic frame,
+  7 = window, 14 = icons/pips) as labelled `entry:frame` sheets.
 * Labelled layout parts (text/rect/box/pips/grid/image/note) that mark where
   engine-drawn elements belong; they are guides, not baked artwork.
 * Undo/redo, PNG export and a plain-text summary for code alignment.
@@ -100,12 +102,24 @@ class DmaTile:
 
 
 @dataclass
+class ShapeTile:
+    """One frame of one `.sha` entry, used for HUD/UI pieces."""
+
+    entry: int = 0
+    frame: int = 0
+    w: int = 0
+    h: int = 0
+    missing: bool = False
+
+
+@dataclass
 class Sheet:
     """One tileset image and its tile cell size.
 
     `source = "image"` uses `file` directly.  `source = "dma"` rebuilds the
-    sheet from a Jill `.dma` tile table plus the episode's `.sha` shape bank
-    (`palette` is optional and falls back to the extractor's default palette).
+    sheet from a Jill `.dma` tile table plus the episode's `.sha` shape bank.
+    `source = "sha"` rebuilds one shape entry's frames (HUD/UI pieces).
+    `palette` is optional and falls back to the extractor's default palette.
     """
 
     id: str = "sheet"
@@ -117,7 +131,8 @@ class Sheet:
     sha: str = ""
     palette: str = ""
     columns: int = 0
-    # (column, row) -> decoded DMA record; empty for plain image sheets.
+    entry: int = 0
+    # (column, row) -> decoded DMA record or shape frame; empty for images.
     entries: dict = field(default_factory=dict, repr=False, compare=False)
     image: object = field(default=None, repr=False, compare=False)
 
@@ -477,6 +492,82 @@ def make_dma_sheet(sheet_id: str, dma_path: str, sha_path: str,
                  tile_h=cell_h, entries=entries, image=image)
 
 
+def build_sha_sheet(sha_path: str, entry_index: int,
+                    palette_path: str = "", columns: int = 16,
+                    cell_w: int = 0, cell_h: int = 0):
+    """Decode every frame of one `.sha` entry into a labelled sheet.
+
+    HUD/UI art is not in the DMA table; pieces such as the classic frame
+    (entry 3), score digits (4), the nine-slice window (7) and the item icon /
+    pip bank (14) are separate frames of one shape entry.  Cell size defaults
+    to the largest frame in the entry; frames are top-left aligned, matching
+    the engine's blitter.  Returns `(image, entries, columns, cell_w, cell_h)`.
+    """
+    if Image is None:
+        raise RuntimeError("Pillow is required to decode shape frames")
+    if not os.path.isfile(sha_path):
+        raise ValueError(f"shape file not found: {sha_path}")
+    if not 0 <= entry_index < 128:
+        raise ValueError(f"shape entry must be 0..127, got {entry_index}")
+    extractor = find_extractor()
+    sha = extractor.SHAFile.load(sha_path)
+    if palette_path:
+        if not os.path.isfile(palette_path):
+            raise ValueError(f"palette file not found: {palette_path}")
+        with open(palette_path, "rb") as f:
+            palette = f.read()
+        if len(palette) < 768:
+            raise ValueError(
+                f"{palette_path} is {len(palette)} bytes; expected 768")
+        sha.set_palette_rgb(palette[:768], from_6bit=False)
+    entry = sha.entries[entry_index]
+    if entry is None or not entry.frames:
+        raise ValueError(
+            f"shape entry {entry_index} has no frames in {sha_path}")
+
+    decoded = []
+    for frame in range(entry.frame_count):
+        image = extractor._shape_rgba(sha, entry_index, frame, skip=(0,))
+        decoded.append((frame, image))
+    if not decoded:
+        raise ValueError(f"shape entry {entry_index} decoded no frames")
+
+    if cell_w <= 0:
+        cell_w = max((image.width for _, image in decoded if image), default=1)
+    if cell_h <= 0:
+        cell_h = max((image.height for _, image in decoded if image),
+                     default=1)
+    cell_w = max(1, min(256, cell_w))
+    cell_h = max(1, min(256, cell_h))
+    columns = max(1, min(64, columns))
+    rows = (len(decoded) + columns - 1) // columns
+    sheet = Image.new("RGBA", (columns * cell_w, rows * cell_h),
+                      (0, 0, 0, 0))
+    entries: dict[tuple[int, int], ShapeTile] = {}
+    for index, (frame, image) in enumerate(decoded):
+        col, row = index % columns, index // columns
+        if image is None:
+            entries[(col, row)] = ShapeTile(
+                entry_index, frame, 0, 0, True)
+            continue
+        cell = Image.new("RGBA", (cell_w, cell_h), (0, 0, 0, 0))
+        composite_clipped(cell, image, 0, 0)
+        sheet.alpha_composite(cell, (col * cell_w, row * cell_h))
+        entries[(col, row)] = ShapeTile(
+            entry_index, frame, image.width, image.height, False)
+    return sheet, entries, columns, cell_w, cell_h
+
+
+def make_sha_sheet(sheet_id: str, sha_path: str, entry_index: int,
+                   palette_path: str = "", columns: int = 16,
+                   cell_w: int = 0, cell_h: int = 0) -> Sheet:
+    image, entries, columns, cell_w, cell_h = build_sha_sheet(
+        sha_path, entry_index, palette_path, columns, cell_w, cell_h)
+    return Sheet(id=sheet_id, source="sha", sha=sha_path,
+                 palette=palette_path, columns=columns, entry=entry_index,
+                 tile_w=cell_w, tile_h=cell_h, entries=entries, image=image)
+
+
 def guess_sha_path(dma_path: str) -> str:
     """Best-effort SHA beside a DMA file: jill.dma -> jill1.sha."""
     folder = os.path.dirname(os.path.abspath(dma_path))
@@ -497,13 +588,16 @@ def guess_sha_path(dma_path: str) -> str:
     return ""
 
 
-def dma_tile_label(lay: Layout, sheet_id: str, col: int, row: int) -> str:
+def tile_desc(lay: Layout, sheet_id: str, col: int, row: int) -> str:
     for sheet in lay.sheets:
         if sheet.id != sheet_id:
             continue
         entry = sheet.entries.get((col, row))
         if entry is None:
             return ""
+        if isinstance(entry, ShapeTile):
+            size = (f" {entry.w}x{entry.h}" if entry.w and entry.h else "")
+            return f"E{entry.entry}:{entry.frame}{size}"
         show_name = entry.name and entry.name != str(entry.tile_id)
         name = f" {entry.name}" if show_name else ""
         size = (f" {entry.w}x{entry.h}" if entry.w and entry.h else "")
@@ -571,10 +665,17 @@ def load_layout(path: str) -> Layout:
         if not name.lower().startswith("sheet."):
             continue
         sheet = Sheet(id=name.split(".", 1)[1])
-        tile = _as_pair(body.get("tile", ""), "x", (8, 8))
-        sheet.tile_w = max(1, tile[0])
-        sheet.tile_h = max(1, tile[1])
         sheet.source = body.get("source", "image").strip().lower()
+        default_cell = 16 if sheet.source in ("dma", "sha") else 8
+        tile_value = body.get("tile", "").strip()
+        if sheet.source == "sha" and not tile_value:
+            # A hand-written shape sheet may omit `tile`; auto-size the cells.
+            sheet.tile_w = sheet.tile_h = 0
+        else:
+            tile = _as_pair(tile_value, "x",
+                            (default_cell, default_cell))
+            sheet.tile_w = max(1, tile[0])
+            sheet.tile_h = max(1, tile[1])
         if sheet.source == "dma":
             sheet.dma = resolve_path(body.get("dma", ""), base)
             sheet.sha = resolve_path(body.get("sha", ""), base)
@@ -591,6 +692,24 @@ def load_layout(path: str) -> Layout:
             except Exception as exc:
                 lay.warnings.append(
                     f"cannot rebuild DMA tileset {sheet.id}: {exc}")
+        elif sheet.source == "sha":
+            sheet.sha = resolve_path(body.get("sha", ""), base)
+            sheet.palette = resolve_path(body.get("palette", ""), base)
+            sheet.entry = max(0, min(127, _as_int(body.get("entry"), 0)))
+            sheet.columns = max(1, min(64, _as_int(
+                body.get("columns"), 16)))
+            try:
+                image, entries, columns, tile_w, tile_h = build_sha_sheet(
+                    sheet.sha, sheet.entry, sheet.palette, sheet.columns,
+                    sheet.tile_w, sheet.tile_h)
+                sheet.image = image
+                sheet.entries = entries
+                sheet.columns = columns
+                sheet.tile_w = tile_w
+                sheet.tile_h = tile_h
+            except Exception as exc:
+                lay.warnings.append(
+                    f"cannot rebuild shape tileset {sheet.id}: {exc}")
         else:
             sheet.source = "image"
             sheet.file = resolve_path(body.get("file", ""), base)
@@ -686,6 +805,14 @@ def layout_to_text(lay: Layout) -> str:
                 lines.append(f"palette = {store_path(sheet.palette, base)}")
             lines.append(f"tile = {sheet.tile_w}x{sheet.tile_h}")
             lines.append(f"columns = {sheet.columns}")
+        elif sheet.source == "sha":
+            lines.append("source = sha")
+            lines.append(f"sha = {store_path(sheet.sha, base)}")
+            if sheet.palette:
+                lines.append(f"palette = {store_path(sheet.palette, base)}")
+            lines.append(f"entry = {sheet.entry}")
+            lines.append(f"tile = {sheet.tile_w}x{sheet.tile_h}")
+            lines.append(f"columns = {sheet.columns}")
         else:
             lines.append(f"file = {store_path(sheet.file, base)}".rstrip())
             lines.append(f"tile = {sheet.tile_w}x{sheet.tile_h}")
@@ -702,8 +829,14 @@ def layout_to_text(lay: Layout) -> str:
         ])
         entries = run_entries(lay, run)
         if entries and all(entry is not None for entry in entries):
-            lines.append("tiles = " + ",".join(
-                str(entry.tile_id) for entry in entries))
+            source = next((sheet.source for sheet in lay.sheets
+                           if sheet.id == run["sheet"]), "image")
+            if source == "dma":
+                lines.append("tiles = " + ",".join(
+                    str(entry.tile_id) for entry in entries))
+            elif source == "sha":
+                lines.append("frames = " + ",".join(
+                    str(entry.frame) for entry in entries))
         lines.append("")
 
     for part in lay.parts:
@@ -859,6 +992,21 @@ def summary_text(lay: Layout, path: Optional[str] = None) -> str:
                 f"      tiles: {len(sheet.entries)}"
                 + (f" ({sample}{', ...' if len(names) > 6 else ''})"
                    if sample else ""))
+        elif sheet.source == "sha":
+            frames = [e.frame for e in sheet.entries.values()
+                      if e is not None]
+            first = min(frames) if frames else 0
+            last = max(frames) if frames else 0
+            lines.append(
+                f"    {sheet.id:<10} source=sha  entry {sheet.entry}  "
+                f"tiles {sheet.tile_w}x{sheet.tile_h}  columns "
+                f"{sheet.columns}  image {size}")
+            lines.append(f"      sha  : {sheet.sha}")
+            if sheet.palette:
+                lines.append(f"      pal  : {sheet.palette}")
+            lines.append(
+                f"      frames: {len(sheet.entries)} (entry {sheet.entry}, "
+                f"frame {first}..{last})")
         else:
             lines.append(
                 f"    {sheet.id:<10} {sheet.file}  tiles {sheet.tile_w}x"
@@ -877,12 +1025,19 @@ def summary_text(lay: Layout, path: Optional[str] = None) -> str:
             f"{run['y'] + run['th']}  cols "
             f"{run['cols'][0]}..{run['cols'][-1]}  ({grid})")
         entries = run_entries(lay, run)
+        source = next((sheet.source for sheet in lay.sheets
+                       if sheet.id == run["sheet"]), "image")
         if entries:
-            ids = ",".join("?" if e is None else str(e.tile_id)
-                           for e in entries)
-            line += f"  tiles {ids}"
+            if source == "dma":
+                ids = ",".join("?" if e is None else str(e.tile_id)
+                               for e in entries)
+                line += f"  tiles {ids}"
+            elif source == "sha":
+                frames = ",".join("?" if e is None else str(e.frame)
+                                  for e in entries)
+                line += f"  frames {frames}"
         lines.append(line)
-        if entries:
+        if entries and source == "dma":
             names = [e.name for e in entries if e is not None and e.name]
             if names:
                 lines.append("      names: " + ", ".join(names))
@@ -932,7 +1087,7 @@ def classic_guide_parts() -> list[Part]:
                           **kwargs))
 
     add("frame", "rect", 8, 12, 304, 180,
-        note="patterned frame ring + title strip")
+        note="patterned frame ring (E3 frames 0/3/4/6/8/10) + title strip")
     add("view", "rect", 80, 22, 232, 158, note="playfield viewport")
     add("health-box", "box", 8, 22, 64, 30, colour=12)
     add("health-label", "text", 10, 27, 0, 0, text="HEALTH")
@@ -1095,6 +1250,137 @@ class DmaImportDialog(tk.Toplevel if tk is not None else object):
             "cell_w": max(4, min(128, cell[0])),
             "cell_h": max(4, min(128, cell[1])),
             "match_grid": bool(self.match_grid.get()),
+        }
+        self.destroy()
+
+
+class ShapeImportDialog(tk.Toplevel if tk is not None else object):
+    """Collect a `.sha` plus the shape entries to turn into tilesets."""
+
+    def __init__(self, parent, initial_dir: str = ""):
+        super().__init__(parent)
+        self.title("Load HUD/UI shape entries")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.result: Optional[dict] = None
+        self._last_dir = initial_dir or os.getcwd()
+        self.sha_var = tk.StringVar()
+        self.palette_var = tk.StringVar()
+        self.entries_var = tk.StringVar(value="3,4,7,14")
+        self.columns_var = tk.StringVar(value="16")
+        self.cell_var = tk.StringVar(value="16x16")
+
+        frame = ttk.Frame(self, padding=8)
+        frame.pack(fill="both", expand=True)
+
+        ttk.Label(frame, text="Shape bank (.sha)").grid(
+            row=0, column=0, sticky="w")
+        ttk.Entry(frame, textvariable=self.sha_var, width=52).grid(
+            row=0, column=1, sticky="ew", padx=4)
+        ttk.Button(frame, text="...", width=3,
+                   command=self._browse_sha).grid(row=0, column=2)
+
+        ttk.Label(frame, text="Palette (optional)").grid(
+            row=1, column=0, sticky="w", pady=(4, 0))
+        ttk.Entry(frame, textvariable=self.palette_var, width=52).grid(
+            row=1, column=1, sticky="ew", padx=4, pady=(4, 0))
+        ttk.Button(frame, text="...", width=3,
+                   command=self._browse_palette).grid(row=1, column=2,
+                                                      pady=(4, 0))
+
+        ttk.Label(frame, text="Entries").grid(
+            row=2, column=0, sticky="w", pady=(4, 0))
+        ttk.Entry(frame, textvariable=self.entries_var, width=30).grid(
+            row=2, column=1, sticky="w", padx=4, pady=(4, 0))
+
+        row = ttk.Frame(frame)
+        row.grid(row=3, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        ttk.Label(row, text="Sheet columns").pack(side="left")
+        ttk.Spinbox(row, textvariable=self.columns_var, width=5, from_=1,
+                    to=64).pack(side="left", padx=(3, 12))
+        ttk.Label(row, text="Cell size").pack(side="left")
+        ttk.Entry(row, textvariable=self.cell_var, width=8).pack(
+            side="left", padx=3)
+
+        note = (
+            "HUD/UI art is made of frames inside shape entries, not DMA "
+            "tiles.\n"
+            "3 = classic frame/HUD patterns, 4 = score digits, "
+            "7 = window nine-slice,\n"
+            "14 = item icons and health pips.  Each entry becomes its own "
+            "sheet.\n"
+            "Cell 16x16 suits HUD pieces; 'auto' uses each entry's largest "
+            "frame."
+        )
+        ttk.Label(frame, text=note, justify="left").grid(
+            row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
+
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=5, column=0, columnspan=3, sticky="e", pady=(10, 0))
+        ttk.Button(buttons, text="Cancel",
+                   command=self.destroy).pack(side="right")
+        ttk.Button(buttons, text="Load", command=self._ok).pack(
+            side="right", padx=4)
+
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self.bind("<Return>", lambda _e: self._ok())
+        self.grab_set()
+
+    def _browse_sha(self):
+        path = filedialog.askopenfilename(
+            parent=self, title="Shape bank", initialdir=self._last_dir,
+            filetypes=(("Shape bank", "*.sha"), ("All files", "*.*")))
+        if path:
+            self.sha_var.set(path)
+            self._last_dir = os.path.dirname(path)
+
+    def _browse_palette(self):
+        path = filedialog.askopenfilename(
+            parent=self, title="Palette", initialdir=self._last_dir,
+            filetypes=(("Palette", "*.pal *.bin"), ("All files", "*.*")))
+        if path:
+            self.palette_var.set(path)
+            self._last_dir = os.path.dirname(path)
+
+    def _ok(self):
+        sha = self.sha_var.get().strip()
+        if not sha or not os.path.isfile(sha):
+            messagebox.showerror(
+                "HUD/UI shapes", "Choose an existing .sha shape bank.",
+                parent=self)
+            return
+        entries = []
+        for part in re.split(r"[, ]+", self.entries_var.get().strip()):
+            if not part:
+                continue
+            try:
+                entries.append(int(part, 10))
+            except ValueError:
+                messagebox.showerror(
+                    "HUD/UI shapes",
+                    f"'{part}' is not a shape entry number.",
+                    parent=self)
+                return
+        entries = sorted(set(e for e in entries if 0 <= e < 128))
+        if not entries:
+            messagebox.showerror(
+                "HUD/UI shapes", "Enter at least one entry number (0..127).",
+                parent=self)
+            return
+        cell_text = self.cell_var.get().strip().lower()
+        if cell_text in ("", "auto"):
+            cell_w = cell_h = 0
+        else:
+            cell = _as_pair(cell_text, "x", (0, 0))
+            cell_w = max(1, min(256, cell[0])) if cell[0] else 0
+            cell_h = max(1, min(256, cell[1])) if cell[1] else 0
+        self.result = {
+            "sha": sha,
+            "palette": self.palette_var.get().strip(),
+            "entries": entries,
+            "columns": max(1, min(64, _as_int(self.columns_var.get(), 16))),
+            "cell_w": cell_w,
+            "cell_h": cell_h,
         }
         self.destroy()
 
@@ -1396,6 +1682,8 @@ class HudLayoutApp(tk.Tk if tk is not None else object):
                    command=self.add_sheet).pack(fill="x")
         ttk.Button(sheet_buttons, text="DMA", width=5,
                    command=self.add_dma_sheet).pack(fill="x")
+        ttk.Button(sheet_buttons, text="Shape", width=5,
+                   command=self.add_sha_sheets).pack(fill="x")
         ttk.Button(sheet_buttons, text="Image", width=5,
                    command=self.replace_sheet_image).pack(fill="x")
         ttk.Button(sheet_buttons, text="Size", width=5,
@@ -1434,7 +1722,7 @@ class HudLayoutApp(tk.Tk if tk is not None else object):
             side="left", padx=6)
         find_row = ttk.Frame(tile_box)
         find_row.pack(fill="x", pady=(2, 0))
-        ttk.Label(find_row, text="Find DMA tile id").pack(side="left")
+        ttk.Label(find_row, text="Find tile/frame").pack(side="left")
         self.find_tile_var = tk.StringVar()
         find_entry = ttk.Entry(find_row, textvariable=self.find_tile_var,
                                width=7)
@@ -1904,22 +2192,81 @@ class HudLayoutApp(tk.Tk if tk is not None else object):
             f"{os.path.basename(data['dma'])}; tile ids are shown in the "
             f"palette.")
 
+    def add_sha_sheets(self):
+        dialog = ShapeImportDialog(self, getattr(self, "_sha_dir", ""))
+        self.wait_window(dialog)
+        data = dialog.result
+        if not data:
+            return
+        self._sha_dir = os.path.dirname(data["sha"])
+        added = []
+        failures = []
+        snapshot_done = False
+        self.config(cursor="watch")
+        self.update_idletasks()
+        try:
+            for entry in data["entries"]:
+                sheet_id = unique_id(
+                    {s.id for s in self.layout.sheets}, f"sha{entry}", "sha")
+                try:
+                    sheet = make_sha_sheet(
+                        sheet_id, data["sha"], entry, data["palette"],
+                        data["columns"], data["cell_w"], data["cell_h"])
+                except Exception as exc:
+                    failures.append(f"entry {entry}: {exc}")
+                    continue
+                if not snapshot_done:
+                    self.push_undo()
+                    snapshot_done = True
+                self.layout.sheets.append(sheet)
+                added.append(sheet)
+        finally:
+            self.config(cursor="")
+        if not added:
+            messagebox.showerror(
+                "HUD/UI shapes",
+                "No shape entries loaded.\n\n" + "\n".join(failures))
+            return
+        self.active_sheet = added[-1].id
+        self.active_tile = (0, 0)
+        self.palette_zoom = 2
+        self._mark_dirty()
+        self._refresh_sheet_list()
+        names = ", ".join(str(s.entry) for s in added)
+        self.status.set(
+            f"Loaded shape entries {names}; palette labels are "
+            f"entry:frame.")
+        if failures:
+            messagebox.showwarning(
+                "HUD/UI shapes",
+                "Some entries could not be loaded:\n\n" + "\n".join(failures))
+
     def find_tile(self):
         sheet = self._sheet_by_id(self.active_sheet)
         if sheet is None or not sheet.entries:
-            self.status.set("The active tileset has no DMA tile ids.")
+            self.status.set("The active tileset has no tile or frame ids.")
             return
-        wanted = _as_int(self.find_tile_var.get().strip(), -1)
+        text = self.find_tile_var.get().strip()
+        if not text:
+            return
         for (col, row), entry in sheet.entries.items():
-            if entry is not None and entry.tile_id == wanted:
+            if entry is None:
+                continue
+            if isinstance(entry, ShapeTile):
+                wanted = (text == str(entry.frame) or
+                          text == f"{entry.entry}:{entry.frame}")
+            else:
+                wanted = text == str(entry.tile_id)
+            if wanted:
                 self.active_tile = (col, row)
                 self.mode.set("stamp")
                 self._draw_palette()
                 self._scroll_palette_to(col, row)
                 self.status.set(
-                    dma_tile_label(self.layout, sheet.id, col, row))
+                    tile_desc(self.layout, sheet.id, col, row))
                 return
-        self.status.set(f"No tile with id {wanted} in the active tileset.")
+        self.status.set(
+            f"No tile/frame '{text}' in the active tileset.")
 
     def _scroll_palette_to(self, col: int, row: int):
         sheet = self._sheet_by_id(self.active_sheet)
@@ -1939,11 +2286,11 @@ class HudLayoutApp(tk.Tk if tk is not None else object):
         sheet = self._sheet_by_id(self.active_sheet)
         if sheet is None:
             return
-        if sheet.source == "dma":
+        if sheet.source in ("dma", "sha"):
             messagebox.showinfo(
-                "DMA tileset",
-                "This tileset is rebuilt from its .dma and .sha files.  "
-                "Remove it and use DMA... to choose different files.")
+                "Game tileset",
+                "This tileset is rebuilt from its game files.  Remove it and "
+                "use DMA... or Shape... to choose different sources.")
             return
         path = filedialog.askopenfilename(
             title=f"Replace image for {sheet.id}",
@@ -1990,6 +2337,23 @@ class HudLayoutApp(tk.Tk if tk is not None else object):
             sheet.tile_h = tile_h
             sheet.image = image
             sheet.entries = entries
+        elif sheet.source == "sha":
+            self.config(cursor="watch")
+            self.update_idletasks()
+            try:
+                image, entries, columns, tile_w, tile_h = build_sha_sheet(
+                    sheet.sha, sheet.entry, sheet.palette,
+                    sheet.columns or 16, tile_w, tile_h)
+            except Exception as exc:
+                messagebox.showerror("HUD/UI shapes", str(exc))
+                return
+            finally:
+                self.config(cursor="")
+            self.push_undo()
+            sheet.tile_w = tile_w
+            sheet.tile_h = tile_h
+            sheet.image = image
+            sheet.entries = entries
         else:
             self.push_undo()
             sheet.tile_w = tile_w
@@ -2028,8 +2392,9 @@ class HudLayoutApp(tk.Tk if tk is not None else object):
         self._palette_photo = None
         sheet = self._sheet_by_id(self.active_sheet)
         if sheet is None or sheet.image is None:
-            self.palette.create_text(8, 8, anchor="nw", fill="#888888",
-                                     text="Add a tileset image to stamp tiles.")
+            self.palette.create_text(
+                8, 8, anchor="nw", fill="#888888",
+                text="Add a PNG, DMA or shape tileset to stamp tiles.")
             self.palette.configure(scrollregion=(0, 0, 220, 180))
             self.tile_label.set("No tile selected")
             return
@@ -2048,26 +2413,35 @@ class HudLayoutApp(tk.Tk if tk is not None else object):
         col = min(max(0, col), max(0, (sheet.image.width - 1) // sheet.tile_w))
         row = min(max(0, row), max(0, (sheet.image.height - 1) // sheet.tile_h))
         self.active_tile = (col, row)
-        if sheet.source == "dma":
-            # DMA sheets are identified by tile id, so label every cell.
+        if sheet.source in ("dma", "sha"):
+            # These sheets are identified by id, so label every cell.
             for (cell_col, cell_row), entry in sheet.entries.items():
                 if entry is None:
                     continue
                 tx = cell_col * sheet.tile_w * z
                 ty = cell_row * sheet.tile_h * z
+                if isinstance(entry, ShapeTile):
+                    text = f"{entry.entry}:{entry.frame}"
+                    ink = "#AAEEFF"
+                else:
+                    text = str(entry.tile_id)
+                    ink = "#FFFF55"
+                tag_w = min(sheet.tile_w * z,
+                            max(16, 6 * len(text) + 2))
                 self.palette.create_rectangle(
-                    tx, ty, tx + 16, ty + 10, fill="#000000", outline="")
+                    tx, ty, tx + tag_w, ty + 10, fill="#000000",
+                    outline="")
                 self.palette.create_text(
-                    tx + 1, ty + 1, anchor="nw", text=str(entry.tile_id),
-                    fill="#FFFF55", font=("Consolas", 7))
+                    tx + 1, ty + 1, anchor="nw", text=text,
+                    fill=ink, font=("Consolas", 7))
         self.palette.create_rectangle(
             col * sheet.tile_w * z, row * sheet.tile_h * z,
             (col + 1) * sheet.tile_w * z, (row + 1) * sheet.tile_h * z,
             outline="#FFFFFF", width=2)
         self.palette.configure(scrollregion=(
             0, 0, sheet.image.width * z, sheet.image.height * z))
-        if sheet.source == "dma":
-            label = dma_tile_label(self.layout, sheet.id, col, row)
+        if sheet.source in ("dma", "sha"):
+            label = tile_desc(self.layout, sheet.id, col, row)
             self.tile_label.set(label or f"Cell {col},{row} (empty)")
         else:
             self.tile_label.set(
@@ -2087,9 +2461,9 @@ class HudLayoutApp(tk.Tk if tk is not None else object):
         self.active_tile = (col, row)
         self.mode.set("stamp")
         self._draw_palette()
-        if sheet.source == "dma":
+        if sheet.source in ("dma", "sha"):
             self.status.set(
-                dma_tile_label(self.layout, sheet.id, col, row)
+                tile_desc(self.layout, sheet.id, col, row)
                 or f"Cell {col},{row} is empty")
 
     # -- parts --------------------------------------------------------------

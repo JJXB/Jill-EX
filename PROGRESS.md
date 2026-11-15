@@ -16,6 +16,11 @@
   A find-by-id box jumps to a tile; selecting shows its name and native size.
   DMA sheets are rebuilt when the layout is opened, runs gain a `tiles = ...`
   line, and the summary prints tile ids/names next to the pixel coordinates.
+* HUD/UI shape sheets: `Tilesets > Shape...` loads one or more `.sha` entries
+  (defaults 3, 7, 14: classic frame, nine-slice window, item icons/pips) as
+  separate `entry:frame` sheets, with a frame finder (`42` or `14:42`), auto
+  or fixed cell size, and `frames = ...` on runs.  This covers the HUD/menu
+  art that is not present in the `.dma` table.
 * `File > Insert classic HUD guide` adds the exact rectangles from
   `Engine::render_hud_classic`; the same starting layout is saved as
   `docs/examples/classic-hud.hudlayout`.
