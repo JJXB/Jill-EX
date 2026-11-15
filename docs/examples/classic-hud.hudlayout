@@ -57,17 +57,7 @@ x = 48
 y = 27
 size = 20x7
 colour = 4
-note = framed 20x7 bar; pack panels use pips at x=42
-
-[part.pack-pips]
-kind = pips
-x = 42
-y = 2
-size = 23x6
-colour = 7
-cell = 2x6
-cells = 8x1
-note = external classic panel health pips
+note = framed 20x7 bar; external pack panels use pips instead
 
 [part.level-box]
 kind = box

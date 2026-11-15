@@ -64,6 +64,18 @@ uses for the classic frame, status column, inventory and hint strip.  The same
 data is in `docs/examples/classic-hud.hudlayout`.  It is a useful starting
 point for a new panel image or for checking a reference screenshot.
 
+**File > Insert classic pack panel guide** adds the other classic path: the
+elements the engine draws over an external `hud/classic.png`.  A pack panel
+replaces the boxes, so the engine only draws the `HEALTH` label at (2,2), the
+health pips at y=2 (entry 14 frames 42/43, last pip offset by the cap), `LEVEL`
+and `SCORE` labels at y=10, their values at y=16, and the 3x3 inventory icons
+from (1,26) on a 14-px step.  The example is
+`docs/examples/classic-pack-hud.hudlayout`.
+
+The old `pack-pips` part in the main guide was a rough 2x6 stand-in for that
+external-panel pip row; it is now `pack-health-pips` in the pack guide, with
+the real 4x6 pip frames and the 3-px advance noted.
+
 ## DMA tilesets (original game tiles)
 
 The *DMA...* button under *Tilesets* loads the original tile art instead of a

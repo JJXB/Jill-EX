@@ -1073,12 +1073,13 @@ def summary_text(lay: Layout, path: Optional[str] = None) -> str:
 
 
 def classic_guide_parts() -> list[Part]:
-    """Rectangles matching the engine's CLASSIC HUD drawing.
+    """Rectangles matching the engine-drawn CLASSIC HUD.
 
-    Values come from `Engine::render_hud_classic` and the pack-panel path in
-    `port/src/engine.cpp`: the 8-px frame, the 64-px status column, the
-    inventory pips and the hint strip.  They are guides for alignment, so they
-    use the same pixel positions the engine uses, not a redrawn approximation.
+    Values come from `Engine::render_hud_classic` in `port/src/engine.cpp`:
+    the 8-px frame, the 64-px status column, the inventory grid and the hint
+    strip.  These are the positions used when no external classic panel is
+    mounted.  The pack-panel variant is a separate guide because a pack
+    replaces the boxes and draws its own labels at different coordinates.
     """
     parts: list[Part] = []
 
@@ -1092,9 +1093,7 @@ def classic_guide_parts() -> list[Part]:
     add("health-box", "box", 8, 22, 64, 30, colour=12)
     add("health-label", "text", 10, 27, 0, 0, text="HEALTH")
     add("health-bar", "rect", 48, 27, 20, 7, colour=4,
-        note="framed 20x7 bar; pack panels use pips at x=42")
-    add("pack-pips", "pips", 42, 2, 0, 0, cols=8, cell_w=2, cell_h=6,
-        rows=1, note="external classic panel health pips")
+        note="framed 20x7 bar; external pack panels use pips instead")
     add("level-box", "box", 8, 52, 64, 22, colour=8)
     add("level-label", "text", 9, 57, 0, 0, text="LEVEL")
     add("level-value", "text", 10, 65, 0, 0, text="0")
@@ -1108,6 +1107,36 @@ def classic_guide_parts() -> list[Part]:
     add("inventory-text", "text", 10, 162, 0, 0, text="INVENTORY")
     add("hint-strip", "rect", 0, 192, 320, 8,
         note="plain black hint strip")
+    return parts
+
+
+def classic_pack_guide_parts() -> list[Part]:
+    """Rectangles for the external 64x84 CLASSIC panel path.
+
+    When a pack supplies `hud/classic.png`, the engine blits it at (0,0) and
+    draws these labels, pips and icons itself.  The boxes and the INVENTORY
+    caption come from the panel art, so this guide only marks the engine
+    elements.
+    """
+    parts: list[Part] = []
+
+    def add(name, kind, x, y, w, h, **kwargs):
+        parts.append(Part(name=name, kind=kind, x=x, y=y, w=w, h=h,
+                          **kwargs))
+
+    add("pack-panel", "rect", 0, 0, 64, 84,
+        note="external hud/classic.png, blitted at 0,0")
+    add("pack-health-label", "text", 2, 2, 0, 0, text="HEALTH")
+    add("pack-health-pips", "rect", 40, 2, 25, 6,
+        note="E14:42 pips at x=42+3i; E14:43 cap at 40+3*(hp-1), y=2")
+    add("pack-level-label", "text", 1, 10, 0, 0, text="LEVEL")
+    add("pack-level-value", "text", 1, 16, 0, 0, text="0")
+    add("pack-score-label", "text", 33, 10, 0, 0, text="SCORE")
+    add("pack-score-value", "text", 34, 16, 30, 8, colour=7,
+        note="score digits right-aligned to x=64")
+    add("pack-inventory-grid", "grid", 1, 26, 0, 0, cell_w=14, cell_h=14,
+        cols=3, rows=3,
+        note="icons at 1+14*col, 26+14*row (14 px step, 2 px overlap)")
     return parts
 
 
@@ -1460,6 +1489,8 @@ class HudLayoutApp(tk.Tk if tk is not None else object):
         file_menu.add_separator()
         file_menu.add_command(label="Insert classic HUD guide",
                               command=self.insert_classic_guide)
+        file_menu.add_command(label="Insert classic pack panel guide",
+                              command=self.insert_classic_pack_guide)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.on_close)
         menubar.add_cascade(label="File", menu=file_menu)
@@ -3003,18 +3034,25 @@ class HudLayoutApp(tk.Tk if tk is not None else object):
         self.clipboard_append(text)
         self.status.set("Summary copied to the clipboard.")
 
-    def insert_classic_guide(self):
-        """Add the current engine classic-HUD rectangles as guide parts."""
+    def _insert_guide_parts(self, parts: list[Part], label: str):
         existing = {p.name for p in self.layout.parts}
-        new_parts = [p for p in classic_guide_parts() if p.name not in existing]
+        new_parts = [p for p in parts if p.name not in existing]
         if not new_parts:
-            self.status.set("The classic HUD guide is already present.")
+            self.status.set(f"The {label} guide is already present.")
             return
         self.push_undo()
         self.layout.parts.extend(new_parts)
         self._mark_dirty()
         self._refresh_parts()
         self.schedule_redraw()
+
+    def insert_classic_guide(self):
+        """Add the engine-drawn classic HUD rectangles as guide parts."""
+        self._insert_guide_parts(classic_guide_parts(), "classic HUD")
+
+    def insert_classic_pack_guide(self):
+        """Add the external 64x84 classic panel element rectangles."""
+        self._insert_guide_parts(classic_pack_guide_parts(), "classic pack")
 
 
 def run_gui(path: Optional[str] = None) -> int:

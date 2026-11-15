@@ -1,0 +1,87 @@
+# Jill-EX HUD layout
+# Written by tools/hud_layout.py.  Coordinates are screen pixels in a
+# 320x200 frame (x,y = top-left of the element).  Grid columns count
+# from grid_origin.  See docs/hud-layout-tool.md.
+
+[layout]
+format = jillex-hud-layout
+version = 1
+name = Original classic pack panel
+style = classic
+canvas = 320x200
+grid = 8x8
+grid_origin = 0,0
+snap = 1
+show_grid = 1
+zoom = 2
+reference =
+reference_opacity = 55
+reference_scale = 100
+reference_pos = 0,0
+reference_visible = 1
+
+[part.pack-panel]
+kind = rect
+x = 0
+y = 0
+size = 64x84
+colour = 7
+note = external hud/classic.png, blitted at 0,0
+
+[part.pack-health-label]
+kind = text
+x = 2
+y = 2
+size = 36x8
+colour = 7
+text = HEALTH
+
+[part.pack-health-pips]
+kind = rect
+x = 40
+y = 2
+size = 25x6
+colour = 7
+note = E14:42 pips at x=42+3i; E14:43 cap at 40+3*(hp-1), y=2
+
+[part.pack-level-label]
+kind = text
+x = 1
+y = 10
+size = 30x8
+colour = 7
+text = LEVEL
+
+[part.pack-level-value]
+kind = text
+x = 1
+y = 16
+size = 6x8
+colour = 7
+text = 0
+
+[part.pack-score-label]
+kind = text
+x = 33
+y = 10
+size = 30x8
+colour = 7
+text = SCORE
+
+[part.pack-score-value]
+kind = text
+x = 34
+y = 16
+size = 30x8
+colour = 7
+note = score digits right-aligned to x=64
+
+[part.pack-inventory-grid]
+kind = grid
+x = 1
+y = 26
+size = 42x42
+colour = 7
+cell = 14x14
+cells = 3x3
+note = icons at 1+14*col, 26+14*row (14 px step, 2 px overlap)
