@@ -243,6 +243,11 @@ classified by its aspect ratio (wider than 96 px and at most 20 px tall is a
 MODERN bar, otherwise CLASSIC).  The manifest form is `classic_<name> = file`
 or `modern_<name> = file`.
 
+To align a new panel with an original screenshot or with the engine-drawn
+labels, use `tools/hud_layout.py` and its `.hudlayout` format; see
+[docs/hud-layout-tool.md](docs/hud-layout-tool.md).  The tool does not ship
+inside a pack: it only records coordinates and tile placement for authoring.
+
 ### 5.7 Menu borders: `borders\`
 
 | File | Replaces |

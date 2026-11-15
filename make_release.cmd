@@ -36,6 +36,7 @@ rem --- extractor / importer tools --------------------------------------------
 copy /y "jill_extractor.py" "%STAGE%\" >nul || goto :error
 copy /y "jill_import.py" "%STAGE%\" >nul || goto :error
 copy /y "extract_all.py" "%STAGE%\" >nul || goto :error
+copy /y "tools\hud_layout.py" "%STAGE%\hud_layout.py" >nul || goto :error
 copy /y "requirements.txt" "%STAGE%\" >nul || goto :error
 
 rem --- runtime data ----------------------------------------------------------
@@ -51,6 +52,7 @@ for %%F in (README.md ENGINE.md MODS.md EXTASSETS.md EXTRACTOR_README.md
             BUILDING.md TOOLS_DATA.md LICENSE.md THIRD_PARTY_NOTICES.md) do (
     if exist "%%F" copy /y "%%F" "%STAGE%\" >nul
 )
+if exist "docs\hud-layout-tool.md" copy /y "docs\hud-layout-tool.md" "%STAGE%\" >nul
 
 rem --- zip -------------------------------------------------------------------
 if exist "%ZIP%" del /q "%ZIP%"

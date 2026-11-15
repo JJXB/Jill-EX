@@ -1,5 +1,21 @@
 # Progress
 
+## 2026-11-15 (external HUD layout tool)
+
+* New `tools/hud_layout.py`: a standalone Tk/Pillow editor for HUD alignment.
+  It overlays a reference screenshot (opacity/scale/offset), draws a
+  resizeable snap grid, stamps tiles from any tileset image, and records
+  labelled engine-part rectangles (`text`, `rect`, `box`, `pips`, `grid`,
+  `image`, `note`).
+* Writes `.hudlayout`, a UTF-8 INI-like format with pixel coordinates, grid
+  metadata, tile runs (`sheet`, `row`, `cols`) and part sections.  Load, undo,
+  PNG export, clipboard summary and `--summary`/`--render` headless modes.
+* `File > Insert classic HUD guide` adds the exact rectangles from
+  `Engine::render_hud_classic`; the same starting layout is saved as
+  `docs/examples/classic-hud.hudlayout`.
+* The summary prints pixel and grid coordinates (`col N+R`, `row N+R`) so
+  engine changes can be aligned from the text alone.
+
 ## 2026-11-15 (save/restore return, menu/HUD scaling)
 
 * SAVE GAME / RESTORE GAME now return to the screen that opened them: the

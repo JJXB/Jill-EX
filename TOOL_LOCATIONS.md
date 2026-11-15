@@ -2,6 +2,8 @@ RIZIN - "C:\\Apps\\rizin-win-installer-vs2019\_static-64\\bin\\rizin.exe"
 GHIDRA - "D:\\Apps\\ghidra\_12.2\_PUBLIC"
 MKPROFILE - "tools\\mkprofile.py" (Python; profiles a Jill-engine EXE into profiles\<id>.profile + games\<id>.game)
 
+HUDLAYOUT - "tools\\hud_layout.py" (Python/Tk + Pillow; HUD alignment editor that writes .hudlayout files, see docs\hud-layout-tool.md)
+
 FFMPEG - "C:\\Apps\\ffmpeg-master-latest-win64-gpl-shared\\bin"
 
 VCPKG - "C:\\vcpkg"

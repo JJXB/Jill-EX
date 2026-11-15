@@ -20,3 +20,11 @@
 
 &#x20; `docs/`.
 
+\* `tools/hud\_layout.py` HUD alignment editor (Tk + Pillow): overlays a
+
+&#x20; reference image, stamps tiles on a resizeable grid and writes
+
+&#x20; `.hudlayout` files. `--summary` prints pixel/grid coordinates for engine
+
+&#x20; work; see `docs/hud-layout-tool.md`.
+
