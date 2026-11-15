@@ -185,7 +185,7 @@ Level flow is data-driven (CHECKPT strings), not a table; the graphs are in
 | HUD level word (DGROUP) | `0x83A6` | `0x80E0` | `0x7E42` |
 | demo boards | `0.dem, 2.dem, 1.dem` | `3.jn2, 9.jn2, 17.jn2` | `1.jn3, 5.jn3, 12.jn3` |
 | demo macros | `jn1demo.mac` | `jn2dem1-3.mac` | `jn3dem1-3.mac` |
-| demo level ids | from intro CHECKPT | 3, 9, 17 | 1, 5, 12 |
+| demo level ids | 101, 103, 102 (from intro CHECKPT) | 3, 9, 17 | 1, 5, 12 |
 
 Jill 1 has no separate demo table: the intro board's CHECKPT strings warp to
 `0.dem` / `2.dem` / `1.dem` and the same `jn1demo.mac` drives playback. Jill 2/3

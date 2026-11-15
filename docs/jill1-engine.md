@@ -825,6 +825,15 @@ start of both operations: it clears `0x3DC8`/`0x3DC2` and frees the buffer.
 The names in the exported symbol list are the opposite of what the code does, so use
 the linear addresses above rather than the symbol names.
 
+**Port playback**: `Engine::start_macro` clears the live input and edge latches
+first, so menu/pause keys cannot bleed into a demo's first records.  It
+bounds-checks the varint and every mask value, consumes all eight mask bits
+(bits 5-7 are reserved), warns on descending ticks or truncation, and starts
+only when at least one record parsed.  Mask bit 4 is stored as
+`Engine::macro_key()` for future menu/special-key scripts.  The world tick is
+the same 18.2 Hz as the recorder, and the title-popup freeze is bypassed while
+a macro plays so the recorded timing stays aligned.
+
 ## 14. Menus, HUD, save/restore
 
 * **HUD** (`FUN_22ab_05dd`, linear `0x23A05`): **[verified]** the panel is

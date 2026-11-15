@@ -231,7 +231,8 @@ bool Engine::init(const GameDef& game, std::string& err) {
     return true;
 }
 
-bool Engine::load_board(const std::string& name, std::string& err) {
+bool Engine::load_board(const std::string& name, std::string& err,
+                        int level_override) {
     std::string file = name;
     if (!has_extension(file)) {
         file += game_.board_ext;
@@ -286,14 +287,20 @@ bool Engine::load_board(const std::string& name, std::string& err) {
                       static_cast<unsigned>(objects_.size()),
                       music_request_.c_str());
 
-    // Level id: derive it from a numeric board name first (Jill 2/3 store 0 in
-    // most headers), otherwise trust the header (map/intro boards).
+    // Level id: an explicit override wins (demo tables), then a numeric board
+    // name (Jill 2/3 store 0 in most headers), otherwise the header.
     int level = header_[0] | (header_[1] << 8);
-    int numbered = 0;
-    if (numeric_stem(file, numbered)) {
-        level = numbered;
+    if (level_override >= 0) {
+        level = level_override;
         header_[0] = static_cast<uint8_t>(level & 0xFF);
         header_[1] = static_cast<uint8_t>((level >> 8) & 0xFF);
+    } else {
+        int numbered = 0;
+        if (numeric_stem(file, numbered)) {
+            level = numbered;
+            header_[0] = static_cast<uint8_t>(level & 0xFF);
+            header_[1] = static_cast<uint8_t>((level >> 8) & 0xFF);
+        }
     }
     // MAPDEMO (kind 67) is the animated map preview; it only runs on the hub /
     // world-map board (original guard: DGROUP:0x34EB != 0).
@@ -5630,9 +5637,9 @@ void Engine::respawn() {
 }
 
 // 1415:05FD / 0415:0A8B: replay a recorded input macro.  The file has no
-// header; each record is an optional base-128 tick delta, a mask, then one
+// header; each record is an optional base-128 absolute tick, a mask, then one
 // signed byte per set mask bit (jill1-engine.md 13.1).
-void Engine::start_macro(const std::string& name) {
+bool Engine::start_macro(const std::string& name) {
     macro_.clear();
     macro_pos_ = 0;
     macro_tick_ = 0;
@@ -5640,8 +5647,13 @@ void Engine::start_macro(const std::string& name) {
     macro_playing_ = false;
     macro_held1_ = false;
     macro_held2_ = false;
+    macro_key_ = 0;
+    // Do not let menu/pause inputs bleed into the first macro records.
+    in_ = InputState{};
+    latch1_ = false;
+    latch2_ = false;
     if (name.empty()) {
-        return;
+        return false;
     }
     std::string clean = name;
     while (!clean.empty() && clean.front() == '&') {
@@ -5650,57 +5662,90 @@ void Engine::start_macro(const std::string& name) {
     FILE* f = std::fopen(join(data_dir_, clean).c_str(), "rb");
     if (!f) {
         std::fprintf(stderr, "macro %s: cannot open\n", clean.c_str());
-        return;
+        return false;
     }
     std::fseek(f, 0, SEEK_END);
-    long size = std::ftell(f);
+    const long size = std::ftell(f);
     std::fseek(f, 0, SEEK_SET);
     if (size <= 0) {
         std::fclose(f);
-        return;
+        std::fprintf(stderr, "macro %s: empty file\n", clean.c_str());
+        return false;
+    }
+    if (size > 16 * 1024 * 1024) {
+        std::fclose(f);
+        std::fprintf(stderr, "macro %s: file too large (%ld bytes)\n",
+                     clean.c_str(), size);
+        return false;
     }
     std::vector<uint8_t> d(static_cast<size_t>(size));
     const size_t got = std::fread(d.data(), 1, d.size(), f);
     std::fclose(f);
+    if (got != d.size()) {
+        std::fprintf(stderr, "macro %s: short read (%u of %ld bytes)\n",
+                     clean.c_str(), static_cast<unsigned>(got), size);
+    }
     d.resize(got);
 
     size_t p = 0;
-    // Record layout (from the recorder at 1415:0A8B and the replayer at
-    // 1415:093B): rec[0] is mask + values; every later record starts with an
-    // absolute tick (base-128 varint) and then the mask + values.  The
-    // replayer reads the tick *after* each record, so a record's stored tick
-    // is the deadline at which the next record takes effect.
+    bool ok = true;
     int time = 0;
     bool first = true;
-    while (p < d.size()) {
-        if (first) {
-            first = false;
-        } else {
-            if (p >= d.size()) {
-                break;
-            }
-            int v = d[p++];
-            if (v & 0x80) {
+    // Record layout: rec[0] is mask + values; every later record starts with
+    // an absolute tick (base-128 varint) and then mask + values.  The
+    // replayer reads the tick after each record, so a record's stored tick is
+    // the deadline at which the next record takes effect.
+    while (p < d.size() && ok) {
+        if (!first) {
+            int value = 0;
+            int shift = 0;
+            bool more = true;
+            while (more) {
                 if (p >= d.size()) {
+                    ok = false;
                     break;
                 }
-                time = (v & 0x7F) | (d[p++] << 7);
-            } else {
-                time = v;
+                const uint8_t b = d[p++];
+                value |= (b & 0x7F) << shift;
+                shift += 7;
+                more = (b & 0x80) != 0;
+                if (shift > 28) {
+                    ok = false;
+                }
             }
+            if (!ok) {
+                break;
+            }
+            if (value < time) {
+                std::fprintf(stderr,
+                             "macro %s: tick %d goes backwards (previous "
+                             "%d) at byte %zu\n",
+                             clean.c_str(), value, time, p);
+            }
+            time = value;
+        } else {
+            first = false;
         }
         if (p >= d.size()) {
+            ok = false;
             break;
         }
         const int mask = d[p++];
-        int vals[5] = {0, 0, 0, 0, 0};
-        for (int bit = 0; bit < 5; ++bit) {
-            if (mask & (1 << bit)) {
-                if (p >= d.size()) {
-                    break;
-                }
-                vals[bit] = static_cast<int8_t>(d[p++]);
+        int vals[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+        // Consume all eight mask bits so a future recorder that adds a field
+        // still leaves the stream aligned; only the documented five are used.
+        for (int bit = 0; bit < 8; ++bit) {
+            if ((mask & (1 << bit)) == 0) {
+                continue;
             }
+            if (p >= d.size()) {
+                ok = false;
+                break;
+            }
+            vals[bit] = static_cast<int8_t>(d[p++]);
+        }
+        if (!ok) {
+            break;
         }
         MacroRec r;
         r.time = time;
@@ -5709,8 +5754,22 @@ void Engine::start_macro(const std::string& name) {
         r.v = vals[1] < 0 ? -1 : (vals[1] > 0 ? 1 : 0);
         r.btn1 = vals[2] != 0;
         r.btn2 = vals[3] != 0;
+        r.key = vals[4] & 0xFF;
         macro_.push_back(r);
-        macro_last_ = time;
+        macro_last_ = std::max(macro_last_, time);
+        if (macro_.size() > 1000000) {
+            std::fprintf(stderr, "macro %s: too many records\n",
+                         clean.c_str());
+            ok = false;
+            break;
+        }
+    }
+    if (!ok) {
+        std::fprintf(stderr,
+                     "macro %s: malformed or truncated at byte %zu; loaded "
+                     "%u records\n",
+                     clean.c_str(), p,
+                     static_cast<unsigned>(macro_.size()));
     }
     if (!macro_.empty()) {
         std::fprintf(stderr, "macro %s: %u records, %d ticks\n",
@@ -5718,6 +5777,7 @@ void Engine::start_macro(const std::string& name) {
                      macro_last_);
     }
     macro_playing_ = !macro_.empty();
+    return macro_playing_;
 }
 
 void Engine::stop_macro() {
@@ -5728,6 +5788,7 @@ void Engine::stop_macro() {
     macro_last_ = 0;
     macro_held1_ = false;
     macro_held2_ = false;
+    macro_key_ = 0;
     in_ = InputState{};
 }
 
@@ -5749,6 +5810,9 @@ void Engine::apply_macro_input() {
         if (r.mask & 0x08) {
             macro_held2_ = r.btn2;
         }
+        if (r.mask & 0x10) {
+            macro_key_ = r.key;
+        }
     }
     // The input poller's edge latches behave as if these were real buttons.
     if (!macro_held1_) {
@@ -5762,6 +5826,7 @@ void Engine::apply_macro_input() {
     ++macro_tick_;
     if (macro_pos_ >= macro_.size() && macro_tick_ > macro_last_) {
         macro_playing_ = false;
+        macro_key_ = 0;
         in_ = InputState{};
     }
 }

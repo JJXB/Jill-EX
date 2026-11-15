@@ -116,7 +116,7 @@ episode and has one entry per demo:
 
 | episode | demo boards | macros | level ids |
 |--|--|--|--|
-| Jill 1 | `0.dem`, `2.dem`, `1.dem` (from intro checkpoints) | `jn1demo.mac` | - |
+| Jill 1 | `0.dem`, `2.dem`, `1.dem` (from intro checkpoints) | `jn1demo.mac` | 101, 103, 102 |
 | Jill 2 | `3.jn2`, `9.jn2`, `17.jn2` | `jn2dem1.mac` .. `jn2dem3.mac` | 3, 9, 17 |
 | Jill 3 | `1.jn3`, `5.jn3`, `12.jn3` | `jn3dem1.mac` .. `jn3dem3.mac` | 1, 5, 12 |
 

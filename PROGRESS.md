@@ -1,5 +1,22 @@
 # Progress
 
+## 2026-11-15 (demo/macro playback)
+
+* Jill 1 demos now use their intro-CHECKPT level ids (`0.dem=101`,
+  `2.dem=103`, `1.dem=102`) instead of 0; `load_board` accepts a level
+  override applied before captions/spawn handling, so demos no longer start
+  with the wrong level title/HUD id.
+* `start_macro` clears the live input and button latches first, so a key held
+  in the DEMO menu cannot leak into the first recorded frames.
+* Macro parsing is bounds-checked: LEB128 ticks, all eight mask bits consumed,
+  truncated/empty/oversized files reported, descending ticks and record caps
+  diagnosed.  Mask bit 4 (last ASCII key) is stored and exposed through
+  `Engine::macro_key()`/`take_macro_key()` for future scripts.
+* `start_macro` now returns success; a missing/bad demo macro keeps the user in
+  the menu instead of silently starting a dead demo.  Playback progress is
+  available through `macro_tick()` / `macro_duration()`.
+* Documented the Jill 1 demo level ids and the port's playback guarantees.
+
 ## 2026-11-15 (in-game .hudlayout HUDs)
 
 * `*.hudlayout` files are now discovered in the mounted pack and the

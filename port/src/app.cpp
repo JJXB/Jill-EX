@@ -281,9 +281,6 @@ int run_headless(Engine& engine, const Options& opt) {
     if (opt.start_x >= 0 && opt.start_y >= 0) {
         engine.warp_player(opt.start_x, opt.start_y);
     }
-    if (opt.level >= 0) {
-        engine.set_level_id(opt.level);
-    }
     if (opt.text_page > 0) {
         engine.show_text_page(opt.text_page);
     }
@@ -1035,9 +1032,12 @@ struct DemoDef {
 };
 
 constexpr DemoDef kDemos[] = {
-    {"jill1", "0.dem", 0, "jn1demo.mac"},
-    {"jill1", "2.dem", 0, "jn1demo.mac"},
-    {"jill1", "1.dem", 0, "jn1demo.mac"},
+    // Jill 1 has no demo table in the EXE; the intro BOARD's CHECKPT strings
+    // carry the level ids: 0.dem=101, 1.dem=102, 2.dem=103.  The menu order is
+    // 0, 2, 1, matching the intro checkpoint order.
+    {"jill1", "0.dem", 101, "jn1demo.mac"},
+    {"jill1", "2.dem", 103, "jn1demo.mac"},
+    {"jill1", "1.dem", 102, "jn1demo.mac"},
     {"jill2", "3.jn2", 3, "jn2dem1.mac"},
     {"jill2", "9.jn2", 9, "jn2dem2.mac"},
     {"jill2", "17.jn2", 17, "jn2dem3.mac"},
@@ -3052,15 +3052,10 @@ bool start_game(Engine& engine, const std::vector<GameDef>& games, int index,
     engine.set_message_box(message_box);
     engine.set_hud_classic(hud);  // camera centre depends on the HUD style
     const std::string& start_board = board.empty() ? g.first_board : board;
-    if (!engine.load_board(start_board, err)) {
+    if (!engine.load_board(start_board, err, level)) {
         std::fprintf(stderr, "load %s: %s\n", start_board.c_str(),
                      err.c_str());
         return false;
-    }
-    if (level >= 0) {
-        // Demo tables store the level id explicitly; the recorded macro was
-        // made on that level and CHECKPT/entrance matching depends on it.
-        engine.set_level_id(level);
     }
     engine.set_hud_classic(hud);
     engine.set_hud_portrait(hud_portrait);
@@ -3085,7 +3080,11 @@ bool start_game(Engine& engine, const std::vector<GameDef>& games, int index,
     apply_theme_frame(engine, games, menu_theme);
     apply_menu_frame(engine, games, menu_frame, menu_theme);
     if (!macro.empty()) {
-        engine.start_macro(macro);
+        if (!engine.start_macro(macro)) {
+            std::fprintf(stderr, "demo macro %s could not be started\n",
+                         macro.c_str());
+            return false;
+        }
     }
     return true;
 }
@@ -5596,7 +5595,7 @@ int run_app(const Options& opt) {
     jill_paths::trace("startup: external done");
     std::string board = opt.board.empty() ? game.first_board : opt.board;
     jill_paths::trace("startup: load board %s", board.c_str());
-    if (!engine.load_board(board, err)) {
+    if (!engine.load_board(board, err, opt.level)) {
         std::fprintf(stderr, "%s\n", err.c_str());
         std::fprintf(stderr, "data dir: %s (use --data to point at the game files)\n",
                      game.data_dir.c_str());

@@ -29,7 +29,10 @@ public:
     // `game` supplies the asset set; its `profile` supplies the compiled
     // engine data (kinds, handler tables, anchors, item icons).
     bool init(const GameDef& game, std::string& err);
-    bool load_board(const std::string& name, std::string& err);
+    // `level_override` sets the board's level id before captions/spawn logic;
+    // the demo tables use it to reproduce the intro CHECKPT level ids.
+    bool load_board(const std::string& name, std::string& err,
+                    int level_override = -1);
     // Save/restore (original hotkeys S/R and the front-end menu).  A save is
     // the live board written in the on-disk board layout, exactly like the
     // original JN1SAVE.n files.
@@ -43,10 +46,22 @@ public:
         return v;
     }
     // Replay a recorded `*.mac` input script (the `&end*.mac` ending macros
-    // and the attract demos).
-    void start_macro(const std::string& name);
+    // and the attract demos).  Returns true if the file opened and contained
+    // at least one record.
+    bool start_macro(const std::string& name);
     // True while the scripted inputs are still being fed to the update.
     bool macro_active() const { return macro_playing_; }
+    // Last ASCII key recorded by the macro (0 = none).  Reserved for future
+    // menu/special-key scripts; the app may consume it with take_macro_key().
+    int macro_key() const { return macro_key_; }
+    int take_macro_key() {
+        const int key = macro_key_;
+        macro_key_ = 0;
+        return key;
+    }
+    // Playback progress, for debug overlays and future replay tools.
+    int macro_tick() const { return macro_tick_; }
+    int macro_duration() const { return macro_last_; }
     // Stop playback and hand control back to the normal input poller.
     void stop_macro();
     int save_slots() const {
@@ -572,6 +587,7 @@ private:
         int v = 0;
         bool btn1 = false;
         bool btn2 = false;
+        int key = 0;       // last ASCII key (mask bit 4)
     };
     std::vector<MacroRec> macro_;
     size_t macro_pos_ = 0;
@@ -580,6 +596,7 @@ private:
     bool macro_playing_ = false;
     bool macro_held1_ = false;
     bool macro_held2_ = false;
+    int macro_key_ = 0;
     bool ending_done_ = false;
     std::string msg_text_;       // _putbotmsg buffer (DGROUP:0xB662)
     int msg_ttl_ = 0;            // DGROUP:0xB6B4, 0x50 by default
