@@ -11,8 +11,9 @@ Features
 * A reference image under the layout, with opacity/scale/offset controls, so
   an original screenshot or a mock-up can be traced.
 * A resizeable snap grid (cell size plus origin), shown or hidden.
-* Tile stamping from any PNG/JPG tileset, with tile size, palette zoom and
-  per-run compaction on save.
+* Tile stamping from any PNG/JPG tileset, or straight from a Jill game's
+  `.dma` tile table plus the episode's `.sha` shape bank (tile ids/names are
+  shown in the palette, and runs record their tile ids on save).
 * Labelled layout parts (text/rect/box/pips/grid/image/note) that mark where
   engine-drawn elements belong; they are guides, not baked artwork.
 * Undo/redo, PNG export and a plain-text summary for code alignment.
@@ -87,13 +88,37 @@ PART_COLOURS = {
 
 
 @dataclass
+class DmaTile:
+    """One `.dma` record: the tile id, its shape and its decoded size."""
+
+    tile_id: int = 0
+    shape_id: int = 0
+    name: str = ""
+    w: int = 0
+    h: int = 0
+    missing: bool = False
+
+
+@dataclass
 class Sheet:
-    """One tileset image and its tile cell size."""
+    """One tileset image and its tile cell size.
+
+    `source = "image"` uses `file` directly.  `source = "dma"` rebuilds the
+    sheet from a Jill `.dma` tile table plus the episode's `.sha` shape bank
+    (`palette` is optional and falls back to the extractor's default palette).
+    """
 
     id: str = "sheet"
     file: str = ""
     tile_w: int = 8
     tile_h: int = 8
+    source: str = "image"
+    dma: str = ""
+    sha: str = ""
+    palette: str = ""
+    columns: int = 0
+    # (column, row) -> decoded DMA record; empty for plain image sheets.
+    entries: dict = field(default_factory=dict, repr=False, compare=False)
     image: object = field(default=None, repr=False, compare=False)
 
 
@@ -357,6 +382,144 @@ def load_image(path: str):
         return None
 
 
+# ---------------------------------------------------------------------------
+# DMA tilesets
+# ---------------------------------------------------------------------------
+
+_EXTRACTOR = None
+
+
+def find_extractor():
+    """Import `jill_extractor` from the repo root or the release folder."""
+    global _EXTRACTOR
+    if _EXTRACTOR is not None:
+        return _EXTRACTOR
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = (here, os.path.dirname(here))
+    for folder in candidates:
+        if os.path.isfile(os.path.join(folder, "jill_extractor.py")):
+            if folder not in sys.path:
+                sys.path.insert(0, folder)
+            import jill_extractor  # noqa: E402 - deliberate lazy import
+            _EXTRACTOR = jill_extractor
+            return _EXTRACTOR
+    raise RuntimeError(
+        "jill_extractor.py not found beside hud_layout.py or in its parent "
+        "folder; keep the two tools together.")
+
+
+def build_dma_sheet(dma_path: str, sha_path: str, palette_path: str = "",
+                    columns: int = 16, cell_w: int = 16,
+                    cell_h: int = 16):
+    """Decode a `.dma` + `.sha` pair into a uniform tileset sheet.
+
+    `.dma` is only a tile-id -> shape-id table; the pixels come from the
+    episode's `.sha` bank.  Tiles are laid out in DMA record order, one per
+    cell, so cell (0,0) is the first record, (1,0) the second, and so on.
+    Returns `(image, entries, columns)` where entries maps (col, row) to a
+    `DmaTile`.  Missing frames keep their cell (and are marked) so the layout
+    stays stable.
+    """
+    if Image is None:
+        raise RuntimeError("Pillow is required to decode DMA tiles")
+    if not os.path.isfile(dma_path):
+        raise ValueError(f"DMA file not found: {dma_path}")
+    if not os.path.isfile(sha_path):
+        raise ValueError(f"shape file not found: {sha_path}")
+    extractor = find_extractor()
+    sha = extractor.SHAFile.load(sha_path)
+    if palette_path:
+        if not os.path.isfile(palette_path):
+            raise ValueError(f"palette file not found: {palette_path}")
+        with open(palette_path, "rb") as f:
+            palette = f.read()
+        if len(palette) < 768:
+            raise ValueError(
+                f"{palette_path} is {len(palette)} bytes; expected 768")
+        sha.set_palette_rgb(palette[:768], from_6bit=False)
+    dma = extractor.DMAFile.load(dma_path)
+    if not dma.records:
+        raise ValueError(f"no tile records in {dma_path}")
+
+    columns = max(1, min(64, columns))
+    cell_w = max(4, min(128, cell_w))
+    cell_h = max(4, min(128, cell_h))
+    rows = (len(dma.records) + columns - 1) // columns
+    sheet = Image.new("RGBA", (columns * cell_w, rows * cell_h),
+                      (0, 0, 0, 0))
+    entries: dict[tuple[int, int], DmaTile] = {}
+    cache: dict = {}
+    for index, record in enumerate(dma.records):
+        col, row = index % columns, index // columns
+        tile = extractor._tile_rgba(sha, record, cache)
+        if tile is None:
+            entries[(col, row)] = DmaTile(
+                record.tile_id, record.shape_id, record.name, 0, 0, True)
+            continue
+        # Keep the original pixels, clipped to the cell, so oversized tiles
+        # (16x20/16x22 in Jill 1) do not corrupt their neighbours.
+        cell = Image.new("RGBA", (cell_w, cell_h), (0, 0, 0, 0))
+        composite_clipped(cell, tile, 0, 0)
+        sheet.alpha_composite(cell, (col * cell_w, row * cell_h))
+        entries[(col, row)] = DmaTile(
+            record.tile_id, record.shape_id, record.name,
+            tile.width, tile.height, False)
+    return sheet, entries, columns
+
+
+def make_dma_sheet(sheet_id: str, dma_path: str, sha_path: str,
+                   palette_path: str = "", columns: int = 16,
+                   cell_w: int = 16, cell_h: int = 16) -> Sheet:
+    image, entries, columns = build_dma_sheet(
+        dma_path, sha_path, palette_path, columns, cell_w, cell_h)
+    return Sheet(id=sheet_id, source="dma", dma=dma_path, sha=sha_path,
+                 palette=palette_path, columns=columns, tile_w=cell_w,
+                 tile_h=cell_h, entries=entries, image=image)
+
+
+def guess_sha_path(dma_path: str) -> str:
+    """Best-effort SHA beside a DMA file: jill.dma -> jill1.sha."""
+    folder = os.path.dirname(os.path.abspath(dma_path))
+    stem = os.path.splitext(os.path.basename(dma_path))[0]
+    candidates = [os.path.join(folder, stem + ".sha")]
+    for suffix in ("1", "2", "3"):
+        candidates.append(os.path.join(folder, stem + suffix + ".sha"))
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+    try:
+        found = sorted(name for name in os.listdir(folder)
+                       if name.lower().endswith(".sha"))
+    except OSError:
+        found = []
+    if len(found) == 1:
+        return os.path.join(folder, found[0])
+    return ""
+
+
+def dma_tile_label(lay: Layout, sheet_id: str, col: int, row: int) -> str:
+    for sheet in lay.sheets:
+        if sheet.id != sheet_id:
+            continue
+        entry = sheet.entries.get((col, row))
+        if entry is None:
+            return ""
+        show_name = entry.name and entry.name != str(entry.tile_id)
+        name = f" {entry.name}" if show_name else ""
+        size = (f" {entry.w}x{entry.h}" if entry.w and entry.h else "")
+        return f"TILE {entry.tile_id}{name}{size}"
+    return ""
+
+
+def run_entries(lay: Layout, run) -> list:
+    """Resolve a tile run's source cells to DMA records (if available)."""
+    for sheet in lay.sheets:
+        if sheet.id == run["sheet"]:
+            return [sheet.entries.get((col, run["row"]))
+                    for col in run["cols"]]
+    return []
+
+
 def load_layout(path: str) -> Layout:
     base = os.path.dirname(os.path.abspath(path))
     try:
@@ -408,14 +571,33 @@ def load_layout(path: str) -> Layout:
         if not name.lower().startswith("sheet."):
             continue
         sheet = Sheet(id=name.split(".", 1)[1])
-        sheet.file = resolve_path(body.get("file", ""), base)
         tile = _as_pair(body.get("tile", ""), "x", (8, 8))
         sheet.tile_w = max(1, tile[0])
         sheet.tile_h = max(1, tile[1])
-        sheet.image = load_image(sheet.file)
-        if sheet.image is None:
-            lay.warnings.append(
-                f"tileset image not found: {sheet.file or sheet.id}")
+        sheet.source = body.get("source", "image").strip().lower()
+        if sheet.source == "dma":
+            sheet.dma = resolve_path(body.get("dma", ""), base)
+            sheet.sha = resolve_path(body.get("sha", ""), base)
+            sheet.palette = resolve_path(body.get("palette", ""), base)
+            sheet.columns = max(1, min(64, _as_int(
+                body.get("columns"), 16)))
+            try:
+                image, entries, columns = build_dma_sheet(
+                    sheet.dma, sheet.sha, sheet.palette, sheet.columns,
+                    sheet.tile_w, sheet.tile_h)
+                sheet.image = image
+                sheet.entries = entries
+                sheet.columns = columns
+            except Exception as exc:
+                lay.warnings.append(
+                    f"cannot rebuild DMA tileset {sheet.id}: {exc}")
+        else:
+            sheet.source = "image"
+            sheet.file = resolve_path(body.get("file", ""), base)
+            sheet.image = load_image(sheet.file)
+            if sheet.image is None:
+                lay.warnings.append(
+                    f"tileset image not found: {sheet.file or sheet.id}")
         lay.sheets.append(sheet)
         sheets_by_id[sheet.id] = sheet
 
@@ -495,12 +677,19 @@ def layout_to_text(lay: Layout) -> str:
     ]
 
     for sheet in lay.sheets:
-        lines.extend([
-            f"[sheet.{sheet.id}]",
-            f"file = {store_path(sheet.file, base)}".rstrip(),
-            f"tile = {sheet.tile_w}x{sheet.tile_h}",
-            "",
-        ])
+        lines.append(f"[sheet.{sheet.id}]")
+        if sheet.source == "dma":
+            lines.append("source = dma")
+            lines.append(f"dma = {store_path(sheet.dma, base)}")
+            lines.append(f"sha = {store_path(sheet.sha, base)}")
+            if sheet.palette:
+                lines.append(f"palette = {store_path(sheet.palette, base)}")
+            lines.append(f"tile = {sheet.tile_w}x{sheet.tile_h}")
+            lines.append(f"columns = {sheet.columns}")
+        else:
+            lines.append(f"file = {store_path(sheet.file, base)}".rstrip())
+            lines.append(f"tile = {sheet.tile_w}x{sheet.tile_h}")
+        lines.append("")
 
     for run in iter_tile_runs(lay):
         lines.extend([
@@ -510,8 +699,12 @@ def layout_to_text(lay: Layout) -> str:
             f"y = {run['y']}",
             f"row = {run['row']}",
             "cols = " + ",".join(str(c) for c in run["cols"]),
-            "",
         ])
+        entries = run_entries(lay, run)
+        if entries and all(entry is not None for entry in entries):
+            lines.append("tiles = " + ",".join(
+                str(entry.tile_id) for entry in entries))
+        lines.append("")
 
     for part in lay.parts:
         w, h = part_bounds(part)
@@ -652,9 +845,24 @@ def summary_text(lay: Layout, path: Optional[str] = None) -> str:
     for sheet in lay.sheets:
         size = (f"{sheet.image.width}x{sheet.image.height}"
                 if sheet.image is not None else "missing")
-        lines.append(
-            f"    {sheet.id:<10} {sheet.file}  tiles {sheet.tile_w}x"
-            f"{sheet.tile_h}  image {size}")
+        if sheet.source == "dma":
+            lines.append(
+                f"    {sheet.id:<10} source=dma  tiles {sheet.tile_w}x"
+                f"{sheet.tile_h}  columns {sheet.columns}  image {size}")
+            lines.append(f"      dma  : {sheet.dma}")
+            lines.append(f"      sha  : {sheet.sha}")
+            if sheet.palette:
+                lines.append(f"      pal  : {sheet.palette}")
+            names = [e.name for e in sheet.entries.values() if e.name]
+            sample = ", ".join(names[:6])
+            lines.append(
+                f"      tiles: {len(sheet.entries)}"
+                + (f" ({sample}{', ...' if len(names) > 6 else ''})"
+                   if sample else ""))
+        else:
+            lines.append(
+                f"    {sheet.id:<10} {sheet.file}  tiles {sheet.tile_w}x"
+                f"{sheet.tile_h}  image {size}")
 
     runs = iter_tile_runs(lay)
     lines.append(f"  tiles     : {len(lay.tiles)} stamps in {len(runs)} runs")
@@ -663,11 +871,21 @@ def summary_text(lay: Layout, path: Optional[str] = None) -> str:
         col, row, rx, ry = grid_of(lay, run["x"], run["y"])
         grid = f"col {col}" + (f"+{rx}" if rx else "")
         grid += f", row {row}" + (f"+{ry}" if ry else "")
-        lines.append(
+        line = (
             f"    {run['sheet']:<8} row {run['row']:<3} "
             f"x {run['x']}..{run['x'] + span}  y {run['y']}.."
             f"{run['y'] + run['th']}  cols "
             f"{run['cols'][0]}..{run['cols'][-1]}  ({grid})")
+        entries = run_entries(lay, run)
+        if entries:
+            ids = ",".join("?" if e is None else str(e.tile_id)
+                           for e in entries)
+            line += f"  tiles {ids}"
+        lines.append(line)
+        if entries:
+            names = [e.name for e in entries if e is not None and e.name]
+            if names:
+                lines.append("      names: " + ", ".join(names))
 
     lines.append(f"  parts     : {len(lay.parts)}")
     for part in lay.parts:
@@ -748,6 +966,137 @@ try:
 except ImportError:  # pragma: no cover
     tk = None
     ttk = None
+
+
+class DmaImportDialog(tk.Toplevel if tk is not None else object):
+    """Small dialog collecting a DMA/SHA/palette triple and cell layout."""
+
+    def __init__(self, parent, initial_dir: str = ""):
+        super().__init__(parent)
+        self.title("Load DMA tileset")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.result: Optional[dict] = None
+        self._last_dir = initial_dir or os.getcwd()
+        self.dma_var = tk.StringVar()
+        self.sha_var = tk.StringVar()
+        self.palette_var = tk.StringVar()
+        self.columns_var = tk.StringVar(value="16")
+        self.cell_var = tk.StringVar(value="16x16")
+        self.match_grid = tk.BooleanVar(value=True)
+
+        frame = ttk.Frame(self, padding=8)
+        frame.pack(fill="both", expand=True)
+
+        ttk.Label(frame, text="DMA tile table").grid(
+            row=0, column=0, sticky="w")
+        ttk.Entry(frame, textvariable=self.dma_var, width=52).grid(
+            row=0, column=1, sticky="ew", padx=4)
+        ttk.Button(frame, text="...", width=3,
+                   command=self._browse_dma).grid(row=0, column=2)
+
+        ttk.Label(frame, text="Shape bank (.sha)").grid(
+            row=1, column=0, sticky="w", pady=(4, 0))
+        ttk.Entry(frame, textvariable=self.sha_var, width=52).grid(
+            row=1, column=1, sticky="ew", padx=4, pady=(4, 0))
+        ttk.Button(frame, text="...", width=3,
+                   command=self._browse_sha).grid(row=1, column=2,
+                                                  pady=(4, 0))
+
+        ttk.Label(frame, text="Palette (optional)").grid(
+            row=2, column=0, sticky="w", pady=(4, 0))
+        ttk.Entry(frame, textvariable=self.palette_var, width=52).grid(
+            row=2, column=1, sticky="ew", padx=4, pady=(4, 0))
+        ttk.Button(frame, text="...", width=3,
+                   command=self._browse_palette).grid(row=2, column=2,
+                                                      pady=(4, 0))
+
+        row = ttk.Frame(frame)
+        row.grid(row=3, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        ttk.Label(row, text="Sheet columns").pack(side="left")
+        ttk.Spinbox(row, textvariable=self.columns_var, width=5, from_=1,
+                    to=64).pack(side="left", padx=(3, 12))
+        ttk.Label(row, text="Cell size").pack(side="left")
+        ttk.Entry(row, textvariable=self.cell_var, width=8).pack(
+            side="left", padx=3)
+        ttk.Checkbutton(row, text="Match grid to cell",
+                        variable=self.match_grid).pack(side="left", padx=(12, 0))
+
+        note = (
+            "The .dma file only maps tile ids to shape ids; the episode's "
+            ".sha supplies the pixels.\n"
+            "Tiles are laid out in DMA record order and labelled with their "
+            "tile id.  Leave the\n"
+            "palette blank for Jill 1-3 (built-in VGA palette); pick "
+            "profiles/onesimus.pal for Onesimus."
+        )
+        ttk.Label(frame, text=note, justify="left").grid(
+            row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
+
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=5, column=0, columnspan=3, sticky="e", pady=(10, 0))
+        ttk.Button(buttons, text="Cancel",
+                   command=self.destroy).pack(side="right")
+        ttk.Button(buttons, text="Load", command=self._ok).pack(
+            side="right", padx=4)
+
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self.bind("<Return>", lambda _e: self._ok())
+        self.grab_set()
+
+    def _browse(self, title: str, patterns: str) -> str:
+        return filedialog.askopenfilename(
+            parent=self, title=title, initialdir=self._last_dir,
+            filetypes=((title, patterns), ("All files", "*.*")))
+
+    def _browse_dma(self):
+        path = self._browse("DMA tile table", "*.dma")
+        if not path:
+            return
+        self.dma_var.set(path)
+        self._last_dir = os.path.dirname(path)
+        if not self.sha_var.get():
+            guess = guess_sha_path(path)
+            if guess:
+                self.sha_var.set(guess)
+
+    def _browse_sha(self):
+        path = self._browse("Shape bank", "*.sha")
+        if path:
+            self.sha_var.set(path)
+            self._last_dir = os.path.dirname(path)
+
+    def _browse_palette(self):
+        path = self._browse("Palette", "*.pal *.bin")
+        if path:
+            self.palette_var.set(path)
+            self._last_dir = os.path.dirname(path)
+
+    def _ok(self):
+        dma = self.dma_var.get().strip()
+        sha = self.sha_var.get().strip()
+        if not dma or not os.path.isfile(dma):
+            messagebox.showerror("DMA tileset", "Choose an existing .dma file.",
+                                 parent=self)
+            return
+        if not sha or not os.path.isfile(sha):
+            messagebox.showerror(
+                "DMA tileset",
+                "Choose the matching .sha shape bank for this episode.",
+                parent=self)
+            return
+        columns = max(1, min(64, _as_int(self.columns_var.get(), 16)))
+        cell = _as_pair(self.cell_var.get(), "x", (16, 16))
+        self.result = {
+            "dma": dma,
+            "sha": sha,
+            "palette": self.palette_var.get().strip(),
+            "columns": columns,
+            "cell_w": max(4, min(128, cell[0])),
+            "cell_h": max(4, min(128, cell[1])),
+            "match_grid": bool(self.match_grid.get()),
+        }
+        self.destroy()
 
 
 class HudLayoutApp(tk.Tk if tk is not None else object):
@@ -1045,6 +1394,8 @@ class HudLayoutApp(tk.Tk if tk is not None else object):
         sheet_buttons.pack(side="left", padx=(2, 0))
         ttk.Button(sheet_buttons, text="Add", width=5,
                    command=self.add_sheet).pack(fill="x")
+        ttk.Button(sheet_buttons, text="DMA", width=5,
+                   command=self.add_dma_sheet).pack(fill="x")
         ttk.Button(sheet_buttons, text="Image", width=5,
                    command=self.replace_sheet_image).pack(fill="x")
         ttk.Button(sheet_buttons, text="Size", width=5,
@@ -1081,6 +1432,16 @@ class HudLayoutApp(tk.Tk if tk is not None else object):
         self.tile_label = tk.StringVar(value="No tile selected")
         ttk.Label(zoom_row, textvariable=self.tile_label).pack(
             side="left", padx=6)
+        find_row = ttk.Frame(tile_box)
+        find_row.pack(fill="x", pady=(2, 0))
+        ttk.Label(find_row, text="Find DMA tile id").pack(side="left")
+        self.find_tile_var = tk.StringVar()
+        find_entry = ttk.Entry(find_row, textvariable=self.find_tile_var,
+                               width=7)
+        find_entry.pack(side="left", padx=4)
+        find_entry.bind("<Return>", lambda _e: self.find_tile())
+        ttk.Button(find_row, text="Go", width=4,
+                   command=self.find_tile).pack(side="left")
 
     def _build_right(self, parent):
         parts_box = ttk.LabelFrame(parent, text="Parts", padding=4)
@@ -1505,9 +1866,84 @@ class HudLayoutApp(tk.Tk if tk is not None else object):
         self._mark_dirty()
         self._refresh_sheet_list()
 
+    def add_dma_sheet(self):
+        dialog = DmaImportDialog(self, getattr(self, "_dma_dir", ""))
+        self.wait_window(dialog)
+        data = dialog.result
+        if not data:
+            return
+        self._dma_dir = os.path.dirname(data["dma"])
+        sheet_id = unique_id(
+            {s.id for s in self.layout.sheets},
+            os.path.splitext(os.path.basename(data["dma"]))[0], "dma")
+        self.config(cursor="watch")
+        self.update_idletasks()
+        try:
+            sheet = make_dma_sheet(
+                sheet_id, data["dma"], data["sha"], data["palette"],
+                data["columns"], data["cell_w"], data["cell_h"])
+        except Exception as exc:
+            messagebox.showerror("DMA tileset", str(exc))
+            return
+        finally:
+            self.config(cursor="")
+        self.push_undo()
+        self.layout.sheets.append(sheet)
+        self.active_sheet = sheet.id
+        self.active_tile = (0, 0)
+        self.palette_zoom = 2
+        if data.get("match_grid"):
+            self.layout.grid_w = sheet.tile_w
+            self.layout.grid_h = sheet.tile_h
+            self.grid_w_var.set(str(sheet.tile_w))
+            self.grid_h_var.set(str(sheet.tile_h))
+        self._mark_dirty()
+        self._refresh_sheet_list()
+        self.status.set(
+            f"Loaded {len(sheet.entries)} DMA tiles from "
+            f"{os.path.basename(data['dma'])}; tile ids are shown in the "
+            f"palette.")
+
+    def find_tile(self):
+        sheet = self._sheet_by_id(self.active_sheet)
+        if sheet is None or not sheet.entries:
+            self.status.set("The active tileset has no DMA tile ids.")
+            return
+        wanted = _as_int(self.find_tile_var.get().strip(), -1)
+        for (col, row), entry in sheet.entries.items():
+            if entry is not None and entry.tile_id == wanted:
+                self.active_tile = (col, row)
+                self.mode.set("stamp")
+                self._draw_palette()
+                self._scroll_palette_to(col, row)
+                self.status.set(
+                    dma_tile_label(self.layout, sheet.id, col, row))
+                return
+        self.status.set(f"No tile with id {wanted} in the active tileset.")
+
+    def _scroll_palette_to(self, col: int, row: int):
+        sheet = self._sheet_by_id(self.active_sheet)
+        if sheet is None or sheet.image is None:
+            return
+        z = self.palette_zoom
+        width = max(1, sheet.image.width * z)
+        height = max(1, sheet.image.height * z)
+        cx = (col + 0.5) * sheet.tile_w * z / width
+        cy = (row + 0.5) * sheet.tile_h * z / height
+        view_w = max(1, self.palette.winfo_width())
+        view_h = max(1, self.palette.winfo_height())
+        self.palette.xview_moveto(max(0.0, cx - view_w / (2 * width)))
+        self.palette.yview_moveto(max(0.0, cy - view_h / (2 * height)))
+
     def replace_sheet_image(self):
         sheet = self._sheet_by_id(self.active_sheet)
         if sheet is None:
+            return
+        if sheet.source == "dma":
+            messagebox.showinfo(
+                "DMA tileset",
+                "This tileset is rebuilt from its .dma and .sha files.  "
+                "Remove it and use DMA... to choose different files.")
             return
         path = filedialog.askopenfilename(
             title=f"Replace image for {sheet.id}",
@@ -1535,9 +1971,29 @@ class HudLayoutApp(tk.Tk if tk is not None else object):
         if size is None:
             return
         tile_w, tile_h = _as_pair(size, "x", (sheet.tile_w, sheet.tile_h))
-        self.push_undo()
-        sheet.tile_w = max(1, tile_w)
-        sheet.tile_h = max(1, tile_h)
+        tile_w = max(1, tile_w)
+        tile_h = max(1, tile_h)
+        if sheet.source == "dma":
+            self.config(cursor="watch")
+            self.update_idletasks()
+            try:
+                image, entries, columns = build_dma_sheet(
+                    sheet.dma, sheet.sha, sheet.palette, sheet.columns or 16,
+                    tile_w, tile_h)
+            except Exception as exc:
+                messagebox.showerror("DMA tileset", str(exc))
+                return
+            finally:
+                self.config(cursor="")
+            self.push_undo()
+            sheet.tile_w = tile_w
+            sheet.tile_h = tile_h
+            sheet.image = image
+            sheet.entries = entries
+        else:
+            self.push_undo()
+            sheet.tile_w = tile_w
+            sheet.tile_h = tile_h
         self._mark_dirty()
         self._draw_palette()
         self.schedule_redraw()
@@ -1592,20 +2048,38 @@ class HudLayoutApp(tk.Tk if tk is not None else object):
         col = min(max(0, col), max(0, (sheet.image.width - 1) // sheet.tile_w))
         row = min(max(0, row), max(0, (sheet.image.height - 1) // sheet.tile_h))
         self.active_tile = (col, row)
+        if sheet.source == "dma":
+            # DMA sheets are identified by tile id, so label every cell.
+            for (cell_col, cell_row), entry in sheet.entries.items():
+                if entry is None:
+                    continue
+                tx = cell_col * sheet.tile_w * z
+                ty = cell_row * sheet.tile_h * z
+                self.palette.create_rectangle(
+                    tx, ty, tx + 16, ty + 10, fill="#000000", outline="")
+                self.palette.create_text(
+                    tx + 1, ty + 1, anchor="nw", text=str(entry.tile_id),
+                    fill="#FFFF55", font=("Consolas", 7))
         self.palette.create_rectangle(
             col * sheet.tile_w * z, row * sheet.tile_h * z,
             (col + 1) * sheet.tile_w * z, (row + 1) * sheet.tile_h * z,
             outline="#FFFFFF", width=2)
         self.palette.configure(scrollregion=(
             0, 0, sheet.image.width * z, sheet.image.height * z))
-        self.tile_label.set(f"Tile {col},{row}  ({sheet.tile_w}x{sheet.tile_h})")
+        if sheet.source == "dma":
+            label = dma_tile_label(self.layout, sheet.id, col, row)
+            self.tile_label.set(label or f"Cell {col},{row} (empty)")
+        else:
+            self.tile_label.set(
+                f"Tile {col},{row}  ({sheet.tile_w}x{sheet.tile_h})")
 
     def _palette_click(self, event):
         sheet = self._sheet_by_id(self.active_sheet)
         if sheet is None or sheet.image is None:
             return
-        x = int(self.palette.canvasx(event.x) / self.palette_zoom)
-        y = int(self.palette.canvasy(event.y) / self.palette_zoom)
+        z = self.palette_zoom
+        x = int(self.palette.canvasx(event.x) / z)
+        y = int(self.palette.canvasy(event.y) / z)
         col = min(max(0, x // sheet.tile_w),
                   max(0, (sheet.image.width - 1) // sheet.tile_w))
         row = min(max(0, y // sheet.tile_h),
@@ -1613,6 +2087,10 @@ class HudLayoutApp(tk.Tk if tk is not None else object):
         self.active_tile = (col, row)
         self.mode.set("stamp")
         self._draw_palette()
+        if sheet.source == "dma":
+            self.status.set(
+                dma_tile_label(self.layout, sheet.id, col, row)
+                or f"Cell {col},{row} is empty")
 
     # -- parts --------------------------------------------------------------
 

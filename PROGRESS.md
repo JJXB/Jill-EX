@@ -10,6 +10,12 @@
 * Writes `.hudlayout`, a UTF-8 INI-like format with pixel coordinates, grid
   metadata, tile runs (`sheet`, `row`, `cols`) and part sections.  Load, undo,
   PNG export, clipboard summary and `--summary`/`--render` headless modes.
+* DMA tilesets: `Tilesets > DMA...` loads a game `.dma` plus the episode's
+  `.sha` (and optional `.pal`), decodes through `jill_extractor`, lays the 320
+  records out in record order and labels every palette cell with its tile id.
+  A find-by-id box jumps to a tile; selecting shows its name and native size.
+  DMA sheets are rebuilt when the layout is opened, runs gain a `tiles = ...`
+  line, and the summary prints tile ids/names next to the pixel coordinates.
 * `File > Insert classic HUD guide` adds the exact rectangles from
   `Engine::render_hud_classic`; the same starting layout is saved as
   `docs/examples/classic-hud.hudlayout`.

@@ -2,8 +2,9 @@
 
 `tools/hud_layout.py` is a standalone editor for HUD alignment.  It overlays a
 reference screenshot under the game's 320x200 frame, lets you lay tiles on a
-resizeable grid, and saves a small text layout (`.hudlayout`) that can be read
-back when the engine drawing needs to line up with an original screen or a
+resizeable grid (from a PNG sheet or straight from the game's `.dma` + `.sha`
+tiles), and saves a small text layout (`.hudlayout`) that can be read back
+when the engine drawing needs to line up with an original screen or a
 hand-drawn panel.
 
 It does not read game data and it does not modify the engine.  The editor and
@@ -62,6 +63,58 @@ removes the selected part.  `Ctrl+mouse-wheel` changes the canvas zoom.
 uses for the classic frame, status column, inventory and hint strip.  The same
 data is in `docs/examples/classic-hud.hudlayout`.  It is a useful starting
 point for a new panel image or for checking a reference screenshot.
+
+## DMA tilesets (original game tiles)
+
+The *DMA...* button under *Tilesets* loads the original tile art instead of a
+prepared PNG.  Jill's `.dma` file is only a **tile-id to shape-id table**; the
+pixels live in the episode's `.sha` shape bank, so the dialog asks for both:
+
+| Field | Example |
+| --- | --- |
+| DMA tile table | `jillt\jill.dma` (shared by Jill 1-3) |
+| Shape bank | `jillt\jill1.sha`, `jill2.sha` or `jill3.sha` |
+| Palette | blank for Jill 1-3; `profiles\onesimus.pal` for Onesimus |
+| Sheet columns | how many tiles per row (default 16) |
+| Cell size | `16x16` (the board tile size) |
+
+Browsing the DMA file guesses the matching SHA beside it (`jill.dma` to
+`jill1.sha`), but you can pick another episode.  Tiles are laid out in **DMA
+record order** (the order in the file, not sorted by id), one per cell.  A
+small yellow number in each palette cell is the **tile id**; the selected tile
+is described as `TILE 45 SHORE 16x16`.  The *Find DMA tile id* box jumps to a
+tile by its id.  *Match grid to cell* (on by default) sets the layout grid to
+the tile cell size so stamps land on exact 16x16 boundaries; turn it off to
+keep a grid you already set.
+
+Most Jill tiles are 16x16.  A handful (16x8 platforms, 16x20/16x22 decorative
+tiles) are drawn clipped into a 16x16 cell by default; use *Size* to rebuild
+the sheet at e.g. `16x22` if you need to see all of a tall tile.  That also
+changes the stamping cell height, so 16x22 is an inspection mode rather than
+the normal board alignment.
+
+Loading a layout rebuilds DMA sheets from the stored `.dma`/`.sha` paths.  If
+those files are missing, the layout still opens but the sheet is empty and a
+warning is printed.  Uncompressed `.sha`/`.dma` paths are stored relative to
+the layout file when possible, so keep the game data folder beside your
+layouts if you want them to travel.  The editor imports the decoders from
+`jill_extractor.py`, which must sit beside `hud_layout.py` or in its parent
+folder (the release zip already keeps the two together).
+
+When a DMA sheet is used, each `[run]` also records the **tile ids**:
+
+```ini
+[run]
+sheet = jill
+x = 16
+y = 16
+row = 0
+cols = 11,11
+tiles = 45,45
+```
+
+`cols` is still the palette cell; `tiles` is what a board's tile map or the
+engine would see, and the summary prints both ids and names.
 
 ## The file format
 
@@ -137,8 +190,29 @@ colour = 4
 
 ### `[sheet.<id>]`
 
-`file` is the tileset image and `tile` is the size of one cell.  The id is the
-name used by `[run]` sections; it is sanitised to letters, digits, `_` and `-`.
+`tile` is the size of one cell.  A plain image sheet uses:
+
+```ini
+[sheet.frame]
+file = art/frame.png
+tile = 8x8
+```
+
+A DMA sheet stores the source files instead; the editor rebuilds it on load:
+
+```ini
+[sheet.jill]
+source = dma
+dma = ../jillt/jill.dma
+sha = ../jillt/jill1.sha
+palette = ../profiles/onesimus.pal   # omit for the built-in Jill palette
+tile = 16x16
+columns = 16
+```
+
+The id is the name used by `[run]` sections; it is sanitised to letters,
+digits, `_` and `-`.  `columns` fixes the palette layout, so the cell to tile id
+mapping stays stable between sessions.
 
 ### `[run]`
 
@@ -147,6 +221,21 @@ top-left pixel, `row` is the tile row in the sheet, and `cols` is the list of
 source columns in left-to-right order.  Runs are emitted for contiguous x
 positions; a repeated fill tile is written as e.g. `cols = 2,2,2`.  This is
 the form to read when checking one row of a frame or a filled bar.
+
+For a DMA sheet an extra `tiles` line lists the original tile ids:
+
+```ini
+[run]
+sheet = jill
+x = 8
+y = 24
+row = 0
+cols = 0,1,2
+tiles = 45,46,47
+```
+
+`cols` addresses the generated palette sheet; `tiles` is the id a board map or
+the engine uses.  The summary prints both, plus the tile names.
 
 ### `[part.<name>]`
 
@@ -164,7 +253,7 @@ the form to read when checking one row of a frame or a filled bar.
 
 `size` is written for human readability: `text` derives its width from its
 contents when the stored size is zero, and `grid`/`pips` derive their bounds
-from `cell` × `cells`.  The summary always prints the effective bounds.
+from `cell` x `cells`.  The summary always prints the effective bounds.
 
 ## Reading a layout in code-alignment work
 
@@ -179,7 +268,13 @@ for a position that is `R` pixels past the grid line.  For example:
 
 means the health label starts at pixel `(10,27)`, which is two pixels right of
 grid column 1 and three pixels below grid row 3 (the grid is 8x8 from 0,0).
-Tile runs print the same way, plus the source row and the covered x/y span.
+Tile runs print the same way, plus the source row, the covered x/y span and the
+DMA ids when the sheet has them:
+
+```text
+    jill     row 0   x 16..48  y 16..32  cols 11..12  (col 2, row 2)  tiles 45,46
+      names: SHORE, BASESHORE
+```
 
 The summary also lists the reference scale/position and any missing image
 warnings, so a layout can be checked without opening the editor.
@@ -191,7 +286,11 @@ warnings, so a layout can be checked without opening the editor.
   reposition them, and tiles cannot be dragged individually (erase and stamp
   again).
 * One reference image per layout, and any number of tileset sheets (one image
-  each).  Use several sheets for mixed art.
+  each, or one DMA/SHA pair each).  Use several sheets for mixed art.
+* A DMA sheet needs the episode's `.sha`; the `.dma` alone is only a lookup
+  table.  Sheet cells follow DMA record order, so tile ids are not sequential
+  across a row.  Oversized tiles (16x8, 16x20, 16x22) are clipped to the cell
+  unless you rebuild the sheet with a taller cell size.
 * Part guides and the reference are editor-only.  PNG export contains tiles
   and `image` parts, not the reference or guide rectangles.
 * Part names must be unique; they become section names.
@@ -199,3 +298,6 @@ warnings, so a layout can be checked without opening the editor.
   those coordinates; changing them still requires an engine edit, and the
   defaults in `port/src/engine.cpp` must stay unchanged unless you intend to
   change the classic layout.
+* DMA decoding comes from `jill_extractor.py`; keep it beside
+  `hud_layout.py` (or in its parent folder).  Loading a layout with DMA sheets
+  needs the referenced `.dma`/`.sha` files, otherwise the sheet stays empty.

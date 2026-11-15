@@ -22,9 +22,11 @@
 
 \* `tools/hud\_layout.py` HUD alignment editor (Tk + Pillow): overlays a
 
-&#x20; reference image, stamps tiles on a resizeable grid and writes
+&#x20; reference image, stamps tiles from a PNG or the game's `.dma` + `.sha`
 
-&#x20; `.hudlayout` files. `--summary` prints pixel/grid coordinates for engine
+&#x20; tile table, and writes `.hudlayout` files. `--summary` prints pixel/grid
 
-&#x20; work; see `docs/hud-layout-tool.md`.
+&#x20; coordinates and DMA tile ids/names for engine work; see
+
+&#x20; `docs/hud-layout-tool.md`.
 
