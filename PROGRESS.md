@@ -1,5 +1,20 @@
 # Progress
 
+## 2026-11-15 (title popup pause + stick deadzone)
+
+* The level-title dialog box now freezes the world: `Engine::tick()` advances
+  only the caption/hint timers (`advance_dialog_timers()`) while
+  `caption_popup_active()`, so enemies, hazards and the water/lava animation
+  stop until the box is dismissed or times out.  Interpolation is held at the
+  frozen positions so the frame does not smear.
+* Macro playback (`--macro` and the attract demos) keeps the old free-running
+  behaviour: those scripts were recorded with the world advancing under the
+  popup and skipping ticks would desync them.
+* **OPTIONS > CONTROLS > STICK DEADZONE** (0..50% in 5% steps, default 25%)
+  replaces the hard-coded 8000/32767 threshold.  Stored as
+  `[controls] deadzone`; applies to the SDL game-controller, raw joystick and
+  native PS4 stick paths.  RESET DEFAULTS restores 25%.
+
 ## 2026-11-15 (OPL core selection now persists)
 
 * Fixed `[audio] opl_core` saving back as 0 on every exit.  `MusicPlayer::open()`

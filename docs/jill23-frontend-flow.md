@@ -279,7 +279,11 @@ The title is displayed by `_putlevelmsg`/`_leveltxt` when a board loads; the HUD
 framed caption box when a board loads (`index = level id + 4`), revealed at the
 dialog speed.  A direction still held from the previous level cannot dismiss it
 for the first `0x28` ticks, so walking through an exit still shows the popup;
-after that any input closes it.  Runtime profiles can override it with
+after that any input closes it.  While the box is up the port freezes the world
+(`Engine::tick` advances only the dialog timers), so hazards cannot move or hit
+the player while the title is being read.  Macro playback keeps the old
+free-running behaviour so the attract demos and `--macro` replays stay in sync
+with their recorded input scripts.  Runtime profiles can override it with
 `level_title = N, text` rows.
 
 Jill 2/3 board headers usually store `level_id = 0`, so the port derives the id

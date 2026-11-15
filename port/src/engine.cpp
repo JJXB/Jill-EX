@@ -395,6 +395,23 @@ void Engine::tick() {
     if (page_open_) {
         return;  // the original blocks in the text viewer
     }
+    // The level-title dialog box freezes the world.  Macros keep the old
+    // free-running behaviour: the attract demos and `--macro` replays were
+    // recorded against the world advancing under the popup, and skipping ticks
+    // there would desync their input scripts.
+    if (caption_popup_active() && !macro_playing_) {
+        slow_phase_ = 0;
+        // Freeze interpolation too, so the frame does not smear between the
+        // last moving tick and the popup.
+        prev_cam_x_ = cam_x_;
+        prev_cam_y_ = cam_y_;
+        for (BoardObject& o : objects_) {
+            o.prev_x = o.x;
+            o.prev_y = o.y;
+        }
+        advance_dialog_timers();
+        return;
+    }
     if (turtle_) {
         // Jill 3's TURTLE option slows the whole simulation: one full update
         // every other 18.2 Hz tick (about 9.1 Hz).  `slow_phase_` tells
@@ -423,7 +440,12 @@ void Engine::tick() {
     tile_prepass();
     update_pass();
     follow_camera();
+    advance_dialog_timers();
+}
 
+// Popup/caption countdowns.  Kept separate because the level-title box freezes
+// the world while it is up but must still reveal and expire.
+void Engine::advance_dialog_timers() {
     // _putbotmsg timer (26F4:259B): decrement once per tick, clear at 0.
     if (msg_ttl_ > 0 && --msg_ttl_ == 0) {
         msg_text_.clear();

@@ -175,6 +175,11 @@ prove so you know what to verify by hand.
 * Editing **OPTIONS > CONTROLS** changes the active game's set.  The writer
   saves it to `[controls.<game id>]` (and a section equal to the base is
   removed), so two mods can use different keys without fighting each other.
+* **STICK DEADZONE** on the same screen sets the analog threshold in 5% steps
+  (0..50%, default 25%) and is stored globally as `[controls] deadzone`.  It
+  applies to the left stick on SDL game controllers, raw joysticks and the
+  native PS4 pad; the D-pad and keyboard are unaffected.  **RESET DEFAULTS**
+  returns it to 25% along with the keys.
 
 Total conversions may exceed the shipped board sizes:
 

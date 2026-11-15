@@ -441,6 +441,16 @@ struct Bindings {
 
 void reset_bindings(Bindings& b) { b = Bindings{}; }
 
+// Analog stick deadzone, in percent of full tilt.  25% matches the old fixed
+// 8000/32767 threshold; RESET DEFAULTS returns here.
+constexpr int kPadDeadzoneDefault = 25;
+constexpr int kPadDeadzoneStep = 5;
+constexpr int kPadDeadzoneMax = 50;
+
+int clamp_pad_deadzone(int percent) {
+    return std::max(0, std::min(kPadDeadzoneMax, percent));
+}
+
 const char* const kBindActionKey[ACT_COUNT] = {
     "move_left", "move_right", "move_up", "move_down", "jump", "throw"};
 
@@ -577,7 +587,8 @@ bool pad_button(SDL_GameController* gc, const Bindings& b, int action) {    retu
 // XInput pads arrive through SDL_GameController; DirectInput / HID pads that
 // SDL does not map as controllers arrive through the raw SDL_Joystick fallback.
 void poll_input(const uint8_t* keys, const Bindings& b,
-                SDL_GameController* gc, SDL_Joystick* joy, Engine& engine) {
+                SDL_GameController* gc, SDL_Joystick* joy, Engine& engine,
+                int deadzone_percent) {
     int h = 0;
     int v = 0;
     if (key_down(keys, b, ACT_LEFT) || pad_button(gc, b, ACT_LEFT)) {
@@ -597,7 +608,7 @@ void poll_input(const uint8_t* keys, const Bindings& b,
     bool throw_btn = key_down(keys, b, ACT_THROW) || pad_button(gc, b, ACT_THROW);
 
     if (gc) {
-        const int dz = 8000;
+        const int dz = deadzone_percent * 32767 / 100;
         int ax = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTX);
         int ay = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTY);
         if (ax < -dz) {
@@ -623,7 +634,7 @@ void poll_input(const uint8_t* keys, const Bindings& b,
             ++v;
         }
     } else if (joy) {
-        const int dz = 8000;
+        const int dz = deadzone_percent * 32767 / 100;
         int ax = SDL_JoystickGetAxis(joy, 0);
         int ay = SDL_JoystickGetAxis(joy, 1);
         if (ax < -dz) {
@@ -656,17 +667,19 @@ void poll_input(const uint8_t* keys, const Bindings& b,
 
 #ifdef JILL_PS4
     // Native DualShock 4 state (SDL's PS4 joystick driver provides no usable
-    // controller mapping, so it is polled directly).
-    if (g_ps4_pad.left || g_ps4_pad.stick_x < -0.5f) {
+    // controller mapping, so it is polled directly).  The sticks are already
+    // normalised to -1..1, so the same percentage threshold applies.
+    const float dzf = static_cast<float>(deadzone_percent) / 100.0f;
+    if (g_ps4_pad.left || g_ps4_pad.stick_x < -dzf) {
         --h;
     }
-    if (g_ps4_pad.right || g_ps4_pad.stick_x > 0.5f) {
+    if (g_ps4_pad.right || g_ps4_pad.stick_x > dzf) {
         ++h;
     }
-    if (g_ps4_pad.up || g_ps4_pad.stick_y < -0.5f) {
+    if (g_ps4_pad.up || g_ps4_pad.stick_y < -dzf) {
         --v;
     }
-    if (g_ps4_pad.down || g_ps4_pad.stick_y > 0.5f) {
+    if (g_ps4_pad.down || g_ps4_pad.stick_y > dzf) {
         ++v;
     }
     jump = jump || g_ps4_pad.cross;
@@ -1111,6 +1124,7 @@ struct Menu {
     int audio_sel = 0;
     int menus_sel = 0;
     int ctrl_sel = 0;
+    int deadzone = kPadDeadzoneDefault;  // analog stick deadzone, percent
     int cheat_sel = 0;
     int enh_sel = 0;
     int save_sel = 0;
@@ -1780,6 +1794,7 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                 v.push_back(std::string(kActionLabel[i]) + ": " +
                             binding_label(bindings, i));
             }
+            v.push_back("STICK DEADZONE: " + std::to_string(m.deadzone) + "%");
             v.push_back("RESET DEFAULTS");
             v.push_back("BACK");
             return v;
@@ -3285,11 +3300,15 @@ int run_sdl(const Options& opt, Engine& engine,
     // game's set and is written back to its section.
     Bindings base_bindings;
     std::map<std::string, Bindings> game_bindings;
+    // Analog stick deadzone, percent of full tilt (`[controls] deadzone`).
+    menu.deadzone = clamp_pad_deadzone(opt.pad_deadzone);
     {
         IniFile ini;
         std::string ini_err;
         if (ini.load(jill_paths::resolve("jill.ini"), ini_err)) {
             load_bindings_ini(ini, base_bindings);
+            menu.deadzone = clamp_pad_deadzone(
+                ini.get_int("controls", "deadzone", menu.deadzone));
             for (const std::string& sec : ini.sections()) {
                 static const std::string kPrefix = "controls.";
                 if (sec.compare(0, kPrefix.size(), kPrefix) == 0 &&
@@ -4159,14 +4178,27 @@ int run_sdl(const Options& opt, Engine& engine,
                 }
                 break;
             case MenuScreen::Controls:
-                if (nav != 5) {
-                    break;
-                }
                 if (sel < ACT_COUNT) {
-                    menu.rebind_action = sel;
+                    if (nav == 5) {
+                        menu.rebind_action = sel;
+                    }
                 } else if (sel == ACT_COUNT) {
-                    reset_bindings(bindings);
-                } else {
+                    // Analog stick deadzone: left/right or confirm adjusts it.
+                    if (nav == 3) {
+                        menu.deadzone =
+                            clamp_pad_deadzone(menu.deadzone -
+                                               kPadDeadzoneStep);
+                    } else if (nav == 4 || nav == 5) {
+                        menu.deadzone =
+                            clamp_pad_deadzone(menu.deadzone +
+                                               kPadDeadzoneStep);
+                    }
+                } else if (sel == ACT_COUNT + 1) {
+                    if (nav == 5) {
+                        reset_bindings(bindings);
+                        menu.deadzone = kPadDeadzoneDefault;
+                    }
+                } else if (nav == 5) {
                     menu.screen = MenuScreen::Options;
                 }
                 break;
@@ -4743,7 +4775,8 @@ int run_sdl(const Options& opt, Engine& engine,
         if (paused) {
             engine.set_input(0, 0, false, false);
         } else {
-            poll_input(keys, bindings, controller, joystick, engine);
+            poll_input(keys, bindings, controller, joystick, engine,
+                       menu.deadzone);
         }
 
         uint64_t now = SDL_GetPerformanceCounter();
@@ -5117,6 +5150,7 @@ int run_sdl(const Options& opt, Engine& engine,
         ini.set_int("menus", "frame", menu.menu_frame);
         ini.set("menus", "font", engine.font_name());
         game_bindings[bindings_game] = bindings;
+        ini.set_int("controls", "deadzone", menu.deadzone);
         save_bindings_ini(ini, base_bindings);
         for (const auto& kv : game_bindings) {
             const std::string sec = "controls." + kv.first;

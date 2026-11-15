@@ -251,6 +251,11 @@ public:
                           int ticks = 0x78);
     void close_message_box();
     bool message_box_open() const { return box_ttl_ > 0; }
+    // Level-title dialog box is currently on screen.  While it is, tick()
+    // freezes the world but keeps the caption reveal/hold timers running.
+    bool caption_popup_active() const {
+        return caption_ttl_ > 0 && !caption_.empty();
+    }
     // Skip any pending caption/reveal (used for the static menu backdrop).
     void finish_dialogs() {
         caption_ttl_ = 0;
@@ -442,6 +447,7 @@ private:
                         int advance, const char* s);
     void draw_bottom_msg(Framebuffer& fb);
     void draw_caption(Framebuffer& fb);           // level-title dialog box
+    void advance_dialog_timers();                 // caption/hint/card countdowns
     void draw_caption_classic(Framebuffer& fb,
                               const std::vector<std::string>& lines);
     void draw_portrait(Framebuffer& fb, int x, int y);
