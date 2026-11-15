@@ -39,9 +39,9 @@ set(VITA_VERSION  "01.00")
 
 ## Sources -------------------------------------------------------------------
 # The same translation units as the desktop target, cross-compiled.  The only
-# platform-specific source is the SDL2 screen, which is shared: JILL_VITA
-# selects the console data root (ux0:data/JillEX) and leaves the PS4-only
-# videoout/pad/exit paths out.
+# platform-specific source is screen_vita2d.cpp, which presents through
+# libvita2d; JILL_VITA selects the console data root (ux0:data/JillEX) and
+# leaves the PS4-only videoout/pad/exit paths out.
 set(JILL_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../src")
 
 add_executable(jill
@@ -69,6 +69,7 @@ add_executable(jill
     ${JILL_SRC}/audio.cpp
     ${JILL_SRC}/extaudio.cpp
     ${JILL_SRC}/external.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/screen_vita2d.cpp
     ${JILL_SRC}/third_party/stb_vorbis.c
     ${JILL_SRC}/third_party/opl3.c
     ${JILL_SRC}/third_party/fmopl.c
@@ -98,7 +99,8 @@ target_compile_options(jill PRIVATE
 )
 
 find_package(SDL2 CONFIG REQUIRED)
-target_link_libraries(jill PRIVATE SDL2::SDL2)
+# SDL2 is used for events, the pad and audio; libvita2d owns presentation.
+target_link_libraries(jill PRIVATE SDL2::SDL2 vita2d)
 
 ## Vita artefacts ------------------------------------------------------------
 vita_create_self(jill.self jill)

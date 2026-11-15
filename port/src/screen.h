@@ -35,3 +35,5 @@ std::unique_ptr<Screen> create_screen_sdl();
 std::unique_ptr<Screen> create_screen_gl();
 // PS4 native sceVideoOut presentation (triple buffered).
 std::unique_ptr<Screen> create_screen_videoout();
+// Vita libvita2d presentation (hardware GXM texture blit).
+std::unique_ptr<Screen> create_screen_vita2d();

@@ -2941,7 +2941,11 @@ int run_sdl(const Options& opt, Engine& engine,
     // PS4 display backend: OpenGL ES (Piglet) on hardware, SDL software under
     // shadPS4 (which mounts /hostapp and where Piglet init hangs).  An explicit
     // `renderer = gl|sdl` in jill.ini or --renderer overrides the choice.
-#ifdef JILL_PS4
+#if defined(JILL_VITA)
+    // The Vita screen is libvita2d; SDL is only used for events, the pad and
+    // audio, so SDL video must stay uninitialised (vita2d owns GXM/display).
+    const bool want_sdl_video = false;
+#elif defined(JILL_PS4)
     std::string backend = opt.renderer.empty() ? "auto" : opt.renderer;
     const bool emulator = jill_paths::exists("/hostapp");
     jill_paths::trace("display: /hostapp %s", emulator ? "present" : "missing");
@@ -2956,6 +2960,10 @@ int run_sdl(const Options& opt, Engine& engine,
 #ifdef JILL_PS4
     const Uint32 sdl_subsystems = (want_sdl_video ? SDL_INIT_VIDEO : 0) |
                                   SDL_INIT_EVENTS;
+#elif defined(JILL_VITA)
+    const Uint32 sdl_subsystems =
+        (want_sdl_video ? SDL_INIT_VIDEO : 0) | SDL_INIT_TIMER |
+        SDL_INIT_EVENTS | SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK;
 #else
     const Uint32 sdl_subsystems = (want_sdl_video ? SDL_INIT_VIDEO : 0) |
                                   SDL_INIT_EVENTS | SDL_INIT_GAMECONTROLLER |
@@ -2977,6 +2985,9 @@ int run_sdl(const Options& opt, Engine& engine,
 
     VideoSettings video;
     video.mode = opt.fullscreen ? 1 : opt.window_mode;
+#ifdef JILL_VITA
+    video.mode = 2;  // the Vita panel is always borderless fullscreen
+#endif
     video.scale = opt.scale;
     video.resolution = opt.resolution;
     video.high_fps = opt.high_fps;
@@ -3032,7 +3043,11 @@ int run_sdl(const Options& opt, Engine& engine,
     jill_paths::trace("display: backend=%s active (requested=%s)",
                       backend.c_str(), opt.renderer.c_str());
 #else
+#ifdef JILL_VITA
+    screen = create_screen_vita2d();
+#else
     screen = create_screen_sdl();
+#endif
     if (!screen || !screen->init(screen_w, screen_h, video.mode, screen_err)) {
         std::fprintf(stderr, "%s\n",
                      screen_err.empty() ? "no display backend"

@@ -1,11 +1,13 @@
 # Jill-EX — PS Vita target
 
-VitaSDK + SDL2 build of the same engine as the desktop and PS4 ports. Only
-`port/src` is shared; this folder owns the Vita packaging.
+VitaSDK + SDL2 (audio/input) + libvita2d (display) build of the same engine as
+the desktop and PS4 ports. Only `port/src` is shared; this folder owns the Vita
+packaging and the libvita2d screen.
 
 ```
 port/vita/
   CMakeLists.txt        cross-compiled target, SELF/VPK rules
+  screen_vita2d.cpp     libvita2d (GXM) display backend
   jill.ini              default settings for ux0:data/JillEX
   sce_sys/              LiveArea art (placeholder, from the PS4 icon)
   build/                generated (git-ignored)
@@ -24,6 +26,11 @@ port/vita/
    ```
 
    `VITASDK` must point at the SDK root (`C:\vitasdk` by default).
+   Install the display library too:
+
+   ```powershell
+   vdpm install libvita2d --noconfirm
+   ```
 2. CMake 3.18+ and Ninja. CMake's default Visual Studio generator cannot
    cross-compile with `arm-vita-eabi-g++`, so Ninja is required; Visual Studio
    ships a copy if `ninja` is not on PATH.
@@ -74,15 +81,18 @@ Saves, high scores and `jill.log` are written next to those files, so
 | Macro | Effect |
 | --- | --- |
 | `JILL_VITA` | data root `ux0:data/JillEX`, console log file, absolute path resolution; PS4-only videoout/pad/`_exit` paths stay compiled out |
-| `JILL_HAVE_SDL` | SDL2 screen (`screen_sdl.cpp`) and SDL2 audio; no PS4 Piglet/videoout code |
+| `JILL_HAVE_SDL` | SDL2 events, pad and audio; **SDL video is not initialised** |
+| `screen_vita2d.cpp` | libvita2d (GXM) presentation, linked as `vita2d` |
 | `SDL_MAIN_HANDLED` | the port keeps its own `main()` |
 
-The screen is borderless fullscreen (`window_mode = 2`) and the renderer sets
-a 320x200 logical size every frame, so the 960x544 panel gets an
-aspect-correct letterboxed image.  The window/drawable is clamped to the real
-display mode (maximum 960x544) even if the desktop-oriented scale or
-resolution setting asks for more; the Vita `RESOLUTION` list only offers
-960x544, 640x480 and 480x272.
+The screen is borderless fullscreen and always uses the 960x544 panel.
+`screen_vita2d.cpp` uploads the 320x200 frame into an `A8B8G8R8` texture every
+present, then draws it with libvita2d at the largest integer scale that fits
+(2x = 640x400) and centres it; the black clear provides the letterbox.  SDL
+video is not initialised, so libvita2d owns GXM/display while SDL handles
+events, the pad and audio.  The window/drawable is still clamped to 960x544 even
+if an old desktop `scale` or `resolution` setting asks for more; the Vita
+`RESOLUTION` list only offers 960x544, 640x480 and 480x272.
 
 ## LiveArea artwork
 
@@ -120,7 +130,7 @@ and would break the install.  Nothing may be interlaced.
 * Jill 2/3 and Onesimus content, save/restore, high scores, text pages,
   endings, minimap and the NOISEMAKER screens.
 * Screen fit/letterboxing at 960x544, audio latency and behaviour after
-  suspend/resume.  The window is now clamped to the panel (960x544), but this
-  still needs a visual check on hardware.
+  suspend/resume.  The window is clamped and presentation now goes through
+  libvita2d; this needs a visual check on hardware.
 * `sce_sys/` art is a resized copy of the PS4 icon — replace it when there is
   real artwork (keep it 8-bit indexed).

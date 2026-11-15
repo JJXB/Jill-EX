@@ -1,7 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 
-rem Jill-EX PS Vita build (VitaSDK + SDL2).
+rem Jill-EX PS Vita build (VitaSDK + SDL2 + libvita2d).
 rem
 rem This script is independent of build.cmd/build32.cmd and build_ps4.cmd: it
 rem never touches the desktop or PS4 outputs.  It produces
@@ -39,6 +39,10 @@ if not exist "%VITASDK%\share\vita.toolchain.cmake" (
 )
 if not exist "%VITASDK%\arm-vita-eabi\lib\libSDL2.a" (
     echo SDL2 is not installed in the SDK.  Run:  vdpm install sdl2
+    exit /b 1
+)
+if not exist "%VITASDK%\arm-vita-eabi\lib\libvita2d.a" (
+    echo libvita2d is not installed in the SDK.  Run:  vdpm install libvita2d
     exit /b 1
 )
 

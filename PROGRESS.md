@@ -1,12 +1,17 @@
 # Progress
 
-## 2026-11-14 (Vita display cap)
+## 2026-11-14 (Vita display cap + libvita2d)
 
 * The Vita build now clamps its window/drawable to the real display mode
   (maximum 960x544) before creating the SDL window and always uses borderless
   fullscreen.  The Vita `RESOLUTION` list is reduced to 960x544/640x480/480x272
   and `window_width/height` are capped, so no menu setting can exceed the
   panel.  The Vita default `scale` is now 2.
+* Presentation on Vita moved from SDL2's renderer to **libvita2d**
+  (`port/vita/screen_vita2d.cpp`): a 320x200 A8B8G8R8 texture is uploaded each
+  frame and drawn at the largest integer scale that fits (2x) with a black
+  letterbox.  SDL is now initialised without video (events/pad/audio only), so
+  libvita2d owns GXM/display.
 
 ## 2026-11-14 (CMF translation audit against SBFMDRV)
 
