@@ -112,7 +112,7 @@ void draw_fps_counter(Framebuffer& fb, Engine& engine, double fps) {
     char text[16];
     std::snprintf(text, sizeof(text), "%d FPS", static_cast<int>(fps + 0.5));
     const int x = engine.hud_classic() ? 10 : 2;
-    const int y = engine.hud_classic() ? 9 : 14;
+    const int y = engine.hud_classic() ? 3 : 14;
     engine.draw_text(fb, x + 1, y + 1, 0, text);
     engine.draw_text(fb, x, y, 15, text);
 }
@@ -2367,7 +2367,7 @@ void draw_classic_status(Framebuffer& fb, Engine& engine) {
 
 void draw_classic_inventory_caption(Framebuffer& fb, Engine& engine) {
     const int x = 8;
-    const int y = 172;
+    const int y = 166;
     fb.fill_rect(x, y, 64, 8, 0);
     engine.draw_text(fb, x + 2, y + 1, 7, "INVENTORY");
 }
@@ -2382,9 +2382,9 @@ void draw_classic_menu(Framebuffer& fb, Engine& engine, const Menu& m,
         // drawn before the frame so the frame edges cover its border.
         if (classic_px.size() == static_cast<size_t>(240) * 160) {
             constexpr int vx = 80;
-            constexpr int vy = 22;
+            constexpr int vy = 16;
             constexpr int vw = 232;
-            constexpr int vh = 158;
+            constexpr int vh = 160;
             constexpr int sx0 = (240 - vw) / 2;
             constexpr int sy0 = (160 - vh) / 2;
             for (int y = 0; y < vh; ++y) {
@@ -2437,7 +2437,7 @@ void draw_classic_menu(Framebuffer& fb, Engine& engine, const Menu& m,
 
     int bx = std::max(76, std::min(80, 312 - boxw));
     int by = (Framebuffer::H - boxh) / 2;
-    by = std::max(28, std::min(by, 180 - boxh));
+    by = std::max(28, std::min(by, 176 - boxh));
     engine.draw_menu_window(fb, bx, by, boxw, boxh);
 
     const char* header =

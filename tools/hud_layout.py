@@ -1087,25 +1087,26 @@ def classic_guide_parts() -> list[Part]:
         parts.append(Part(name=name, kind=kind, x=x, y=y, w=w, h=h,
                           **kwargs))
 
-    add("frame", "rect", 8, 12, 304, 180,
-        note="patterned frame ring (E3 frames 0/3/4/6/8/10) + title strip")
-    add("view", "rect", 80, 22, 232, 158, note="playfield viewport")
-    add("health-box", "box", 8, 22, 64, 30, colour=12)
-    add("health-label", "text", 10, 27, 0, 0, text="HEALTH")
-    add("health-bar", "rect", 48, 27, 20, 7, colour=4,
-        note="framed 20x7 bar; external pack panels use pips instead")
-    add("level-box", "box", 8, 52, 64, 22, colour=8)
-    add("level-label", "text", 9, 57, 0, 0, text="LEVEL")
-    add("level-value", "text", 10, 65, 0, 0, text="0")
-    add("score-label", "text", 41, 57, 0, 0, text="SCORE")
-    add("score-value", "text", 34, 65, 36, 8, colour=7,
-        note="score digits right-aligned to x=70")
-    add("inventory-box", "box", 8, 74, 64, 84, colour=8)
-    add("inventory-grid", "grid", 9, 78, 0, 0, cell_w=16, cell_h=16,
+    add("frame", "rect", 0, 0, 320, 190,
+        note="patterned frame ring (E3 frames 2/3/4/10 top, 5/6/7/8 bottom, "
+             "1/0/13 edges) + title strip")
+    add("view", "rect", 80, 16, 232, 160, note="playfield viewport")
+    add("health-box", "box", 8, 16, 64, 32, colour=12)
+    add("health-label", "text", 8, 28, 0, 0, text="HEALTH")
+    add("health-bar", "rect", 44, 28, 28, 8, colour=4,
+        note="framed 28x8 bar; external pack panels use pips instead")
+    add("level-box", "box", 8, 48, 64, 37, colour=8)
+    add("level-label", "text", 8, 56, 0, 0, text="LEVEL")
+    add("level-value", "text", 8, 66, 0, 0, text="0")
+    add("score-label", "text", 42, 56, 0, 0, text="SCORE")
+    add("score-value", "text", 36, 66, 36, 8, colour=7,
+        note="score digits right-aligned to x=72")
+    add("inventory-box", "box", 8, 91, 64, 71, colour=8)
+    add("inventory-grid", "grid", 9, 97, 0, 0, cell_w=16, cell_h=16,
         cols=3, rows=3)
-    add("inventory-caption", "box", 8, 158, 64, 14, colour=8)
-    add("inventory-text", "text", 10, 162, 0, 0, text="INVENTORY")
-    add("hint-strip", "rect", 0, 192, 320, 8,
+    add("inventory-caption", "box", 8, 162, 64, 14, colour=8)
+    add("inventory-text", "text", 8, 168, 0, 0, text="INVENTORY")
+    add("hint-strip", "rect", 0, 190, 320, 10,
         note="plain black hint strip")
     return parts
 

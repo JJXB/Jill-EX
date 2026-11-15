@@ -1,5 +1,23 @@
 # Progress
 
+## 2026-11-15 (measured classic HUD layout)
+
+* Rebuilt the classic frame to the measured 320x190 layout: 16-px top strip,
+  8-px sides, 12-px bottom art plus a 2-px seam and a 10-px black hint strip.
+  The viewport is now 80,16 232x160, with the panel/view divider at x=72 and a
+  16-px divider band at y=80..96 (drawn under the boxes, clipped to x=80).
+* Frame drawing follows the entry-3 pieces from the layout: top corners 2/3,
+  top edge 4, top junction 10, bottom corners 5/7, bottom edge 6/8, vertical
+  edges 1/0, divider-row edge 13, band 12/11 and fill 10.
+* New in-game boxes: health 8,16 64x32 with a 28x8 bar at 44,28; level 8,48
+  64x37; inventory 8,91 64x71; caption 8,162 64x14.  Labels/values moved to
+  8,28 / 8,56 / 8,66 and SCORE right-aligns to x=72.
+* Classic menu viewport uses the same frame/view; its caption moves to 166 and
+  the menu window clamps to 176.  Title text and the FPS counter sit in the
+  16-px top strip.
+* `classic_guide_parts` and `docs/examples/classic-hud.hudlayout` now match the
+  new engine coordinates.
+
 ## 2026-11-15 (external HUD layout tool)
 
 * New `tools/hud_layout.py`: a standalone Tk/Pillow editor for HUD alignment.

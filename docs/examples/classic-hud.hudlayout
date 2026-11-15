@@ -22,93 +22,93 @@ reference_visible = 1
 
 [part.frame]
 kind = rect
-x = 8
-y = 12
-size = 304x180
+x = 0
+y = 0
+size = 320x190
 colour = 7
-note = patterned frame ring (E3 frames 0/3/4/6/8/10) + title strip
+note = patterned frame ring (E3 frames 2/3/4/10 top, 5/6/7/8 bottom, 1/0/13 edges) + title strip
 
 [part.view]
 kind = rect
 x = 80
-y = 22
-size = 232x158
+y = 16
+size = 232x160
 colour = 7
 note = playfield viewport
 
 [part.health-box]
 kind = box
 x = 8
-y = 22
-size = 64x30
+y = 16
+size = 64x32
 colour = 12
 
 [part.health-label]
 kind = text
-x = 10
-y = 27
+x = 8
+y = 28
 size = 36x8
 colour = 7
 text = HEALTH
 
 [part.health-bar]
 kind = rect
-x = 48
-y = 27
-size = 20x7
+x = 44
+y = 28
+size = 28x8
 colour = 4
-note = framed 20x7 bar; external pack panels use pips instead
+note = framed 28x8 bar; external pack panels use pips instead
 
 [part.level-box]
 kind = box
 x = 8
-y = 52
-size = 64x22
+y = 48
+size = 64x37
 colour = 8
 
 [part.level-label]
 kind = text
-x = 9
-y = 57
+x = 8
+y = 56
 size = 30x8
 colour = 7
 text = LEVEL
 
 [part.level-value]
 kind = text
-x = 10
-y = 65
+x = 8
+y = 66
 size = 6x8
 colour = 7
 text = 0
 
 [part.score-label]
 kind = text
-x = 41
-y = 57
+x = 42
+y = 56
 size = 30x8
 colour = 7
 text = SCORE
 
 [part.score-value]
 kind = text
-x = 34
-y = 65
+x = 36
+y = 66
 size = 36x8
 colour = 7
-note = score digits right-aligned to x=70
+note = score digits right-aligned to x=72
 
 [part.inventory-box]
 kind = box
 x = 8
-y = 74
-size = 64x84
+y = 91
+size = 64x71
 colour = 8
 
 [part.inventory-grid]
 kind = grid
 x = 9
-y = 78
+y = 97
 size = 48x48
 colour = 7
 cell = 16x16
@@ -117,14 +117,14 @@ cells = 3x3
 [part.inventory-caption]
 kind = box
 x = 8
-y = 158
+y = 162
 size = 64x14
 colour = 8
 
 [part.inventory-text]
 kind = text
-x = 10
-y = 162
+x = 8
+y = 168
 size = 54x8
 colour = 7
 text = INVENTORY
@@ -132,7 +132,7 @@ text = INVENTORY
 [part.hint-strip]
 kind = rect
 x = 0
-y = 192
-size = 320x8
+y = 190
+size = 320x10
 colour = 7
 note = plain black hint strip

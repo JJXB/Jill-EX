@@ -13,29 +13,27 @@
 
 namespace {
 
-// Classic (original) HUD frame.  The board still fills the 320x200 buffer; the
-// patterned border, title strip and 64-px side panel cover it, matching the
-// original presentation.  The frame uses the original 8-px side borders and
-// 12-px top/bottom borders (shape entry 3: 8x16 vertical edges, 16x12
-// horizontal edges); the bottom 8 px are a plain black hint strip outside the
-// frame, as in the original screens.
+// Classic (original) HUD frame, matching the measured 320x190 layout in
+// docs/examples/classic-hud.hudlayout: a 16-px top strip, 8-px sides, a 12-px
+// bottom edge (plus a 2-px black seam), and a 10-px hint strip below.
 constexpr int kClassicBorderX = 8;
-constexpr int kClassicBorderY = 12;
-constexpr int kClassicHintH = 8;
-constexpr int kClassicFrameH = Framebuffer::H - kClassicHintH;  // 192
-constexpr int kClassicTop = 22;
+constexpr int kClassicBorderTop = 16;
+constexpr int kClassicBorderBottom = 14;  // 176..190
+constexpr int kClassicHintH = 10;
+constexpr int kClassicFrameH = Framebuffer::H - kClassicHintH;  // 190
+constexpr int kClassicTop = kClassicBorderTop;                  // 16
 constexpr int kClassicPanelX = kClassicBorderX;
 constexpr int kClassicPanelY = kClassicTop;
 constexpr int kClassicPanelW = 64;
 constexpr int kClassicPanelH =
-    kClassicFrameH - kClassicTop - kClassicBorderY;  // 158
+    kClassicFrameH - kClassicTop - kClassicBorderBottom;  // 160
 // Classic menu/HUD viewport: an 8-px patterned gap separates the 64-px left
-// status column from the playfield.  The intro-board picture is centre-cropped
-// to the viewport for the classic menu.
+// status column from the playfield.
 constexpr int kClassicViewX = kClassicPanelX + kClassicPanelW + 8;  // 80
-constexpr int kClassicViewY = kClassicTop;                     // 22
+constexpr int kClassicViewY = kClassicTop;                     // 16
 constexpr int kClassicViewW = Framebuffer::W - kClassicViewX - kClassicBorderX;  // 232
-constexpr int kClassicViewH = kClassicPanelH;  // 158
+constexpr int kClassicViewH = kClassicPanelH;  // 160
+constexpr int kClassicDividerX = kClassicPanelX + kClassicPanelW;  // 72
 
 std::string join(const std::string& dir, const std::string& name) {
     if (dir.empty()) {
@@ -2777,18 +2775,36 @@ static void blit_external_picture(Framebuffer& fb, int x, int y,
 void Engine::draw_classic_backdrop(Framebuffer& fb, const std::string& title,
                                    bool menu) {
     const uint8_t label = static_cast<uint8_t>(hud_text_);
-    // Frame 0x0A is the 16x16 noise fill; 0x00/0x03 are the 8x16 vertical
-    // edges, 0x06/0x08 the 16x12 horizontal edges and 0x04 the corner.
+    // Entry 3 frame pieces, matching the measured 320x190 layout:
+    //   2/3 top corners, 4 top edge, 10 top junction,
+    //   5/6/7/8 bottom corners/edge, 1/0 vertical edges, 13 divider-row edge,
+    //   12/11 horizontal divider band, 10 the 16x16 fill.
     auto frame = [&](int entry, int index) {
         return menu ? classic_frame_shape(entry, index)
                     : classic_hud_shape(entry, index);
     };
     const ShapeFrame* fill = frame(3, 0x0A);
-    const ShapeFrame* corner = frame(3, 0x04);
-    const ShapeFrame* edge_top = frame(3, 0x06);
-    const ShapeFrame* edge_bottom = frame(3, 0x08);
-    const ShapeFrame* edge_left = frame(3, 0x00);
-    const ShapeFrame* edge_right = frame(3, 0x03);
+    const ShapeFrame* top_left = frame(3, 0x02);
+    const ShapeFrame* top_right = frame(3, 0x03);
+    const ShapeFrame* top_edge = frame(3, 0x04);
+    const ShapeFrame* top_junction = frame(3, 0x0A);
+    const ShapeFrame* bottom_left = frame(3, 0x05);
+    const ShapeFrame* bottom_edge = frame(3, 0x06);
+    const ShapeFrame* bottom_right = frame(3, 0x07);
+    const ShapeFrame* bottom_junction = frame(3, 0x08);
+    const ShapeFrame* edge_a = frame(3, 0x01);
+    const ShapeFrame* edge_b = frame(3, 0x00);
+    const ShapeFrame* edge_band = frame(3, 0x0D);
+    const ShapeFrame* band = frame(3, 0x0C);
+    const ShapeFrame* band_end = frame(3, 0x0B);
+
+    auto put = [&](const ShapeFrame* f, int x, int y, int sx, int sy) {
+        if (!f || f->w <= 0 || f->h <= 0) {
+            fb.put(x, y, (((x >> 1) + (y >> 1)) & 1) ? 7 : 8);
+            return;
+        }
+        fb.put(x, y, f->px[(sy % f->h) * f->w + (sx % f->w)]);
+    };
 
     for (int y = 0; y < Framebuffer::H; ++y) {
         for (int x = 0; x < Framebuffer::W; ++x) {
@@ -2797,65 +2813,92 @@ void Engine::draw_classic_backdrop(Framebuffer& fb, const std::string& title,
                 fb.put(x, y, 0);
                 continue;
             }
-            const bool ring = x < kClassicBorderX ||
-                              x >= Framebuffer::W - kClassicBorderX ||
-                              y < kClassicBorderY ||
-                              y >= kClassicFrameH - kClassicBorderY;
-            const bool left = x < kClassicViewX;
-            const bool right = x >= kClassicViewX + kClassicViewW;
-            const bool top = y < kClassicViewY;
-            const bool bottom = y >= kClassicViewY + kClassicViewH;
-            if (!(ring || left || right || top || bottom)) {
+            const bool in_view = x >= kClassicViewX &&
+                                 x < kClassicViewX + kClassicViewW &&
+                                 y >= kClassicViewY &&
+                                 y < kClassicViewY + kClassicViewH;
+            if (in_view) {
                 continue;
             }
-            const ShapeFrame* f = fill;
-            int sx = x;
-            int sy = y;
-            if (x < kClassicBorderX && y < kClassicBorderY) {
-                f = corner;
-            } else if (x >= Framebuffer::W - kClassicBorderX &&
-                       y < kClassicBorderY) {
-                f = corner;
-                sx = x - (Framebuffer::W - kClassicBorderX);
-            } else if (x < kClassicBorderX &&
-                       y >= kClassicFrameH - kClassicBorderY) {
-                f = corner;
-                sy = y - (kClassicFrameH - kClassicBorderY);
-            } else if (x >= Framebuffer::W - kClassicBorderX &&
-                       y >= kClassicFrameH - kClassicBorderY) {
-                f = corner;
-                sx = x - (Framebuffer::W - kClassicBorderX);
-                sy = y - (kClassicFrameH - kClassicBorderY);
-            } else if (y < kClassicBorderY) {
-                f = edge_top;
-                sy = y;
-            } else if (y >= kClassicFrameH - kClassicBorderY) {
-                f = edge_bottom;
-                sy = y - (kClassicFrameH - kClassicBorderY);
-            } else if (x < kClassicBorderX) {
-                f = edge_left;
-                sy = y - kClassicBorderY;
-            } else if (x >= Framebuffer::W - kClassicBorderX) {
-                f = edge_right;
-                sx = x - (Framebuffer::W - kClassicBorderX);
-                sy = y - kClassicBorderY;
+            if (y < kClassicBorderTop) {
+                if (x < kClassicBorderX) {
+                    put(top_left, x, y, x, y);
+                } else if (x >= Framebuffer::W - kClassicBorderX) {
+                    put(top_right, x, y, x - (Framebuffer::W -
+                                              kClassicBorderX), y);
+                } else {
+                    put(top_edge, x, y, x, y);
+                }
+                continue;
             }
-            uint8_t colour;
-            if (f && f->w > 0 && f->h > 0) {
-                colour = f->px[(sy % f->h) * f->w + (sx % f->w)];
-            } else {
-                colour = (((x >> 1) + (y >> 1)) & 1) ? 7 : 8;
+            if (y >= kClassicFrameH - kClassicBorderBottom) {
+                if (y >= kClassicFrameH - 2) {
+                    fb.put(x, y, 0);
+                } else if (x < kClassicBorderX) {
+                    put(bottom_left, x, y, x,
+                        y - (kClassicFrameH - kClassicBorderBottom));
+                } else if (x >= Framebuffer::W - kClassicBorderX) {
+                    put(bottom_right, x, y,
+                        x - (Framebuffer::W - kClassicBorderX),
+                        y - (kClassicFrameH - kClassicBorderBottom));
+                } else if (x >= kClassicDividerX &&
+                           x < kClassicDividerX + 16) {
+                    put(bottom_junction, x, y, x - kClassicDividerX,
+                        y - (kClassicFrameH - kClassicBorderBottom));
+                } else {
+                    put(bottom_edge, x, y, x,
+                        y - (kClassicFrameH - kClassicBorderBottom));
+                }
+                continue;
             }
-            fb.put(x, y, colour);
+            const int row = (y - kClassicBorderTop) / 16;
+            const int sy = (y - kClassicBorderTop) % 16;
+            if (x < kClassicBorderX) {
+                if (y >= 80 && y < 96) {
+                    put(edge_band, x, y, x, y - 80);
+                } else {
+                    put(row % 2 == 0 ? edge_a : edge_b, x, y, x, sy);
+                }
+                continue;
+            }
+            if (x >= Framebuffer::W - kClassicBorderX) {
+                put(row % 2 == 0 ? edge_a : edge_b, x, y,
+                    x - (Framebuffer::W - kClassicBorderX), sy);
+                continue;
+            }
+            if (x >= kClassicDividerX && x < kClassicViewX) {
+                if (y >= 80 && y < 96) {
+                    put(band_end, x, y, x - kClassicDividerX, y - 80);
+                } else {
+                    put(row % 2 == 0 ? edge_a : edge_b, x, y,
+                        x - kClassicDividerX, sy);
+                }
+                continue;
+            }
+            if (x < kClassicViewX) {
+                if (y >= 80 && y < 96) {
+                    put(band, x, y, x - kClassicBorderX, y - 80);
+                } else {
+                    put(fill, x, y, x, y);
+                }
+                continue;
+            }
         }
     }
-    // Dark edge around the playfield.
-    fb.fill_rect(kClassicViewX - 1, kClassicViewY, 1, kClassicViewH, 0);
-    fb.fill_rect(kClassicViewX, kClassicViewY - 1, kClassicViewW, 1, 0);
-    fb.fill_rect(kClassicViewX, kClassicViewY + kClassicViewH,
-                 kClassicViewW, 1, 0);
-    fb.fill_rect(kClassicViewX + kClassicViewW, kClassicViewY, 1,
-                 kClassicViewH, 0);
+
+    // The top/bottom strips have a junction tile at the panel/view divider.
+    for (int y = 0; y < kClassicBorderTop; ++y) {
+        for (int x = kClassicDividerX; x < kClassicDividerX + 16; ++x) {
+            put(top_junction, x, y, x - kClassicDividerX, y);
+        }
+    }
+    const int bottom_top = kClassicFrameH - kClassicBorderBottom;  // 176
+    for (int y = bottom_top; y < kClassicFrameH - 2; ++y) {
+        for (int x = kClassicDividerX; x < kClassicDividerX + 16; ++x) {
+            put(bottom_junction, x, y, x - kClassicDividerX,
+                y - bottom_top);
+        }
+    }
 
     int adv = 8;
     int bank = 1;
@@ -2867,10 +2910,10 @@ void Engine::draw_classic_backdrop(Framebuffer& fb, const std::string& title,
     const int tx = kClassicViewX + (kClassicViewW - tw) / 2;
     const int clean_x = std::max(kClassicViewX + 2, tx);
     if (adv == 8) {
-        draw_text_font(fb, clean_x, 9, label, bank, adv, title.c_str());
+        draw_text_font(fb, clean_x, 4, label, bank, adv, title.c_str());
     } else {
-        draw_text_font(fb, clean_x + 1, 11, 0, bank, adv, title.c_str());
-        draw_text_font(fb, clean_x, 10, label, bank, adv, title.c_str());
+        draw_text_font(fb, clean_x + 1, 6, 0, bank, adv, title.c_str());
+        draw_text_font(fb, clean_x, 5, label, bank, adv, title.c_str());
     }
 }
 
@@ -2990,12 +3033,12 @@ void Engine::render_hud_classic(Framebuffer& fb) {
 
     // Status column: HEALTH on top, LEVEL/SCORE below it, then the inventory
     // panel and the INVENTORY caption at the bottom.
-    classic_box(fb, px, py, kClassicPanelW, 30, 12);
-    draw_text(fb, px + 2, py + 5, label, "HEALTH");
-    const int barX = px + 40;
-    const int barY = py + 5;
-    constexpr int kBarW = 20;
-    constexpr int kBarH = 7;
+    classic_box(fb, px, py, kClassicPanelW, 32, 12);
+    draw_text(fb, px, py + 12, label, "HEALTH");
+    const int barX = px + 36;
+    const int barY = py + 12;
+    constexpr int kBarW = 28;
+    constexpr int kBarH = 8;
     fb.fill_rect(barX, barY, kBarW, kBarH, 0);
     fb.fill_rect(barX, barY, kBarW, 1, 8);
     fb.fill_rect(barX, barY + kBarH - 1, kBarW, 1, 8);
@@ -3009,10 +3052,10 @@ void Engine::render_hud_classic(Framebuffer& fb) {
     }
 
     // LEVEL / SCORE.
-    classic_box(fb, px, py + 30, kClassicPanelW, 22, 8);
-    const int ry = py + 35;
-    draw_text(fb, px + 1, ry, label, "LEVEL");
-    draw_text(fb, px + 33, ry, label, "SCORE");
+    classic_box(fb, px, py + 32, kClassicPanelW, 37, 8);
+    const int ry = py + 40;
+    draw_text(fb, px, ry, label, "LEVEL");
+    draw_text(fb, px + 34, ry, label, "SCORE");
     char buf[24];
     const int level = level_id();
     if (level == 0) {
@@ -3022,14 +3065,14 @@ void Engine::render_hud_classic(Framebuffer& fb) {
     } else {
         std::snprintf(buf, sizeof(buf), "%d", level);
     }
-    draw_text(fb, px + 2, ry + 8, label, buf);
+    draw_text(fb, px, ry + 10, label, buf);
     std::snprintf(buf, sizeof(buf), "%u", static_cast<unsigned>(score()));
     const int slen = static_cast<int>(std::strlen(buf));
-    draw_text(fb, px + kClassicPanelW - 2 - slen * 6, ry + 8, label, buf);
+    draw_text(fb, px + kClassicPanelW - slen * 6, ry + 10, label, buf);
 
-    // INVENTORY panel at the bottom (64x84) and its caption strip.
-    classic_box(fb, px, py + 52, kClassicPanelW, 84, 8);
-    const int invY = py + 56;
+    // INVENTORY panel at the bottom and its caption strip.
+    classic_box(fb, px, py + 75, kClassicPanelW, 71, 8);
+    const int invY = py + 81;
     const int n = header_[4] | (header_[5] << 8);
     for (int i = 0; i < n && i < 15; ++i) {
         const int id = header_[6 + i * 2] | (header_[7 + i * 2] << 8);
@@ -3045,10 +3088,10 @@ void Engine::render_hud_classic(Framebuffer& fb) {
     }
 
     // INVENTORY caption in its own bottom strip.
-    const int cap_y = py + 52 + 84;
+    const int cap_y = py + 146;
     classic_box(fb, px, cap_y, kClassicPanelW, 14, 8);
-    draw_text_font(fb, px + 3, cap_y + 5, 0, 2, 6, "INVENTORY");
-    draw_text_font(fb, px + 2, cap_y + 4, label, 2, 6, "INVENTORY");
+    draw_text_font(fb, px + 1, cap_y + 7, 0, 2, 6, "INVENTORY");
+    draw_text_font(fb, px, cap_y + 6, label, 2, 6, "INVENTORY");
 }
 
 // MODERN/MINIMAL HUD (the default): one horizontal strip across the top.
