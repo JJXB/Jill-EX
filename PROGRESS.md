@@ -8,7 +8,8 @@
   16-px divider band at y=80..96 (drawn under the boxes, clipped to x=80).
 * Frame drawing follows the entry-3 pieces from the layout: top corners 2/3,
   top edge 4, top junction 10, bottom corners 5/7, bottom edge 6/8, vertical
-  edges 1/0, divider-row edge 13, band 12/11 and fill 10.
+  edges 1/0, divider-row edge 13, band 12/11 and fill 10.  The right border
+  uses the notched frames 14/15 in the y=32 and y=144 rows.
 * New in-game boxes: health 8,16 64x32 with a 28x8 bar at 44,28; level 8,48
   64x37; inventory 8,91 64x71; caption 8,162 64x14.  Labels/values moved to
   8,28 / 8,56 / 8,66 and SCORE right-aligns to x=72.

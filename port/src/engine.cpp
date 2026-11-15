@@ -2795,6 +2795,8 @@ void Engine::draw_classic_backdrop(Framebuffer& fb, const std::string& title,
     const ShapeFrame* edge_a = frame(3, 0x01);
     const ShapeFrame* edge_b = frame(3, 0x00);
     const ShapeFrame* edge_band = frame(3, 0x0D);
+    const ShapeFrame* right_notch_a = frame(3, 0x0E);
+    const ShapeFrame* right_notch_b = frame(3, 0x0F);
     const ShapeFrame* band = frame(3, 0x0C);
     const ShapeFrame* band_end = frame(3, 0x0B);
 
@@ -2862,7 +2864,13 @@ void Engine::draw_classic_backdrop(Framebuffer& fb, const std::string& title,
                 continue;
             }
             if (x >= Framebuffer::W - kClassicBorderX) {
-                put(row % 2 == 0 ? edge_a : edge_b, x, y,
+                const ShapeFrame* edge = row % 2 == 0 ? edge_a : edge_b;
+                if (y >= 32 && y < 48) {
+                    edge = right_notch_a;
+                } else if (y >= 144 && y < 160) {
+                    edge = right_notch_b;
+                }
+                put(edge, x, y,
                     x - (Framebuffer::W - kClassicBorderX), sy);
                 continue;
             }
