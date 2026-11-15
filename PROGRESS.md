@@ -15,6 +15,11 @@
 * `start_macro` now returns success; a missing/bad demo macro keeps the user in
   the menu instead of silently starting a dead demo.  Playback progress is
   available through `macro_tick()` / `macro_duration()`.
+* Spawn fixes: a demo start runs the `26F4:04C7` checkpoint spawn (level id ->
+  CHECKPT, state 4) instead of using the board's raw player marker, and a
+  fresh map return with no stashed hub places Jill on the map entrance for the
+  board she just left and consumes it.  Board 3's level-5 exit now returns to
+  the `3.jn1` map entrance instead of the map's first object.
 * Documented the Jill 1 demo level ids and the port's playback guarantees.
 
 ## 2026-11-15 (in-game .hudlayout HUDs)

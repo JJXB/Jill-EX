@@ -253,8 +253,12 @@ to frames `0x5410..0x5413`, four ticks each.  Headless `--watch-tile 166` on
 * **Jill 1 map spawn:** returning with `!` restores the stashed map and keeps
   the player at the entrance it left from.  The old code also ran
   `place_at_checkpoint(0)`, which teleported Jill to the map's `p13 = 0` music
-  CHECKPT at `(0, 16)` - the glitchy spawn.  Hub restores now skip checkpoint
-  placement and re-centre the camera on the restored player.
+  CHECKPT at `(0, 16)` - the glitchy spawn.  Hub restores now keep the stashed
+  position.  If there is no stashed hub (started from a save, level select or
+  demo), the fresh map places the player on the CHECKPT for the board just
+  left (board 3 -> the `3.jn1` entrance) and consumes it, instead of spawning
+  at the map's first object.  This is what fixes returning through board 3's
+  level-5 exit at the wrong place.
 * **Endings:** a `state = 3` CHECKPT now sets the ending-done flag, which the
   front end turns into a return to the main menu (the original sets
   `DGROUP:0xBCAA = 2` and fades at `22AB:266F`).  `&end1.mac` / `&end2.mac`

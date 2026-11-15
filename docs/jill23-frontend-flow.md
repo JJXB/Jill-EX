@@ -133,6 +133,12 @@ contain CHECKPT strings `0.dem`, `2.dem`, `1.dem` from the Jill 1 build, but the
 menu DEMO path uses the episode-specific boards above. The intro board is also
 where the "A NEW RELEASE FROM / PRODUCED BY" and ordering text lives.
 
+On a demo start the port now loads the board with the demo level id and runs
+the same `place_at_checkpoint(level)` spawn as a board warp, so Jill begins on
+the level's checkpoint (state 4 recover) with the recorded macro, instead of
+the board's raw player marker. This is the difference that brings the input
+script back in line with the original's level-entry state.
+
 ## 4. Level graph
 
 Progression is not a table in the EXE: it is encoded in CHECKPT object strings
@@ -206,9 +212,12 @@ with the matching `p13`, and `!` kills that entrance so the hub shows the level
 as finished. Hub boards are the exception: the port restores the stashed map
 copy and keeps the player where it stood (the map's `p13 = 0` CHECKPT is the
 music trigger, not an entrance), so returning does not teleport Jill to `(0,0)`.
-A bare-filename warp instead loads the named board and places the player on its
-own entrance CHECKPT (`p13 == level id`, `x & ~7`, `y - 0x10` for normal Jill;
-TINY keeps `y`).
+A fresh map load with no stashed hub (started from a save, level select or
+demo) places the player on the entrance for the board just left and consumes
+it, so a board 3 exit returns to the `3.jn1` entrance rather than the map's
+first object. A bare-filename warp instead loads the named board and places the
+player on its own entrance CHECKPT (`p13 == level id`, `x & ~7`, `y - 0x10` for
+normal Jill; TINY keeps `y`).
 
 ## 5. Level-title table
 

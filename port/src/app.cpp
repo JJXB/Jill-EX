@@ -3057,6 +3057,9 @@ bool start_game(Engine& engine, const std::vector<GameDef>& games, int index,
                      err.c_str());
         return false;
     }
+    if (level >= 0) {
+        engine.spawn_at_checkpoint(level);
+    }
     engine.set_hud_classic(hud);
     engine.set_hud_portrait(hud_portrait);
     engine.set_hud_bg(hud_bg);
@@ -5600,6 +5603,9 @@ int run_app(const Options& opt) {
         std::fprintf(stderr, "data dir: %s (use --data to point at the game files)\n",
                      game.data_dir.c_str());
         return 2;
+    }
+    if (opt.level >= 0) {
+        engine.spawn_at_checkpoint(opt.level);
     }
     jill_paths::trace("startup: board ready");
     for (int i = 0; i < opt.items; ++i) {

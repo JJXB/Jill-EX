@@ -302,6 +302,7 @@ bool Engine::load_board(const std::string& name, std::string& err,
             header_[1] = static_cast<uint8_t>((level >> 8) & 0xFF);
         }
     }
+    board_level_ = level;
     // MAPDEMO (kind 67) is the animated map preview; it only runs on the hub /
     // world-map board (original guard: DGROUP:0x34EB != 0).
     map_mode_ = same_board_name(file, game_.map_board);
@@ -5871,6 +5872,7 @@ void Engine::process_pending_warp() {
 
     const std::array<uint8_t, Board::kHeaderSize> saved = header_;
     const int level = level_id();
+    const int exit_board_level = board_level_;
     std::string err;
     int loaded_level = 0;
     bool restored_hub = false;
@@ -5949,19 +5951,25 @@ void Engine::process_pending_warp() {
     if (!map_mode_) {
         place_at_checkpoint(active_level);
     } else if (has_player_) {
-        // Returning to the hub keeps the player where the stashed board left
-        // them (at the entrance just used).  The map's p13=0 CHECKPT is the
-        // music trigger, not an entrance, so running place_at_checkpoint(0)
-        // here teleported Jill to (0,0) - the "glitchy map spawn".
-        const BoardObject& p = objects_[0];
-        spawn_x_ = p.x;
-        spawn_y_ = p.y;
-        cam_x_ = std::max(0, std::min(p.x + 8 - view_center_x(),
-                                     Board::kCols * 16 - view_w()));
-        cam_y_ = std::max(0, std::min(p.y + 16 - view_center_y(),
-                                     Board::kRows * 16 - view_h()));
-        prev_cam_x_ = cam_x_;
-        prev_cam_y_ = cam_y_;
+        // Returning to the hub normally restores the stashed board with Jill
+        // standing at the entrance she used.  If there is no stashed hub
+        // (started from a save/level select/demo), place her on the map
+        // CHECKPT for the board she just left, not at the map's first object.
+        bool placed = false;
+        if (!restored_hub && exit_board_level != 0) {
+            placed = place_at_checkpoint(exit_board_level);
+        }
+        if (!placed) {
+            const BoardObject& p = objects_[0];
+            spawn_x_ = p.x;
+            spawn_y_ = p.y;
+            cam_x_ = std::max(0, std::min(p.x + 8 - view_center_x(),
+                                         Board::kCols * 16 - view_w()));
+            cam_y_ = std::max(0, std::min(p.y + 16 - view_center_y(),
+                                         Board::kRows * 16 - view_h()));
+            prev_cam_x_ = cam_x_;
+            prev_cam_y_ = cam_y_;
+        }
     }
 
     if (c == '!') {
@@ -5969,7 +5977,7 @@ void Engine::process_pending_warp() {
         // also how the original marks it as completed on the hub board.
         for (int i = 1; i < static_cast<int>(objects_.size()); ++i) {
             const BoardObject& o = objects_[static_cast<size_t>(i)];
-            if (o.kind == 12 && o.p13 == level) {
+            if (o.kind == 12 && o.p13 == exit_board_level) {
                 kill_obj(i);
                 break;
             }
@@ -5991,9 +5999,9 @@ void Engine::process_pending_warp() {
 // 26F4:04C7: after a board load, stand the player on the CHECKPT whose p13
 // matches the active level id.  Normal Jill is placed 16 px above the flag and
 // snapped to an 8-px column; TINY ignores the -16 adjustment.
-void Engine::place_at_checkpoint(int level) {
+bool Engine::place_at_checkpoint(int level) {
     if (!has_player_) {
-        return;
+        return false;
     }
     int idx = -1;
     for (int i = 1; i < static_cast<int>(objects_.size()); ++i) {
@@ -6004,7 +6012,7 @@ void Engine::place_at_checkpoint(int level) {
         }
     }
     if (idx < 0) {
-        return;
+        return false;
     }
     const BoardObject& cp = objects_[static_cast<size_t>(idx)];
     BoardObject& p = objects_[0];
@@ -6057,6 +6065,7 @@ void Engine::place_at_checkpoint(int level) {
     if (!cp.text.empty() && cp.text[0] == '&') {
         pending_warp_ = cp.text;
     }
+    return true;
 }
 
 std::string Engine::save_path(int slot) const {

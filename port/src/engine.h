@@ -33,6 +33,10 @@ public:
     // the demo tables use it to reproduce the intro CHECKPT level ids.
     bool load_board(const std::string& name, std::string& err,
                     int level_override = -1);
+    // Place the player on the CHECKPT whose p13 matches `level` (the
+    // 26F4:04C7 spawn routine).  Used after initial/demo loads; warps call it
+    // internally.
+    bool spawn_at_checkpoint(int level) { return place_at_checkpoint(level); }
     // Save/restore (original hotkeys S/R and the front-end menu).  A save is
     // the live board written in the on-disk board layout, exactly like the
     // original JN1SAVE.n files.
@@ -440,7 +444,7 @@ private:
     void form_update(int i);      // kinds 54-57 morphed Jill
     void morph_player(int item);  // 1FAE:2E61 transformation tokens
     void process_pending_warp();
-    void place_at_checkpoint(int level);
+    bool place_at_checkpoint(int level);
     void apply_macro_input();
     void compact_objects();
     void draw_minimap(Framebuffer& fb);
@@ -625,6 +629,7 @@ private:
     bool item_hint_[16] = {};    // TOKEN hints, once per item per level
     int spawn_x_ = 0;
     int spawn_y_ = 0;
+    int board_level_ = 0;  // level id of the loaded board (not changed by checkpoints)
     InputState in_;
     bool latch1_ = false;
     bool latch2_ = false;
