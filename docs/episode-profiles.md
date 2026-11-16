@@ -183,13 +183,17 @@ Level flow is data-driven (CHECKPT strings), not a table; the graphs are in
 | level-id bytes (DGROUP) | none | `0x18B2` | `0x19F7` |
 | macro ptr table (DGROUP) | none | `0x18BC` | `0x1A01` |
 | HUD level word (DGROUP) | `0x83A6` | `0x80E0` | `0x7E42` |
-| demo boards | `0.dem, 2.dem, 1.dem` | `3.jn2, 9.jn2, 17.jn2` | `1.jn3, 5.jn3, 12.jn3` |
+| demo boards | `intro` then `0.dem, 1.dem, 2.dem` | `3.jn2, 9.jn2, 17.jn2` | `1.jn3, 5.jn3, 12.jn3` |
 | demo macros | `jn1demo.mac` | `jn2dem1-3.mac` | `jn3dem1-3.mac` |
-| demo level ids | 101, 103, 102 (from intro CHECKPT) | 3, 9, 17 | 1, 5, 12 |
+| demo level ids | 100 (intro start), 101, 102, 103 | 3, 9, 17 | 1, 5, 12 |
 
-Jill 1 has no separate demo table: the intro board's CHECKPT strings warp to
-`0.dem` / `2.dem` / `1.dem` and the same `jn1demo.mac` drives playback. Jill 2/3
-use a real board/macro pointer pair per demo. **[verified]**
+Jill 1 has no separate demo table and only **one** recorded demo. It starts on
+`intro.jn1` at level 100 (the "Jill of the Jungle / Demo" card checkpoint), and
+`jn1demo.mac` walks Jill through the three "Scenes From" CHECKPT entrances:
+`0.dem` (101), `1.dem` (102) and `2.dem` (103). Each demo board ends with `!`,
+which restores the stashed intro board, so the same recording continues with the
+next card. Jill 2/3 use a real board/macro pointer pair per demo. **[verified
+from the intro board's CHECKPT ids and the original's demo recording]**
 
 ### 5.2 Level-title table
 

@@ -2433,16 +2433,32 @@ bool Engine::on_hit(int a, int b) {
             }
             return false;
 
-        case 65: {  // VINECLIMB (1a53:49b1): push the player off, then hurt
+        case 65: {  // VINECLIMB (Jill 1 1a41:48f9, Jill 2/3 1a53:49b1)
             if (b != 0) {
                 return false;
             }
             BoardObject& p = objects_[0];
-            const bool invulnerable = p.state == 4 || p.state == 5;
-            just_move(0, p.x + (invulnerable ? 8 : -8), p.y);
-            p.state = 0;
-            p.p13 += 0x0F;
-            hit_player(a);
+            static const uint16_t kFlags[6] = {1, 0, 1, 0, 2, 2};
+            const bool invulnerable =
+                p.state >= 0 && p.state < 6 && (kFlags[p.state] & 2) != 0;
+            if (game_.id == "jill1") {
+                // Jill 1: the invulnerability bit gates the whole block; push
+                // left and fall back to the right when that side is blocked.
+                // There is no p13 stun here (that is the Jill 2/3 variant).
+                if (!invulnerable) {
+                    if (!just_move(0, p.x - 8, p.y)) {
+                        just_move(0, p.x + 8, p.y);
+                    }
+                    p.state = 0;
+                    p.p1b = 0;
+                    hit_player(a);
+                }
+            } else {
+                just_move(0, p.x + (invulnerable ? 8 : -8), p.y);
+                p.state = 0;
+                p.p13 += 0x0F;
+                hit_player(a);
+            }
             return true;
         }
 
@@ -5368,6 +5384,10 @@ void Engine::hit_player(int i) {
                        (kStateFlags[p.state] & 2) != 0;
     }
     if (o.ttl == 0 && !invulnerable) {
+        const BoardObject& pl = objects_[0];
+        jill_paths::trace(
+            "hit tick=%d obj=%d kind=%d at %d,%d player=%d,%d state=%d hp=%d",
+            macro_tick_, i, o.kind, o.x, o.y, pl.x, pl.y, pl.state, health());
         player_kill(1, 0);
     }
     o.ttl = 3;
@@ -5878,8 +5898,10 @@ void Engine::process_pending_warp() {
     bool restored_hub = false;
     if (c == '!') {
         // FUN_22ab_1531 restores the board stashed in `temp` when a level is
-        // entered.  The port keeps the hub map/objects in memory, so completed
-        // entrances and every other change on the map screen survive.
+        // entered.  Any board can be the stash, not just the hub map: Jill 1's
+        // attract demo enters 0.dem/1.dem/2.dem from intro.jn1 and must come
+        // back to the intro screen each time.  Keeping the board in memory
+        // also preserves consumed entrances and other map changes.
         if (hub_valid_) {
             board_ = hub_backup_;
             map_ = hub_backup_.map;
@@ -5896,8 +5918,12 @@ void Engine::process_pending_warp() {
             active_.clear();
             order_.clear();
             board_name_ = hub_name_;
-            map_mode_ = true;
-            loaded_level = hub_level_;
+            map_mode_ = hub_map_mode_;
+            // The original keeps the level id that was active when the level
+            // ended.  On the map that is the map's own id; on the demo's intro
+            // board it stays the finished level's id (101/102/103), which is
+            // what stops the entrance Jill is standing on from firing again.
+            loaded_level = map_mode_ ? hub_level_ : level;
             restored_hub = true;
         } else if (!load_board(game_.map_board, err)) {
             std::fprintf(stderr, "warp %s: %s\n", game_.map_board.c_str(),
@@ -5907,18 +5933,22 @@ void Engine::process_pending_warp() {
             loaded_level = level_id();
         }
     } else {
-        // Leaving the hub: stash it exactly as the original writes the current
+        // Leaving a board: stash it exactly as the original writes the current
         // board to its `temp` save before loading the destination.
-        if (map_mode_) {
-            hub_backup_.map = map_;
-            hub_backup_.header = header_;
-            hub_backup_.objects = objects_;
-            hub_valid_ = true;
-        }
+        hub_backup_.map = map_;
+        hub_backup_.header = header_;
+        hub_backup_.objects = objects_;
+        hub_map_mode_ = map_mode_;
+        hub_valid_ = true;
         if (!load_board(cmd, err)) {
             std::fprintf(stderr, "warp %s: %s\n", cmd.c_str(), err.c_str());
             return;
         }
+        // The destination's own level id comes from the CHECKPT that fired,
+        // not from its file name: demo boards are named 0.dem/1.dem/2.dem but
+        // run as levels 101/102/103 (and board 3's level-5 exit must still
+        // report board level 3 on return).
+        board_level_ = level;
         loaded_level = level_id();
     }
     header_ = saved;
@@ -5942,12 +5972,17 @@ void Engine::process_pending_warp() {
         std::fill(header_.begin() + 6 + out * 2, header_.begin() + 6 + 32, 0);
     }
     int active_level = level;
+    int caption_level = active_level;
     if (c == '!') {
-        active_level = restored_hub ? hub_level_ : loaded_level;
+        active_level = loaded_level;
+        // A level exit shows the world-map caption while the stashed board is
+        // restored.  That is level 0 for the shipped maps; the attract demo's
+        // intro board shows "JILL ENTERS / THE / JUNGLE MAP." the same way.
+        caption_level = (restored_hub && !map_mode_) ? 0 : active_level;
     }
     header_[0] = static_cast<uint8_t>(active_level & 0xFF);
     header_[1] = static_cast<uint8_t>((active_level >> 8) & 0xFF);
-    update_caption_for_level(active_level);
+    update_caption_for_level(caption_level);
     if (!map_mode_) {
         place_at_checkpoint(active_level);
     } else if (has_player_) {

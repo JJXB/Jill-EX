@@ -116,9 +116,16 @@ episode and has one entry per demo:
 
 | episode | demo boards | macros | level ids |
 |--|--|--|--|
-| Jill 1 | `0.dem`, `2.dem`, `1.dem` (from intro checkpoints) | `jn1demo.mac` | 101, 103, 102 |
+| Jill 1 | `intro` (start), then `0.dem`, `1.dem`, `2.dem` via intro CHECKPTs | `jn1demo.mac` | 100, 101, 102, 103 |
 | Jill 2 | `3.jn2`, `9.jn2`, `17.jn2` | `jn2dem1.mac` .. `jn2dem3.mac` | 3, 9, 17 |
 | Jill 3 | `1.jn3`, `5.jn3`, `12.jn3` | `jn3dem1.mac` .. `jn3dem3.mac` | 1, 5, 12 |
+
+Jill 1's single demo begins on the intro board at level 100. The intro's demo
+CHECKPTs are laid out left to right with `p13` 101 (`0.dem`), 102 (`1.dem`) and
+103 (`2.dem`), so the same recording visits the three "Scenes From" cards in
+volume order. After each demo board's `!`, the intro board is restored and the
+level id stays at the finished level, which suppresses the entrance Jill is
+standing on and lets the next one fire.
 
 Jill 3's demo code is at runtime `2000:59F9`. It indexes a far-pointer table at
 DGROUP:`0x19CF` (board names), reads the level id from DGROUP:`0x19F7`, sets the
@@ -133,11 +140,12 @@ contain CHECKPT strings `0.dem`, `2.dem`, `1.dem` from the Jill 1 build, but the
 menu DEMO path uses the episode-specific boards above. The intro board is also
 where the "A NEW RELEASE FROM / PRODUCED BY" and ordering text lives.
 
-On a demo start the port now loads the board with the demo level id and runs
-the same `place_at_checkpoint(level)` spawn as a board warp, so Jill begins on
-the level's checkpoint (state 4 recover) with the recorded macro, instead of
-the board's raw player marker. This is the difference that brings the input
-script back in line with the original's level-entry state.
+On a demo start the port loads the demo's start board with its level id and
+runs the same `place_at_checkpoint(level)` spawn as a board warp, so Jill
+begins on that level's checkpoint (state 4 recover) with the recorded macro
+instead of the board's raw player marker. For Jill 1 that start board is
+`intro.jn1` at level 100, whose checkpoint puts her under the "Jill of the
+Jungle / Demo" card exactly where the original recording begins.
 
 ## 4. Level graph
 

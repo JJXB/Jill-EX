@@ -299,7 +299,11 @@ void Engine::player_update(int i) {
                 o.state = 0;
                 o.dx = 0;
                 o.p1b = 0;
-                if (in_.v < 0) {
+                // The 8-frame pull-up is a cosmetic enhancement that ignores
+                // input while it runs.  Recorded macros were made against the
+                // original's instant climb finish, so skip it during playback
+                // or every climb shifts the rest of the demo.
+                if (in_.v < 0 && !macro_playing_) {
                     o.raise = kRaiseFrames;  // pull up over the ledge
                 }
             }

@@ -575,6 +575,7 @@ private:
     // restores the map screen instead of reloading it (original `temp` board).
     Board hub_backup_;
     bool hub_valid_ = false;
+    bool hub_map_mode_ = false;  // stashed board was the world map (MAPDEMO)
     int hub_level_ = 0;
     std::string hub_name_;
     int last_facing_ = 0;        // last non-zero player facing (enhancement aid)

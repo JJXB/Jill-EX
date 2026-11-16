@@ -1,5 +1,31 @@
 # Progress
 
+## 2026-11-16 (Jill 1 attract demo starts on the intro board)
+
+* The Jill 1 demo is now one entry that starts on `intro.jn1` at level 100
+  (the "Jill of the Jungle / Demo" card checkpoint) and plays the single
+  `jn1demo.mac`.  The recording itself walks Jill through the three intro
+  "Scenes From" CHECKPTs, which warp to `0.dem`, `1.dem` and `2.dem` (levels
+  101/102/103).  Starting on `0.dem`/`2.dem`/`1.dem` skipped the first ~12 s
+  of the input stream and could never line up.
+* A level exit (`!`) now restores **any** stashed board, not just the world
+  map: the intro board is cached when Jill enters a demo board, restored on
+  return, and the active level stays the finished level (101/102/103) so the
+  entrance she is standing on does not fire again.  The return still shows the
+  world-map caption ("JILL ENTERS / THE / JUNGLE MAP."), as the original does.
+* `board_level_` is set from the CHECKPT level that loaded the board (not the
+  file name), so demo boards report 101/102/103 and board 3's level-5 exit
+  still reports board level 3.
+* Jill 1's VINECLIMB hit handler now matches `1A41:48F9`: the invulnerability
+  bit gates the whole block, the push tries `x-8` then falls back to `x+8`,
+  and there is no `p13 += 0x0F` stun (that is the Jill 2/3 variant).
+* The 8-frame climb pull-up (an input-freezing cosmetic enhancement) is
+  skipped during macro playback so recorded climbs keep the original timing.
+* Known remaining demo divergence: in `0.dem` at ~42 s the port's Jill clips a
+  VINECLIMB spark by a few pixels during a jump the original clears, then the
+  damage/push takes the recorded route out of sync.  That is gameplay parity,
+  not the input stream; the demo start and intro walk now line up.
+
 ## 2026-11-15 (demo/macro playback)
 
 * Jill 1 demos now use their intro-CHECKPT level ids (`0.dem=101`,

@@ -1022,8 +1022,9 @@ std::string save_label_for(const GameDef& g, int slot) {
 
 // Attract demos shipped with the three Jill episodes.  The board/macro pairs
 // are the original tables (docs/jill23-frontend-flow.md section 3); Jill 1 has
-// no demo table of its own and reuses jn1demo.mac for its three intro-board
-// warps.  Onesimus ships no recorded demos, so it has no entries here.
+// no demo table of its own: one recording starts on the intro board at level
+// 100 and walks through the three "Scenes From" entrances (0.dem / 1.dem /
+// 2.dem).  Onesimus ships no recorded demos, so it has no entries here.
 struct DemoDef {
     const char* game;
     const char* board;
@@ -1032,12 +1033,11 @@ struct DemoDef {
 };
 
 constexpr DemoDef kDemos[] = {
-    // Jill 1 has no demo table in the EXE; the intro BOARD's CHECKPT strings
-    // carry the level ids: 0.dem=101, 1.dem=102, 2.dem=103.  The menu order is
-    // 0, 2, 1, matching the intro checkpoint order.
-    {"jill1", "0.dem", 101, "jn1demo.mac"},
-    {"jill1", "2.dem", 103, "jn1demo.mac"},
-    {"jill1", "1.dem", 102, "jn1demo.mac"},
+    // Jill 1's single demo starts on intro.jn1 at level 100 (the demo card
+    // checkpoint).  The macro walks Jill across the three intro entrances,
+    // which warp to 0.dem, 1.dem and 2.dem in turn; each `!` return restores
+    // the intro board so the recording continues where it left off.
+    {"jill1", "intro", 100, "jn1demo.mac"},
     {"jill2", "3.jn2", 3, "jn2dem1.mac"},
     {"jill2", "9.jn2", 9, "jn2dem2.mac"},
     {"jill2", "17.jn2", 17, "jn2dem3.mac"},
