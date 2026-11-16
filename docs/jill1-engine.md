@@ -832,7 +832,11 @@ bounds-checks the varint and every mask value, consumes all eight mask bits
 only when at least one record parsed.  Mask bit 4 is stored as
 `Engine::macro_key()` for future menu/special-key scripts.  The world tick is
 the same 18.2 Hz as the recorder, and the title-popup freeze is bypassed while
-a macro plays so the recorded timing stays aligned.
+a macro plays so the recorded timing stays aligned.  The camera follow and the
+update pass also switch to the original **232x160** game rectangle for the
+duration of playback: off-screen objects are only updated when they enter that
+rect (the port's modern HUD otherwise expands it to 320x200), so a larger view
+changes when hazards/enemies start moving and the recording drifts.
 
 ## 14. Menus, HUD, save/restore
 

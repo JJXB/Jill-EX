@@ -1,5 +1,29 @@
 # Progress
 
+## 2026-11-16 (macro playback uses the original simulation viewport)
+
+* The world simulation now always centres the camera and culls objects with
+  the original **232x160** game rectangle while a macro plays, independent of
+  the HUD style.  The modern HUD's 320x200 view used to feed `follow_camera()`
+  and the update-pass cull, so off-screen objects (the VINECLIMB sparks) began
+  updating at different ticks, the camera follow differed, and the recorded
+  demo drifted: Jill clipped a spark / failed to climb a vine high enough and
+  the rest of the recording could not continue.  With `--hud` the same demo
+  already played much further, which is what identified the coupling.
+* The macro is started before the entry-spawn camera placement (menu demo and
+  headless `--macro` paths), so the first frame already uses the simulation
+  view.
+* A stashed board now remembers its name as well as its objects/map, so the
+  demo's `!` return to the intro board restores `intro.jn1` instead of an
+  empty board name.
+* Confirmed against the original recording: the intro walk, the `0.dem` entry,
+  the first tall vine climb (same screen position at the same tick) and the
+  exit back to the intro now line up in both HUD styles.
+* Still open: deeper in `0.dem` the port makes one extra vine grab the
+  original does not (the macro holds Left, the grab's `p0f == 6` ignores
+  horizontal input and the demo stalls ~150 ticks), so the level exit happens
+  later than recorded.  That is the next pixel-parity item.
+
 ## 2026-11-16 (Jill 1 attract demo starts on the intro board)
 
 * The Jill 1 demo is now one entry that starts on `intro.jn1` at level 100
@@ -21,10 +45,8 @@
   and there is no `p13 += 0x0F` stun (that is the Jill 2/3 variant).
 * The 8-frame climb pull-up (an input-freezing cosmetic enhancement) is
   skipped during macro playback so recorded climbs keep the original timing.
-* Known remaining demo divergence: in `0.dem` at ~42 s the port's Jill clips a
-  VINECLIMB spark by a few pixels during a jump the original clears, then the
-  damage/push takes the recorded route out of sync.  That is gameplay parity,
-  not the input stream; the demo start and intro walk now line up.
+* The early `0.dem` divergence at ~42 s (Jill clipping a VINECLIMB spark) was
+  caused by the HUD-dependent simulation viewport; see the entry above.
 
 ## 2026-11-15 (demo/macro playback)
 

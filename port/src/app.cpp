@@ -284,9 +284,6 @@ int run_headless(Engine& engine, const Options& opt) {
     if (opt.text_page > 0) {
         engine.show_text_page(opt.text_page);
     }
-    if (!opt.macro_file.empty()) {
-        engine.start_macro(opt.macro_file);
-    }
     if (opt.blade) {
         engine.debug_spawn_blade();
     }
@@ -3057,6 +3054,14 @@ bool start_game(Engine& engine, const std::vector<GameDef>& games, int index,
                      err.c_str());
         return false;
     }
+    // Start playback before the entry spawn: the spawn centres the camera and
+    // builds the object list, and during a macro those must use the original
+    // 232x160 simulation view rather than the HUD style's larger view.
+    if (!macro.empty() && !engine.start_macro(macro)) {
+        std::fprintf(stderr, "demo macro %s could not be started\n",
+                     macro.c_str());
+        return false;
+    }
     if (level >= 0) {
         engine.spawn_at_checkpoint(level);
     }
@@ -3082,13 +3087,6 @@ bool start_game(Engine& engine, const std::vector<GameDef>& games, int index,
     apply_hud_frame(engine, games, hud_frame);
     apply_theme_frame(engine, games, menu_theme);
     apply_menu_frame(engine, games, menu_frame, menu_theme);
-    if (!macro.empty()) {
-        if (!engine.start_macro(macro)) {
-            std::fprintf(stderr, "demo macro %s could not be started\n",
-                         macro.c_str());
-            return false;
-        }
-    }
     return true;
 }
 
@@ -5603,6 +5601,11 @@ int run_app(const Options& opt) {
         std::fprintf(stderr, "data dir: %s (use --data to point at the game files)\n",
                      game.data_dir.c_str());
         return 2;
+    }
+    // Start playback before the entry spawn so the camera/culling use the
+    // original simulation view during macro runs (see start_game).
+    if (!opt.macro_file.empty()) {
+        engine.start_macro(opt.macro_file);
     }
     if (opt.level >= 0) {
         engine.spawn_at_checkpoint(opt.level);

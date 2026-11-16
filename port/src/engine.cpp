@@ -336,10 +336,10 @@ bool Engine::load_board(const std::string& name, std::string& err,
 
     spawn_x_ = has_player_ ? objects_[0].x : 0;
     spawn_y_ = has_player_ ? objects_[0].y : 0;
-    cam_x_ = std::max(0, std::min(spawn_x_ + 8 - view_center_x(),
-                                  Board::kCols * 16 - view_w()));
-    cam_y_ = std::max(0, std::min(spawn_y_ + 16 - view_center_y(),
-                                  Board::kRows * 16 - view_h()));
+    cam_x_ = std::max(0, std::min(spawn_x_ + 8 - sim_center_x(),
+                                  Board::kCols * 16 - sim_view_w()));
+    cam_y_ = std::max(0, std::min(spawn_y_ + 16 - sim_center_y(),
+                                  Board::kRows * 16 - sim_view_h()));
     if (!has_player_) {
         cam_x_ = 0;
         cam_y_ = 0;
@@ -485,9 +485,9 @@ void Engine::tile_prepass() {
     // hook.  The only mode-2 effect is the 5-frame lava cycle, advanced once
     // every 4th frame (the hook tests `frame & 3 == 0`).
     int c0 = cam_x_ >> 4;
-    int c1 = std::min(Board::kCols - 1, (cam_x_ + view_w()) >> 4);
+    int c1 = std::min(Board::kCols - 1, (cam_x_ + sim_view_w()) >> 4);
     int r0 = cam_y_ >> 4;
-    int r1 = std::min(Board::kRows - 1, (cam_y_ + view_h()) >> 4);
+    int r1 = std::min(Board::kRows - 1, (cam_y_ + sim_view_h()) >> 4);
     bool advance = (frame_ & 3) == 0;
     for (int c = c0; c <= c1; ++c) {
         for (int r = r0; r <= r1; ++r) {
@@ -668,8 +668,8 @@ void Engine::update_pass() {
     for (int i = first; i < static_cast<int>(objects_.size()); ++i) {
         BoardObject& o = objects_[static_cast<size_t>(i)];
         bool visible =
-            o.x + o.w >= cam_x_ - 0x60 && o.x <= cam_x_ + view_w() + 0x60 &&
-            o.y + o.h >= cam_y_ - 0x30 && o.y <= cam_y_ + view_h() + 0x30;
+            o.x + o.w >= cam_x_ - 0x60 && o.x <= cam_x_ + sim_view_w() + 0x60 &&
+            o.y + o.h >= cam_y_ - 0x30 && o.y <= cam_y_ + sim_view_h() + 0x30;
         if (visible && active_.size() < static_cast<size_t>(kActiveLimit)) {
             active_.push_back(i);
             o.flags &= ~0xC000;
@@ -859,8 +859,8 @@ bool Engine::update_object(int i) {
             --o.p13;
             if (o.p13 >= 0) {
                 bool onscreen =
-                    o.x + o.w >= cam_x_ && o.x <= cam_x_ + view_w() &&
-                    o.y + o.h >= cam_y_ && o.y <= cam_y_ + view_h();
+                    o.x + o.w >= cam_x_ && o.x <= cam_x_ + sim_view_w() &&
+                    o.y + o.h >= cam_y_ && o.y <= cam_y_ + sim_view_h();
                 if (onscreen) {
                     set_origin(i, o.x + o.dx, o.y + o.dy);
                     objects_[static_cast<size_t>(i)].dy -= 1;
@@ -877,8 +877,8 @@ bool Engine::update_object(int i) {
         case 36: {  // EXPL1 (1a41:0a3b): ballistic debris, no collision
             ++o.p13;
             bool onscreen =
-                o.x + o.w >= cam_x_ && o.x <= cam_x_ + view_w() &&
-                o.y + o.h >= cam_y_ && o.y <= cam_y_ + view_h();
+                o.x + o.w >= cam_x_ && o.x <= cam_x_ + sim_view_w() &&
+                o.y + o.h >= cam_y_ && o.y <= cam_y_ + sim_view_h();
             if (o.p13 < 0x28 && onscreen) {
                 if (o.dy < 0x0C) {
                     ++o.dy;
@@ -2597,10 +2597,10 @@ void Engine::follow_camera() {
         return;
     }
     const BoardObject& p = objects_[0];
-    int tx = p.x + 8 - view_center_x();
-    int ty = p.y + 16 - view_center_y();
-    tx = std::max(0, std::min(tx, Board::kCols * 16 - view_w()));
-    ty = std::max(0, std::min(ty, Board::kRows * 16 - view_h()));
+    int tx = p.x + 8 - sim_center_x();
+    int ty = p.y + 16 - sim_center_y();
+    tx = std::max(0, std::min(tx, Board::kCols * 16 - sim_view_w()));
+    ty = std::max(0, std::min(ty, Board::kRows * 16 - sim_view_h()));
     // Follow fast movement without the old +/-8 px/tick lag.  Horizontal
     // walking is 8 px/tick, but a fall reaches 16 px/tick and the speed cheat
     // can move faster, so the vertical step is larger.  A large jump (respawn,
@@ -5327,8 +5327,8 @@ bool Engine::fishdo(int i, int x, int y) {
 bool Engine::onscreen(int i) const {
     const BoardObject& o = objects_[static_cast<size_t>(i)];
     return !(o.x + o.w < cam_x_ || o.y + o.h < cam_y_ ||
-             cam_x_ + view_w() < o.x ||
-             cam_y_ + view_h() < o.y);
+             cam_x_ + sim_view_w() < o.x ||
+             cam_y_ + sim_view_h() < o.y);
 }
 
 // 26F4:06B4 _pointvect: sign of the direction from object i to the player.
@@ -5603,10 +5603,10 @@ void Engine::warp_player(int x, int y) {
     objects_[0].y = y;
     spawn_x_ = x;
     spawn_y_ = y;
-    cam_x_ = std::max(0, std::min(x + 8 - view_center_x(),
-                                  Board::kCols * 16 - view_w()));
-    cam_y_ = std::max(0, std::min(y + 16 - view_center_y(),
-                                  Board::kRows * 16 - view_h()));
+    cam_x_ = std::max(0, std::min(x + 8 - sim_center_x(),
+                                  Board::kCols * 16 - sim_view_w()));
+    cam_y_ = std::max(0, std::min(y + 16 - sim_center_y(),
+                                  Board::kRows * 16 - sim_view_h()));
     prev_cam_x_ = cam_x_;
     prev_cam_y_ = cam_y_;
     objects_[0].prev_x = x;
@@ -5643,10 +5643,10 @@ void Engine::respawn() {
     p.flags = 0;
     p.prev_x = p.x;
     p.prev_y = p.y;
-    cam_x_ = std::max(0, std::min(p.x + 8 - view_center_x(),
-                                  Board::kCols * 16 - view_w()));
-    cam_y_ = std::max(0, std::min(p.y + 16 - view_center_y(),
-                                  Board::kRows * 16 - view_h()));
+    cam_x_ = std::max(0, std::min(p.x + 8 - sim_center_x(),
+                                  Board::kCols * 16 - sim_view_w()));
+    cam_y_ = std::max(0, std::min(p.y + 16 - sim_center_y(),
+                                  Board::kRows * 16 - sim_view_h()));
     prev_cam_x_ = cam_x_;
     prev_cam_y_ = cam_y_;
     header_[2] = 6;
@@ -5939,6 +5939,7 @@ void Engine::process_pending_warp() {
         hub_backup_.header = header_;
         hub_backup_.objects = objects_;
         hub_map_mode_ = map_mode_;
+        hub_name_ = board_name_;
         hub_valid_ = true;
         if (!load_board(cmd, err)) {
             std::fprintf(stderr, "warp %s: %s\n", cmd.c_str(), err.c_str());
@@ -5998,10 +5999,10 @@ void Engine::process_pending_warp() {
             const BoardObject& p = objects_[0];
             spawn_x_ = p.x;
             spawn_y_ = p.y;
-            cam_x_ = std::max(0, std::min(p.x + 8 - view_center_x(),
-                                         Board::kCols * 16 - view_w()));
-            cam_y_ = std::max(0, std::min(p.y + 16 - view_center_y(),
-                                         Board::kRows * 16 - view_h()));
+            cam_x_ = std::max(0, std::min(p.x + 8 - sim_center_x(),
+                                         Board::kCols * 16 - sim_view_w()));
+            cam_y_ = std::max(0, std::min(p.y + 16 - sim_center_y(),
+                                         Board::kRows * 16 - sim_view_h()));
             prev_cam_x_ = cam_x_;
             prev_cam_y_ = cam_y_;
         }
@@ -6088,10 +6089,10 @@ bool Engine::place_at_checkpoint(int level) {
     }
     spawn_x_ = x;
     spawn_y_ = y;
-    cam_x_ = std::max(0, std::min(x + 8 - view_center_x(),
-                                  Board::kCols * 16 - view_w()));
-    cam_y_ = std::max(0, std::min(y + 16 - view_center_y(),
-                                  Board::kRows * 16 - view_h()));
+    cam_x_ = std::max(0, std::min(x + 8 - sim_center_x(),
+                                  Board::kCols * 16 - sim_view_w()));
+    cam_y_ = std::max(0, std::min(y + 16 - sim_center_y(),
+                                  Board::kRows * 16 - sim_view_h()));
     prev_cam_x_ = cam_x_;
     prev_cam_y_ = cam_y_;
     // A level can start on its macro checkpoint (50.jn1 / 20.jn2).  The
@@ -6246,10 +6247,10 @@ bool Engine::load_game(int slot, std::string& err) {
     page_open_ = false;
     spawn_x_ = has_player_ ? objects_[0].x : 0;
     spawn_y_ = has_player_ ? objects_[0].y : 0;
-    cam_x_ = std::max(0, std::min(spawn_x_ + 8 - view_center_x(),
-                                  Board::kCols * 16 - view_w()));
-    cam_y_ = std::max(0, std::min(spawn_y_ + 16 - view_center_y(),
-                                  Board::kRows * 16 - view_h()));
+    cam_x_ = std::max(0, std::min(spawn_x_ + 8 - sim_center_x(),
+                                  Board::kCols * 16 - sim_view_w()));
+    cam_y_ = std::max(0, std::min(spawn_y_ + 16 - sim_center_y(),
+                                  Board::kRows * 16 - sim_view_h()));
     if (!has_player_) {
         cam_x_ = 0;
         cam_y_ = 0;

@@ -512,6 +512,15 @@ private:
     int view_h() const;
     int view_center_x() const;
     int view_center_y() const;
+    // World-simulation viewport.  The original always centres the camera and
+    // culls objects against its 232x160 game area (the HUD panel is outside
+    // that rect).  Macros were recorded against it, so playback must not
+    // inherit a larger HUD-style view: off-screen object updates would start
+    // at different ticks and the recording would drift.
+    int sim_view_w() const { return macro_playing_ ? 232 : view_w(); }
+    int sim_view_h() const { return macro_playing_ ? 160 : view_h(); }
+    int sim_center_x() const { return sim_view_w() / 2; }
+    int sim_center_y() const { return sim_view_h() / 2; }
     void clear_frame_marks();
     int rnd(int mod);
 
