@@ -5225,9 +5225,22 @@ int run_sdl(const Options& opt, Engine& engine,
         if (SDL_GetTicks() - title_timer >= 500) {
             title_timer = SDL_GetTicks();
             char title[240];
-            std::snprintf(title, sizeof(title), "Jill  %s  %s  hp=%d  %.1f fps",
-                          engine.game().id.c_str(), engine.board_name().c_str(),
-                          engine.health(), 1.0 / step);
+            // Recorded playback shows its tick in the title so a demo frame
+            // can be matched against a headless `--macro` run.
+            if (engine.macro_active()) {
+                std::snprintf(
+                    title, sizeof(title),
+                    "Jill  %s  %s  hp=%d  M=%d/%d  %.1f fps",
+                    engine.game().id.c_str(), engine.board_name().c_str(),
+                    engine.health(), engine.macro_tick(),
+                    engine.macro_duration(), 1.0 / step);
+            } else {
+                std::snprintf(title, sizeof(title),
+                              "Jill  %s  %s  hp=%d  %.1f fps",
+                              engine.game().id.c_str(),
+                              engine.board_name().c_str(), engine.health(),
+                              1.0 / step);
+            }
             screen->set_title(title);
         }
         // Presentation pacing.  The world still advances at `step` (18.2065 Hz);

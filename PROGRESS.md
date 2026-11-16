@@ -1,5 +1,19 @@
 # Progress
 
+## 2026-11-16 (board change keeps the incoming header, only the score carries)
+
+* A board change now follows `FUN_22AB_1531`: the score is saved and restored
+  around the load, while health, keys/gems and the inventory come from the
+  incoming board's header (or from the stashed `temp` copy on `!`).  The old
+  port carried the source board's whole header and then dropped everything but
+  gems, so a level entered from the hub/demo kept the hub's health and lost its
+  board-specific item.  Jill 1's demo now starts `0.dem` with the board's
+  health 6 and its one item, as the original recording does, and the intro
+  return restores the intro's health/items.
+* `RETAIN ITEMS` still keeps the live header across the change (enhancement).
+* The window title shows `M=<tick>/<duration>` during macro playback so a demo
+  frame can be matched to a headless `--macro` run.
+
 ## 2026-11-16 (macro playback uses the original simulation viewport)
 
 * The world simulation now always centres the camera and culls objects with

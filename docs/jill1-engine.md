@@ -505,11 +505,19 @@ String command prefixes **[verified by their use in the main loop]**:
 | `&name.mac` | start recorded-input macro playback (+ optional music) |
 | `#name` | conditional load (checked with `FUN_1581_0660` first) |
 | `!` | end-of-level sequence: gem check, "YOU LEFT WITHOUT FINDING A GEM!" |
-| bare filename | warp to that board, preserving score/health |
+| bare filename | warp to that board, preserving only the score |
 
 `!` handling (`FUN_22ab_1531`): find the CHECKPT whose `0x13` word equals the current
 level number, read its state byte `0x0D`, and either restart the player at the
 checkpoint's `0x05/0x07` fields or advance.
+
+Both branches save only the 32-bit score around the board change
+(`DAT_2cff_83cc/83ce`) and restore it afterwards.  Health, keys, the item list
+and every other header field come from the **incoming** board: the loaded
+board's own header on a bare-filename warp, or the `temp` copy's header when
+`!` restores the stashed board.  That is why a level entered from the hub
+starts with the level's own health/items, and why returning restores the hub's
+pre-level state.
 
 `FUN_22ab_0c9a` writes the same structure back (used by the editor and by save games);
 `JN1SAVE.n` files are just board files.

@@ -5952,26 +5952,23 @@ void Engine::process_pending_warp() {
         board_level_ = level;
         loaded_level = level_id();
     }
-    header_ = saved;
-    if (!retain_items_) {
-        // Default: keys and weapons are left behind when a level is exited,
-        // but unused gems (inventory item 3, the keygem) carry over so they
-        // can open a door in a later level.
-        const int n = header_[4] | (header_[5] << 8);
-        int out = 0;
-        for (int i = 0; i < n && i < Engine::kMaxInventory; ++i) {
-            const int id = header_[6 + i * 2] | (header_[7 + i * 2] << 8);
-            if (id != 3) {
-                continue;
-            }
-            header_[6 + out * 2] = static_cast<uint8_t>(id);
-            header_[7 + out * 2] = 0;
-            ++out;
-        }
-        header_[4] = static_cast<uint8_t>(out);
-        header_[5] = 0;
-        std::fill(header_.begin() + 6 + out * 2, header_.begin() + 6 + 32, 0);
+    // FUN_22AB_1531 saves only the score around the board change: health,
+    // keys/gems/weapons come from the incoming board's header, or from the
+    // `temp` copy when `!` restores a board.  (The old port carried the source
+    // header and then dropped non-gems, so a level entered from the hub or the
+    // demo kept the hub's health and item list instead of the board's.)
+    std::array<uint8_t, 4> saved_score = {saved[0x26], saved[0x27],
+                                          saved[0x28], saved[0x29]};
+    if (retain_items_) {
+        // Enhancement: keep the live inventory/health across the change.
+        header_ = saved;
+    } else if (c == '!' && restored_hub) {
+        header_ = hub_backup_.header;
     }
+    header_[0x26] = saved_score[0];
+    header_[0x27] = saved_score[1];
+    header_[0x28] = saved_score[2];
+    header_[0x29] = saved_score[3];
     int active_level = level;
     int caption_level = active_level;
     if (c == '!') {
