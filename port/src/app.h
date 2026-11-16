@@ -44,6 +44,7 @@ struct Options {
     int resolution_w = 0;       // --resolution WxH, resolved at start-up
     int resolution_h = 0;
     int items = 0;              // --items N: debug, start with N knives
+    int gems = 0;               // --gems N: debug, start with N gems
     bool blade = false;         // --blade: debug, spawn one SPINBLAD
     int morph = -1;             // --morph N: debug, transform (0, 4..7)
     int face = 0;               // --face N: debug, force facing (-1/1)

@@ -2078,3 +2078,12 @@ offsets, board list, title table).
   longer restore with a stale board name or wrong Ctrl+R target.
 * `Tab` (and pad Select / Back / touch) toggles the minimap in game; listed in
   HOTKEYS.md.
+
+* Gems are now the player's, not the board's: the gem items (id 3) survive
+  every board change and are only ever removed by a gem door, so collecting a
+  gem on the map, spending it in level 1 or carrying it into level 2 all work.
+  `load_board` re-applies the live gem count to the incoming header (shipped
+  boards carry no starting gems, so this only restores what Jill already had)
+  and the `!` hub restores do the same for the braces that bypass `load_board`.
+  Recorded macros still get the shipped per-board inventory so recorded
+  playback is byte-identical.  New `--gems N` debug flag for testing.

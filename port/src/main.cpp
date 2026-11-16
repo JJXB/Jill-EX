@@ -150,6 +150,7 @@ void usage() {
         "  --jill-look N   0 = game default, N = installed game N (Jill Select)\n"
         "  --jill-colour N 0 = look's colours, 1..8 = custom suit presets\n"
         "  --items N      debug: start with N knives in the inventory\n"
+        "  --gems N       debug: start with N gems in the inventory\n"
         "  --blade        debug: spawn one spinning blade in front of the player\n"
         "  --morph N      debug: transform (0 = normal, 4 frog, 5 bird, 6 spider, 7 fish)\n"
         "  --face N       debug: force facing -1 (left) or 1 (right)\n"
@@ -495,6 +496,8 @@ int main(int argc, char** argv) {
             opt.player_suit = std::atoi(value("--jill-colour"));
         } else if (a == "--items") {
             opt.items = std::atoi(value("--items"));
+        } else if (a == "--gems") {
+            opt.gems = std::atoi(value("--gems"));
         } else if (a == "--blade") {
             opt.blade = true;
         } else if (a == "--morph") {

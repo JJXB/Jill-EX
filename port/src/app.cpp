@@ -5690,6 +5690,9 @@ int run_app(const Options& opt) {
     for (int i = 0; i < opt.items; ++i) {
         engine.add_item(2);  // debug: knives
     }
+    for (int i = 0; i < opt.gems; ++i) {
+        engine.add_item(3);  // debug: gems
+    }
     if (opt.blade && opt.ticks == 0) {
         engine.debug_spawn_blade();
     }

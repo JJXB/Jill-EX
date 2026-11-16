@@ -268,6 +268,12 @@ bool Engine::load_board(const std::string& name, std::string& err,
     }
 
     board_name_ = file;
+    // Gems are the player's, not the board's: a gem picked up anywhere stays
+    // in the inventory until a gem door spends it.  Shipped boards carry no
+    // starting gems, so this only ever restores what Jill already had.
+    // Recorded macros keep the shipped per-board inventory so playback stays
+    // identical.
+    const int carried_gems = macro_playing_ ? 0 : inv_count(3);
     // The shipped boards mark nearly every cell 0xC000: those bits are the
     // original's "tile needs redrawing" flags (cleared in FUN_26f4_0d52), not
     // collision data.  The port redraws every frame, so strip them on load and
@@ -278,6 +284,13 @@ bool Engine::load_board(const std::string& name, std::string& err,
     }
     header_ = board_.header;
     objects_ = board_.objects;
+    if (carried_gems > 0) {
+        while (del_item(3)) {
+        }
+        for (int i = 0; i < carried_gems; ++i) {
+            add_item(3);
+        }
+    }
     // Start the level on the track its first music CHECKPT names.  The
     // original does not wait for the player to walk onto that trigger: board 1
     // begins on zeppelin.ddt, the hub on funky.ddt, and so on.
@@ -6008,6 +6021,26 @@ void Engine::process_pending_warp() {
         header_[5] = saved[5];
         for (int i = 0; i < kMaxInventory * 2; ++i) {
             header_[6 + i] = saved[6 + i];
+        }
+    }
+    // Gems are never cleared by a board change: they stay until a gem door
+    // spends them.  `load_board` already carried them into a freshly loaded
+    // board; this covers the hub restores above, which bypass it.  Recorded
+    // macros keep the shipped per-board inventory so playback stays identical.
+    if (!retain_items_ && !macro_playing_) {
+        int gems = 0;
+        for (int i = 0; i < 16; ++i) {
+            if ((saved[6 + i * 2] | (saved[7 + i * 2] << 8)) == 3) {
+                ++gems;
+            }
+        }
+        while (del_item(3)) {
+        }
+        for (int i = 0; i < gems; ++i) {
+            add_item(3);
+        }
+        if (restored_hub) {
+            hub_backup_.header = header_;
         }
     }
     header_[0x26] = saved_score[0];
