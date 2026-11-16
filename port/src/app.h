@@ -22,6 +22,10 @@ struct Options {
     std::string dump;           // optional PPM of the final headless frame
     std::string dump_splash;    // optional PPM prefix for the splash pages
     std::string dump_objects;   // optional text table of the object list
+    std::string dump_map;       // optional text dump of the live tile map
+    bool classic_camera = false;  // --classic-camera: original scroll camera
+    int camera_x = -1;          // --camera X,Y: force the dump camera
+    int camera_y = -1;
     int start_x = -1;           // --start X,Y: headless player warp
     int start_y = -1;
     int level = -1;             // --level N: headless header level id override

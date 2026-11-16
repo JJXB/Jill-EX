@@ -2597,6 +2597,29 @@ void Engine::follow_camera() {
         return;
     }
     const BoardObject& p = objects_[0];
+    if (classic_camera_) {
+        // 1FAE:000D: the original only scrolls when the player leaves a dead
+        // zone.  View w/h are the scroll-window tile counts set by the view
+        // mode (15 x 11 for normal play); the horizontal step is 8 px (4 for
+        // the 4-px-wide TINY form) and the vertical step is the update result.
+        const int view_w = 15 * 16;
+        const int view_h = 11 * 16;
+        if (p.x < cam_x_ + 0x58) {
+            if (cam_x_ >= 8) {
+                cam_x_ -= 8;
+            }
+        } else if (p.x > cam_x_ + view_w - 0x68) {
+            const int limit = (Board::kCols - 15 - 1) * 16;
+            if (cam_x_ < limit) {
+                cam_x_ += 8;
+            }
+        }
+        const int lo = std::max(0, p.y - view_h + 0x60);
+        const int hi = std::max(0, p.y - 0x20);
+        int ty = std::max(lo, std::min(p.y - 56, hi));
+        cam_y_ = std::max(0, std::min(ty, Board::kRows * 16 - view_h));
+        return;
+    }
     int tx = p.x + 8 - sim_center_x();
     int ty = p.y + 16 - sim_center_y();
     tx = std::max(0, std::min(tx, Board::kCols * 16 - sim_view_w()));

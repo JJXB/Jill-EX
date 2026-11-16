@@ -2028,3 +2028,22 @@ offsets, board list, title table).
   printf.  The 22:20 console log had no music: lines at all, which points at
   the stdout redirect on PS4 rather than at track selection.  PC still prints
   music: zeppelin.ddt for --board 1.
+
+* Demo-fidelity diagnostics: three headless debug switches.
+  --dump-map FILE writes the live 128x64 tile map (grid + col row id raw
+  flags shape records) after the requested tick, so runtime tile mutation
+  (bridges, fades, hint walls) can be inspected; --camera X,Y forces the
+  camera used for --dump; --classic-camera swaps the centred follow for the
+  original edge-triggered scrolling rule (1FAE:000D: 15x11 tile scroll window,
+  dead zone player_x-cam_x in [0x58, 0x88], 8 px steps).  All are opt-in and
+  console-safe.
+* jn1demo.mac status: the port reproduces the original frame for frame
+  through the first 90 s of the demo - the SCORE/LEVEL readouts change on the
+  same ticks (120 at tick 276, 132 at 472, 135 at 680 = video 55 s).  Past
+  tick ~880 the two diverge: the port's Jill ends up on the board floor
+  (y = 928) while the original stays up on the ledges, so the port reaches the
+  ! CHECKPT at (640,784) only at tick 2090 instead of ~985.  Cross-checked
+  against re/img.bin: _cando (26F4:2227), the state-0 ground tail
+  (26F4:07CA) and the state-2 entry (26F4:0809) are byte-for-byte equivalent to
+  port/src/engine.cpp + player.cpp, so the difference is in the level script /
+  object interaction, not in the tile tests or the player state machine.

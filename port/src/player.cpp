@@ -181,8 +181,10 @@ void Engine::player_update(int i) {
             // Enhancement (default off): a jump pressed while airborne is
             // consumed, so holding it through a fall does not auto-jump on
             // landing.  Turn AIR JUMP BUFFER on for the original
-            // hold-to-bounce behaviour.
-            if (in_.btn1 && !air_jump_buffer_) {
+            // hold-to-bounce behaviour.  Recorded macros always get the
+            // original behaviour: the shipped demos were recorded against it,
+            // so a consumed press here drops their jump-off-vine input.
+            if (in_.btn1 && !air_jump_buffer_ && !macro_playing_) {
                 latch1_ = true;
             }
             if ((o.x & 0x0F) == 0 && cando(i, o.x, o.y, 4) == 0) {
@@ -239,8 +241,10 @@ void Engine::player_update(int i) {
         case 3: {  // climb
             // Same enhancement as state 2: a jump press that is not used to
             // launch off the vine is consumed instead of staying buffered
-            // until the climb ends.
-            if (in_.btn1 && !air_jump_buffer_) {
+            // until the climb ends.  Skipped during macro playback for the
+            // same reason: the original keeps the press alive so the next
+            // Left/Right detaches with the 0x0C jump.
+            if (in_.btn1 && !air_jump_buffer_ && !macro_playing_) {
                 latch1_ = true;
             }
             if (in_.h != 0) {

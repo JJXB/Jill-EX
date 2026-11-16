@@ -203,6 +203,10 @@ public:
     // Enhancement: small 1-px-per-tile board overview in the lower-right corner.
     void set_minimap(bool on) { minimap_ = on; }
     bool minimap() const { return minimap_; }
+    // Debug: reproduce the original's edge-triggered scrolling camera
+    // (1FAE:000D) instead of the port's centred follow.  Used to compare
+    // recorded output against the original frame for frame.
+    void set_classic_camera(bool on) { classic_camera_ = on; }
     // Enhancement (default ON): cycle the four-frame water tile groups.  The
     // original tile hook animates 0x190..0x1A5 on odd sub-frames; retail
     // releases differ over whether the water is animated at all.
@@ -568,6 +572,7 @@ private:
     int menu_theme_ = 0;
     bool air_jump_buffer_ = false;  // enhancement: hold jump through a fall
     bool minimap_ = false;          // enhancement: board overview overlay
+    bool classic_camera_ = false;   // debug: original edge-triggered scrolling
     bool animated_water_ = true;    // enhancement: 4-frame water tile cycle
     bool center_fish_shot_ = false; // enhancement: centre the fish shot
     // Jill Select: source and target player colour tables (16 x palette index).

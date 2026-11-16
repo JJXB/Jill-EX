@@ -356,6 +356,52 @@ int run_headless(Engine& engine, const Options& opt) {
         std::fclose(f);
     }
 
+    if (!opt.dump_map.empty()) {
+        FILE* f = std::fopen(opt.dump_map.c_str(), "w");
+        if (!f) {
+            std::fprintf(stderr, "cannot write %s\n", opt.dump_map.c_str());
+            return 1;
+        }
+        std::fprintf(f, "# live map: col x row -> tile id and flags\n");
+        std::fprintf(f, "     ");
+        for (int c = 0; c < Board::kCols; ++c) {
+            std::fprintf(f, "%d", (c / 10) % 10);
+        }
+        std::fprintf(f, "\n     ");
+        for (int c = 0; c < Board::kCols; ++c) {
+            std::fprintf(f, "%d", c % 10);
+        }
+        std::fprintf(f, "\n");
+        for (int r = 0; r < Board::kRows; ++r) {
+            std::fprintf(f, "%3d  ", r);
+            for (int c = 0; c < Board::kCols; ++c) {
+                const int id = engine.map_tile(c, r);
+                const unsigned flags =
+                    static_cast<unsigned>(engine.tile(id).flags);
+                char ch = '.';
+                if (flags & 1) {
+                    ch = (flags & 2) ? '#' : '~';
+                }
+                if (!(flags & 4)) {
+                    ch = 'C';
+                }
+                std::fputc(ch, f);
+            }
+            std::fputc('\n', f);
+        }
+        for (int r = 0; r < Board::kRows; ++r) {
+            for (int c = 0; c < Board::kCols; ++c) {
+                const int id = engine.map_tile(c, r);
+                const unsigned flags =
+                    static_cast<unsigned>(engine.tile(id).flags);
+                std::fprintf(f, "%d %d %d 0x%03X 0x%04X 0x%04X\n", c, r, id,
+                             static_cast<unsigned>(id), flags,
+                             static_cast<unsigned>(engine.tile(id).shape));
+            }
+        }
+        std::fclose(f);
+    }
+
     if (!opt.dump.empty()) {
         uint8_t palette[768];
         load_palette(opt.palette, palette);
@@ -375,7 +421,11 @@ int run_headless(Engine& engine, const Options& opt) {
         } else {
             engine.set_stereo_shift(0);
             engine.set_stereo_convergence(0);
-            engine.render(fb);
+            if (opt.camera_x >= 0 && opt.camera_y >= 0) {
+                engine.render_at(fb, opt.camera_x, opt.camera_y, false);
+            } else {
+                engine.render(fb);
+            }
         }
         std::vector<uint32_t> argb(fb.px.size());
         for (size_t i = 0; i < fb.px.size(); ++i) {
@@ -5561,6 +5611,7 @@ int run_app(const Options& opt) {
     engine.set_message_box(opt.message_box);
     engine.set_air_jump_buffer(opt.air_jump_buffer);
     engine.set_minimap(opt.minimap);
+    engine.set_classic_camera(opt.classic_camera);
     engine.set_animated_water(opt.animated_water);
     engine.set_center_fish_shot(opt.center_fish_shot);
     apply_player_look(engine, games, opt.player_look, opt.player_suit);

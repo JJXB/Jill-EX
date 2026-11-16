@@ -100,6 +100,9 @@ void usage() {
         "  --dump FILE    with --ticks: write the final frame as binary PPM\n"
         "  --dump-splash P  write the selected splash pages as P1.ppm, P2.ppm\n"
         "  --dump-objects FILE  with --ticks: write the object table as text\n"
+        "  --dump-map FILE  with --ticks: write the live 128x64 tile map as text\n"
+        "  --classic-camera  debug: original edge-triggered scrolling camera\n"
+        "  --camera X,Y   with --dump: force the camera used for the PPM\n"
         "  --start X,Y    with --ticks: put the player at X,Y (debug)\n"
         "  --level N      with --ticks: set the board header level id (debug)\n"
         "  --macro NAME   replay a recorded .mac input script (debug/demos)\n"
@@ -350,6 +353,15 @@ int main(int argc, char** argv) {
             opt.dump_splash = value("--dump-splash");
         } else if (a == "--dump-objects") {
             opt.dump_objects = value("--dump-objects");
+        } else if (a == "--dump-map") {
+            opt.dump_map = value("--dump-map");
+        } else if (a == "--classic-camera") {
+            opt.classic_camera = true;
+        } else if (a == "--camera") {
+            const char* v = value("--camera");
+            opt.camera_x = std::atoi(v);
+            const char* comma = std::strchr(v, ',');
+            opt.camera_y = comma ? std::atoi(comma + 1) : -1;
         } else if (a == "--start") {
             const char* v = value("--start");
             opt.start_x = std::atoi(v);
