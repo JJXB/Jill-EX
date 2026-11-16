@@ -1,5 +1,19 @@
 # Progress
 
+## 2026-11-16 (Android toolchain provisioned; port plan written)
+
+* Added `ANDROID_PORT_PLAN.md` — phased plan for an Android port reusing
+  `port/src` through SDL2, modelled on `PS4_PORT_PLAN.md`.
+* Installed the toolchain under `D:\Apps\AndroidSDK`: Temurin JDK 17.0.21,
+  command-line tools 9862592, platform-tools, platform 35, build-tools 35.0.1,
+  NDK 27.3.13750724, CMake 3.22.1, Gradle 8.14.7 and SDL2 2.32.10 source
+  (including its `android-project/` Gradle template).
+* Set user-scope `ANDROID_HOME`, `ANDROID_SDK_ROOT`, `JAVA_HOME`,
+  `ANDROID_NDK_HOME`/`ANDROID_NDK_ROOT` and added the tool bin folders to PATH.
+  Machine-level `java`/`cmake` entries still win for bare commands because user
+  PATH comes after machine PATH; Gradle and sdkmanager use `JAVA_HOME` (17).
+* No Android project scaffolding created yet; PC/PS4/Vita builds untouched.
+
 ## 2026-11-16 (board change keeps the incoming header, only the score carries)
 
 * A board change now follows `FUN_22AB_1531`: the score is saved and restored
@@ -2047,3 +2061,20 @@ offsets, board list, title table).
   (26F4:07CA) and the state-2 entry (26F4:0809) are byte-for-byte equivalent to
   port/src/engine.cpp + player.cpp, so the difference is in the level script /
   object interaction, not in the tile tests or the player state machine.
+
+* Fixed: gems/keys picked up inside a level now carry over to the world map.
+  The `!` exit restores the hub board stashed when the level was entered, so
+  the hub's header still held the inventory Jill had *before* the level.  When
+  the restored hub is the map board (`hub_map_mode_`) the live item list is
+  copied into the map header; the demo's intro-board restore is left untouched
+  so recorded playback is unaffected.  The same merge runs when `!` reloads the
+  map from disk (no stashed hub, e.g. an older save).
+* Fixed: loading a save made inside a level threw away the world map's progress
+  (`hub_valid_ = false`), so every finished entrance re-opened.  Port saves can
+  now carry a magic-tagged extra block ("JLX1" + u32 length) holding the stashed
+  hub board plus both board names.  `Board::save` writes it, `Board::load`
+  accepts it, and shipped boards still reject trailing bytes.  The block also
+  records the board the save was made on, so saves of demo boards (`0.dem`) no
+  longer restore with a stale board name or wrong Ctrl+R target.
+* `Tab` (and pad Select / Back / touch) toggles the minimap in game; listed in
+  HOTKEYS.md.

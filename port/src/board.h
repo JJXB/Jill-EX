@@ -43,12 +43,25 @@ struct Board {
     std::array<uint16_t, kCols * kRows> map{};
     std::vector<BoardObject> objects;
     std::array<uint8_t, kHeaderSize> header{};
+    // Port-only save tail: opaque payload kept by save files (the hub board
+    // stashed when a level was entered).  Empty for game boards.
+    std::vector<uint8_t> extra;
 
     bool load(const std::string& path, std::string& err);
+    // Parse a board payload that is already in memory (used for the hub block
+    // embedded in a port save).  Trailing port save tails are ignored unless
+    // `allow_extra` is set.
+    bool decode(const uint8_t* data, size_t size, const std::string& label,
+                std::string& err) {
+        return parse(data, size, label, false, err);
+    }
     // Write the live board back in the on-disk board layout.  This is exactly
     // what the original's save routine (FUN_22ab_0c9a) does, so a port save is
-    // a normal board file (JN1SAVE.n and friends).
+    // a normal board file (JN1SAVE.n and friends).  `extra` is appended as a
+    // magic-tagged tail that only Board::load understands.
     bool save(const std::string& path, std::string& err) const;
+    // Board payload without the `extra` tail, for embedding in a save.
+    void encode(std::vector<uint8_t>& out) const;
 
     int level_id() const { return header[0] | (header[1] << 8); }
     int health() const { return header[2] | (header[3] << 8); }
@@ -57,4 +70,8 @@ struct Board {
     std::string item_ids() const;
 
     static bool looks_like_board(const std::string& path);
+
+private:
+    bool parse(const uint8_t* d, size_t size, const std::string& label,
+               bool allow_extra, std::string& err);
 };

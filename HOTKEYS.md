@@ -127,6 +127,7 @@ Leaving the name blank also saves it as `JILL`.
 | `F4` | Toggle debug fly |
 | `F5` | Toggle invincibility |
 | `F8` | Print the current engine status to the console |
+| `Tab` | Toggle the minimap |
 | `F11` | Toggle exclusive fullscreen / window |
 | `S` | Save game (when a game is running) |
 | `R` | Restore game |
@@ -142,7 +143,8 @@ Leaving the name blank also saves it as `JILL`.
 | Esc | Back one screen; from the main menu it closes the menu |
 
 Menus also accept the gamepad: D-pad or left stick moves, **A** confirms,
-**B** goes back, **Start** pauses/resumes.
+**B** goes back, **Start** pauses/resumes.  While a game is running, **Select**
+(pad Back / touch pad) toggles the minimap just like `Tab`.
 
 ### Level select (F3)
 

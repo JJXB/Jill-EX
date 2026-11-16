@@ -25,28 +25,12 @@ std::string Board::item_ids() const {
     return out;
 }
 
-bool Board::load(const std::string& path, std::string& err) {
-    FILE* f = std::fopen(path.c_str(), "rb");
-    if (!f) {
-        err = "cannot open " + path;
+bool Board::parse(const uint8_t* d, size_t dsize, const std::string& label,
+                  bool allow_extra, std::string& err) {
+    if (dsize < 0x4000 + 2 + kHeaderSize) {
+        err = label + " is too small for a board";
         return false;
     }
-    std::fseek(f, 0, SEEK_END);
-    long size = std::ftell(f);
-    std::fseek(f, 0, SEEK_SET);
-    if (size < 0x4000 + 2 + kHeaderSize) {
-        std::fclose(f);
-        err = path + " is too small for a board";
-        return false;
-    }
-    std::vector<uint8_t> d(static_cast<size_t>(size));
-    size_t got = std::fread(d.data(), 1, d.size(), f);
-    std::fclose(f);
-    if (got != d.size()) {
-        err = "short read on " + path;
-        return false;
-    }
-
     for (int i = 0; i < kCols * kRows; ++i) {
         map[i] = rd16(&d[i * 2]);
     }
@@ -54,12 +38,12 @@ bool Board::load(const std::string& path, std::string& err) {
     int count = rd16(&d[p]);
     p += 2;
     if (count < 1 || count > kMaxObjects) {
-        err = path + ": object count out of range";
+        err = label + ": object count out of range";
         return false;
     }
     size_t need = p + static_cast<size_t>(count) * 31 + kHeaderSize;
-    if (need > d.size()) {
-        err = path + ": truncated object block";
+    if (need > dsize) {
+        err = label + ": truncated object block";
         return false;
     }
 
@@ -101,52 +85,77 @@ bool Board::load(const std::string& path, std::string& err) {
         if (!has_string[static_cast<size_t>(i)]) {
             continue;
         }
-        if (sp + 2 > d.size()) {
-            err = path + ": truncated string";
+        if (sp + 2 > dsize) {
+            err = label + ": truncated string";
             return false;
         }
         int len = rd16(&d[sp]);
         sp += 2;
-        if (sp + static_cast<size_t>(len) + 1 > d.size()) {
-            err = path + ": truncated string body";
+        if (sp + static_cast<size_t>(len) + 1 > dsize) {
+            err = label + ": truncated string body";
             return false;
         }
         objects[i].text.assign(reinterpret_cast<const char*>(&d[sp]),
                                static_cast<size_t>(len));
         sp += static_cast<size_t>(len) + 1;
     }
-    if (sp != d.size()) {
-        err = path + ": trailing bytes after string block";
+    extra.clear();
+    if (sp != dsize && allow_extra) {
+        // Port save tail: magic + u32 length + payload.  Only save files carry
+        // it; a shipped board with trailing bytes is still an error.
+        if (sp + 8 <= dsize && d[sp] == 'J' && d[sp + 1] == 'L' &&
+            d[sp + 2] == 'X' && d[sp + 3] == '1') {
+            const size_t n = static_cast<size_t>(d[sp + 4]) |
+                             (static_cast<size_t>(d[sp + 5]) << 8) |
+                             (static_cast<size_t>(d[sp + 6]) << 16) |
+                             (static_cast<size_t>(d[sp + 7]) << 24);
+            sp += 8;
+            if (sp + n != dsize) {
+                err = label + ": truncated extra block";
+                return false;
+            }
+            extra.assign(d + sp, d + sp + n);
+            sp = dsize;
+        }
+    }
+    if (sp != dsize) {
+        err = label + ": trailing bytes after string block";
         return false;
     }
     return true;
 }
 
-bool Board::save(const std::string& path, std::string& err) const {
-    FILE* f = std::fopen(path.c_str(), "wb");
+bool Board::load(const std::string& path, std::string& err) {
+    FILE* f = std::fopen(path.c_str(), "rb");
     if (!f) {
-        err = "cannot write " + path;
+        err = "cannot open " + path;
         return false;
     }
-    bool ok = true;
-    auto wr8 = [&](uint8_t v) {
-        if (ok && std::fputc(v, f) == EOF) {
-            ok = false;
-        }
-    };
-    auto wr16 = [&](uint16_t v) {
-        wr8(static_cast<uint8_t>(v & 0xFF));
-        wr8(static_cast<uint8_t>((v >> 8) & 0xFF));
-    };
+    std::fseek(f, 0, SEEK_END);
+    long size = std::ftell(f);
+    std::fseek(f, 0, SEEK_SET);
+    std::vector<uint8_t> d(size > 0 ? static_cast<size_t>(size) : 0);
+    size_t got = d.empty() ? 0 : std::fread(d.data(), 1, d.size(), f);
+    std::fclose(f);
+    if (got != d.size()) {
+        err = "short read on " + path;
+        return false;
+    }
+    return parse(d.data(), d.size(), path, true, err);
+}
 
-    for (int i = 0; i < kCols * kRows && ok; ++i) {
+void Board::encode(std::vector<uint8_t>& out) const {
+    out.clear();
+    out.reserve(0x4000 + 2 + objects.size() * 31 + kHeaderSize + 64);
+    auto wr16 = [&](uint16_t v) {
+        out.push_back(static_cast<uint8_t>(v & 0xFF));
+        out.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
+    };
+    for (int i = 0; i < kCols * kRows; ++i) {
         wr16(map[static_cast<size_t>(i)]);
     }
     wr16(static_cast<uint16_t>(objects.size()));
     for (const BoardObject& o : objects) {
-        if (!ok) {
-            break;
-        }
         uint8_t r[31] = {};
         r[0] = static_cast<uint8_t>(o.kind);
         // x/y/dx/dy are signed 16-bit; the rest are unsigned except state.
@@ -173,34 +182,46 @@ bool Board::save(const std::string& path, std::string& err) const {
             r[p++] = static_cast<uint8_t>(v & 0xFF);
             r[p++] = static_cast<uint8_t>((v >> 8) & 0xFF);
         }
-        if (std::fwrite(r, 1, sizeof(r), f) != sizeof(r)) {
-            ok = false;
-        }
+        out.insert(out.end(), r, r + sizeof(r));
     }
-    if (ok) {
-        if (std::fwrite(header.data(), 1, header.size(), f) != header.size()) {
-            ok = false;
-        }
-    }
+    out.insert(out.end(), header.begin(), header.end());
     // Strings follow the header in object order: u16 length, bytes, NUL.
     for (const BoardObject& o : objects) {
-        if (!ok) {
-            break;
-        }
         if (o.text.empty()) {
             continue;
         }
         wr16(static_cast<uint16_t>(o.text.size()));
-        if (ok && std::fwrite(o.text.data(), 1, o.text.size(), f) !=
-                      o.text.size()) {
-            ok = false;
-        }
-        wr8(0);
+        out.insert(out.end(), o.text.begin(), o.text.end());
+        out.push_back(0);
     }
-    if (std::fclose(f) != 0) {
-        ok = false;
+}
+
+bool Board::save(const std::string& path, std::string& err) const {
+    std::vector<uint8_t> buf;
+    encode(buf);
+    if (!extra.empty()) {
+        // Port-only tail, used only by save files: the hub board that was
+        // stashed when a level was entered.  Board::load accepts it; the
+        // game's own loader never sees it.
+        const size_t n = extra.size();
+        buf.push_back('J');
+        buf.push_back('L');
+        buf.push_back('X');
+        buf.push_back('1');
+        buf.push_back(static_cast<uint8_t>(n & 0xFF));
+        buf.push_back(static_cast<uint8_t>((n >> 8) & 0xFF));
+        buf.push_back(static_cast<uint8_t>((n >> 16) & 0xFF));
+        buf.push_back(static_cast<uint8_t>((n >> 24) & 0xFF));
+        buf.insert(buf.end(), extra.begin(), extra.end());
     }
-    if (!ok) {
+    FILE* f = std::fopen(path.c_str(), "wb");
+    if (!f) {
+        err = "cannot write " + path;
+        return false;
+    }
+    const size_t wr = std::fwrite(buf.data(), 1, buf.size(), f);
+    const bool closed = std::fclose(f) == 0;
+    if (wr != buf.size() || !closed) {
         err = "short write on " + path;
         return false;
     }

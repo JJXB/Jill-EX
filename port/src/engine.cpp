@@ -5987,6 +5987,28 @@ void Engine::process_pending_warp() {
         header_ = saved;
     } else if (c == '!' && restored_hub) {
         header_ = hub_backup_.header;
+        // The hub copy was stashed when the level was entered, so it still has
+        // the item list Jill had *before* the level.  On the world map, keys
+        // and gems picked up inside the level (and not spent) belong to Jill,
+        // so carry the live list over.  Other stashed boards (the demo's intro
+        // screen) keep the stashed header, exactly as the original does.
+        if (hub_map_mode_) {
+            header_[4] = saved[4];
+            header_[5] = saved[5];
+            for (int i = 0; i < kMaxInventory * 2; ++i) {
+                header_[6 + i] = saved[6 + i];
+            }
+            hub_backup_.header = header_;
+        }
+    } else if (c == '!' && map_mode_) {
+        // No stashed hub (a save from before the hub block existed, or a level
+        // started directly): the map was just reloaded from disk.  Keep the
+        // inventory the level ended with so gems still show on the map.
+        header_[4] = saved[4];
+        header_[5] = saved[5];
+        for (int i = 0; i < kMaxInventory * 2; ++i) {
+            header_[6 + i] = saved[6 + i];
+        }
     }
     header_[0x26] = saved_score[0];
     header_[0x27] = saved_score[1];
@@ -6185,6 +6207,40 @@ bool Engine::save_game(int slot, std::string& err) {
     b.map = map_;
     b.header = header_;
     b.objects = objects_;
+    // A save made inside a level must also carry the hub board that was
+    // stashed when the level was entered, or loading it and walking out of the
+    // level reloads the hub from disk and every finished entrance reopens.
+    // The block is version 2: flags, hub level/name, this board's name (a save
+    // has no name field of its own) and the encoded hub board.
+    {
+        std::vector<uint8_t> payload;
+        const bool have_hub = hub_valid_ && !map_mode_;
+        payload.push_back(2);  // version
+        payload.push_back(static_cast<uint8_t>((have_hub ? 1 : 0) |
+                                               (hub_map_mode_ ? 2 : 0)));
+        payload.push_back(static_cast<uint8_t>(hub_level_ & 0xFF));
+        payload.push_back(static_cast<uint8_t>((hub_level_ >> 8) & 0xFF));
+        auto push_name = [&payload](const std::string& s) {
+            const size_t n = s.size() > 0xFFFF ? 0xFFFF : s.size();
+            payload.push_back(static_cast<uint8_t>(n & 0xFF));
+            payload.push_back(static_cast<uint8_t>((n >> 8) & 0xFF));
+            payload.insert(payload.end(), s.begin(),
+                           s.begin() + static_cast<long>(n));
+        };
+        push_name(have_hub ? hub_name_ : std::string());
+        push_name(board_name_);
+        std::vector<uint8_t> board_bytes;
+        if (have_hub) {
+            hub_backup_.encode(board_bytes);
+        }
+        const uint32_t bsz = static_cast<uint32_t>(board_bytes.size());
+        payload.push_back(static_cast<uint8_t>(bsz & 0xFF));
+        payload.push_back(static_cast<uint8_t>((bsz >> 8) & 0xFF));
+        payload.push_back(static_cast<uint8_t>((bsz >> 16) & 0xFF));
+        payload.push_back(static_cast<uint8_t>((bsz >> 24) & 0xFF));
+        payload.insert(payload.end(), board_bytes.begin(), board_bytes.end());
+        b.extra = std::move(payload);
+    }
     if (!b.save(path, err)) {
         return false;
     }
@@ -6219,6 +6275,64 @@ bool Engine::load_game(int slot, std::string& err) {
     map_mode_ = (header_[0] | (header_[1] << 8)) == 0;
     hub_valid_ = false;
     hub_level_ = map_mode_ ? 0 : level_id();
+    std::string save_board_name;
+    if (!b.extra.empty()) {
+        // Restore the hub board stashed when the level was entered, so the
+        // world map keeps its finished entrances after a save/load, and pick up
+        // the board name the save was made on.
+        const uint8_t* p = b.extra.data();
+        const size_t n = b.extra.size();
+        size_t at = 0;
+        auto take_u16 = [&](size_t& o) -> size_t {
+            if (o + 2 > n) {
+                return 0;
+            }
+            const size_t v = static_cast<size_t>(p[o] | (p[o + 1] << 8));
+            o += 2;
+            return v;
+        };
+        if (n >= 6 && p[0] == 2) {
+            const bool have_hub = (p[1] & 1) != 0;
+            const bool hmap = (p[1] & 2) != 0;
+            const int hlevel = p[2] | (p[3] << 8);
+            at = 4;
+            const size_t hub_len = take_u16(at);
+            if (hub_len <= 512 && at + hub_len <= n) {
+                std::string hname(reinterpret_cast<const char*>(p + at),
+                                  hub_len);
+                at += hub_len;
+                const size_t cur_len = take_u16(at);
+                if (cur_len <= 512 && at + cur_len <= n) {
+                    save_board_name.assign(
+                        reinterpret_cast<const char*>(p + at), cur_len);
+                    at += cur_len;
+                    const uint32_t bsz =
+                        at + 4 <= n ? (static_cast<uint32_t>(p[at]) |
+                                       (static_cast<uint32_t>(p[at + 1]) << 8) |
+                                       (static_cast<uint32_t>(p[at + 2]) << 16) |
+                                       (static_cast<uint32_t>(p[at + 3]) << 24))
+                                    : 0;
+                    at += 4;
+                    if (have_hub && bsz > 0 && at + bsz == n) {
+                        Board hub;
+                        std::string herr;
+                        if (hub.decode(p + at, bsz, "save hub", herr)) {
+                            hub_backup_ = std::move(hub);
+                            hub_valid_ = true;
+                            hub_map_mode_ = hmap;
+                            hub_level_ = hlevel;
+                            hub_name_ = hname;
+                            if (hub_name_.empty() && hub_map_mode_) {
+                                hub_name_ = game_.map_board;
+                            }
+                        } else {
+                            jill_paths::trace("save hub: %s", herr.c_str());
+                        }
+                    }
+                }
+            }
+        }
+    }
     if (map_mode_) {
         hub_name_ = game_.map_board;
     }
@@ -6236,6 +6350,11 @@ bool Engine::load_game(int slot, std::string& err) {
                 break;
             }
         }
+        // The numeric look-up misses demo boards and level overrides; the save
+        // block records the name it was made on.
+        if (!save_board_name.empty()) {
+            board_name_ = save_board_name;
+        }
     }
     if (!board_name_.empty() && !has_extension(board_name_)) {
         board_name_ += game_.board_ext;
@@ -6245,8 +6364,8 @@ bool Engine::load_game(int slot, std::string& err) {
     // would leave the previous (menu/level) track playing.
     music_request_ = first_board_music(objects_);
     last_music_ = music_request_;
-    jill_paths::trace("save load: board=%s track=%s", board_name_.c_str(),
-                      music_request_.c_str());
+    jill_paths::trace("save load: board=%s track=%s hub=%d", board_name_.c_str(),
+                      music_request_.c_str(), hub_valid_ ? 1 : 0);
     has_player_ = objects_[0].kind == 0 || objects_[0].kind == 23;
     for (BoardObject& o : objects_) {
         o.prev_x = o.x;

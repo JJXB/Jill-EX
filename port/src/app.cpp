@@ -4795,6 +4795,13 @@ int run_sdl(const Options& opt, Engine& engine,
                                 nav = 6;  // resume
                             }
                             break;
+                        case SDL_CONTROLLER_BUTTON_BACK:
+                            // Select / touch pad: toggle the minimap in game.
+                            if (game_started && !menu_open(menu) &&
+                                !select.open && !ending.active) {
+                                engine.set_minimap(!engine.minimap());
+                            }
+                            break;
                         default:
                             break;
                     }
@@ -4891,6 +4898,11 @@ int run_sdl(const Options& opt, Engine& engine,
                     continue;
                 }
                 switch (sc) {
+                    case SDL_SCANCODE_TAB:
+                        engine.set_minimap(!engine.minimap());
+                        std::printf("minimap: %s\n",
+                                    engine.minimap() ? "on" : "off");
+                        break;
                     case SDL_SCANCODE_F11:
                         video.mode = (video.mode == 0) ? 1 : 0;
                         apply_video();
