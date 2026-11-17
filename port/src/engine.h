@@ -10,6 +10,7 @@
 #include "external.h"
 #include "framebuffer.h"
 #include "game.h"
+#include "macro.h"
 #include "profile.h"
 #include "shapes.h"
 #include "textpages.h"
@@ -53,8 +54,20 @@ public:
     // and the attract demos).  Returns true if the file opened and contained
     // at least one record.
     bool start_macro(const std::string& name);
+    // Replay an in-memory record list (the external demo studio loads and
+    // edits `*.mac` files itself, then hands the result over).  Records are
+    // stable-sorted by tick and playback restarts from tick 0.
+    bool set_macro_records(std::vector<MacroRecord> records);
     // True while the scripted inputs are still being fed to the update.
     bool macro_active() const { return macro_playing_; }
+    // The record list being played (empty after stop_macro()).
+    const std::vector<MacroRecord>& macro_records() const { return macro_; }
+    // Index of the next record to apply; also the count applied so far.
+    int macro_index() const {
+        return static_cast<int>(macro_pos_);
+    }
+    // Live input the engine is feeding the update (recorded or polled).
+    const InputState& input() const { return in_; }
     // Last ASCII key recorded by the macro (0 = none).  Reserved for future
     // menu/special-key scripts; the app may consume it with take_macro_key().
     int macro_key() const { return macro_key_; }
@@ -553,7 +566,7 @@ private:
     int prev_cam_y_ = 0;
     int frame_ = 0;
     int water_sound_ = -0x100;  // DGROUP:0x439E, last water-splash frame
-    uint32_t rng_ = 0x2A3B1C4D;  // stands in for FUN_2ca6_0015
+    uint32_t rng_ = 0x3039;  // Turbo C rand() LCG (2CA6:0004/0015)
     bool hud_classic_ = false;
     bool hud_portrait_ = true;
     bool hide_text_kinds_ = false;
@@ -599,16 +612,7 @@ private:
     std::vector<uint16_t> sound_queue_;  // packed priority<<8 | logical id
     // Recorded ending macro (`&end1.mac`): one record per input change.  Time
     // is an absolute tick count from playback start (jill1-engine.md 13.1).
-    struct MacroRec {
-        int time = 0;      // tick when this record takes effect
-        int mask = 0;      // which fields below are valid
-        int h = 0;
-        int v = 0;
-        bool btn1 = false;
-        bool btn2 = false;
-        int key = 0;       // last ASCII key (mask bit 4)
-    };
-    std::vector<MacroRec> macro_;
+    std::vector<MacroRecord> macro_;
     size_t macro_pos_ = 0;
     int macro_tick_ = 0;
     int macro_last_ = 0;

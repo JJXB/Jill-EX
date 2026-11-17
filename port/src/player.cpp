@@ -74,43 +74,53 @@ void Engine::player_update(int i) {
                 if (o.p11 == -1) {
                     o.p11 = 3;
                 }
-            }
+                // 1FAE:0469: the landing pose goes straight to the common
+                // tail; the walk/idle block is only reached with p11 >= 0, so
+                // held left/right cannot cut a landing short.
+            } else {
+                // Enhancement: while crouched, Left/Right change the aim
+                // instead of standing up and walking.  dy was decremented
+                // above, so a tracked crouch has dy >= 1 here and reaches 3 in
+                // the down branch.
+                const bool crouch_aim =
+                    fire_while_crouched_ && in_.v > 0 && o.dy >= 1;
 
-            // Enhancement: while crouched, Left/Right change the aim instead
-            // of standing up and walking.  dy was decremented above, so a
-            // tracked crouch has dy >= 1 here and reaches 3 in the down branch.
-            const bool crouch_aim =
-                fire_while_crouched_ && in_.v > 0 && o.dy >= 1;
-
-            if (o.dx == 0) {
-                if (in_.h != 0 && !crouch_aim) {
+                if (o.dx == 0) {
+                    if (in_.h != 0 && !crouch_aim) {
+                        changed = 1;
+                        o.p0f = 7;
+                        o.dx = in_.h;
+                        o.p11 = 0;
+                        // 1FAE:04D8 jumps straight to the shared tail: the
+                        // walk-start tick does not run the water/gap test or
+                        // the jump/vertical branch.
+                        goto shared_tail;
+                    }
+                    if (o.p11 > 0x12C) {
+                        o.p1b = 0;
+                        o.p11 = 0x14;
+                        changed = 1;
+                    } else if (o.p11 >= 0x10C) {
+                        changed = 1;
+                    } else if (o.p11 == 3) {
+                        changed = 1;
+                    }
+                } else if (in_.h == 0) {
+                    if (o.p11 >= 2 && o.p0f != 0) {
+                        changed = 1;
+                        o.dx = 0;
+                        o.p0f = 0;
+                        o.p11 = 0;
+                    }
+                } else if (o.dx == in_.h) {
                     changed = 1;
-                    o.p0f = 7;
-                    o.dx = in_.h;
-                    o.p11 = 0;
-                    goto common_tail;
-                }
-                if (o.p11 > 0x12C) {
-                    o.p1b = 0;
-                    o.p11 = 0x14;
-                    changed = 1;
-                } else if (o.p11 >= 0x10C) {
-                    changed = 1;
-                } else if (o.p11 == 3) {
-                    changed = 1;
-                }
-            } else if (in_.h == 0) {
-                if (o.p11 >= 2 && o.p0f != 0) {
-                    changed = 1;
-                    o.dx = 0;
-                    o.p0f = 0;
-                    o.p11 = 0;
-                }
-            } else if (o.dx == in_.h) {
-                changed = 1;
-                if (cando(i, o.x + 8 * o.dx, o.y, 1) != 0) {
-                    o.x += 8 * o.dx;
-                    o.dy = 0;
+                    // 1FAE:2069B: a blocked step still advances the walk pose
+                    // and resets p11; dx is kept so she keeps pushing (and
+                    // animating) against the wall instead of stopping.
+                    if (cando(i, o.x + 8 * o.dx, o.y, 1) != 0) {
+                        o.x += 8 * o.dx;
+                        o.dy = 0;
+                    }
                     o.p0f = (o.p0f + 1) & 7;
                     o.p11 = 0;
                 } else {
@@ -118,13 +128,8 @@ void Engine::player_update(int i) {
                     o.dx = 0;
                     o.p11 = 4;
                 }
-            } else {
-                o.p1b = o.dx;
-                o.dx = 0;
-                o.p11 = 4;
             }
 
-        common_tail:
             if (cando(i, o.x, (o.y & ~0x0F) + 0x10, 3) == 3) {
                 changed = 1;
                 o.state = 2;
@@ -216,7 +221,9 @@ void Engine::player_update(int i) {
                 int row = (o.y - 1) & ~0x0F;
                 if (o.y == row) {
                     o.dy = 0;
-                } else if (try_move(i, o.x + 8 * in_.h, row)) {
+                } else if (!try_move(i, o.x + 8 * in_.h, row)) {
+                    // 26F4:210E: a successful snap-up keeps dy (the next tick
+                    // fails and clears it); only a failed move zeroes it.
                     o.dy = 0;
                 }
                 break;
@@ -362,6 +369,7 @@ void Engine::player_update(int i) {
         }
     }
 
+shared_tail:
     if (o.dx != 0) {
         o.p1b = o.dx;
     }
@@ -663,9 +671,16 @@ void Engine::form_update(int i) {
         }
 
         case 56: {  // JILLBIRD (1fae:298b)
-            o.p0f = o.dx;
+            // The facing memory is only written by a moving tick, and the
+            // 8-px (instead of 4-px) step also requires the old dx to be
+            // non-zero: the first tick of a move is always a 4-px step.
+            const int old_dx = o.dx;
+            if (old_dx != 0) {
+                o.p0f = old_dx;
+            }
             o.p13 = (o.p13 + 1) % 6;
-            o.dx = in_.h * (((o.x & 7) == 0) ? 8 : 4);
+            const bool full_step = (o.x & 7) == 0 && old_dx != 0;
+            o.dx = in_.h * (full_step ? 8 : 4);
             // Original order: gravity first, then a flap when either action
             // button is held (so a flap tick keeps the full -6 instead of -5).
             o.dy += 1;
@@ -687,25 +702,38 @@ void Engine::form_update(int i) {
                 o = objects_[static_cast<size_t>(i)];
             }
             o.dy = std::max(-8, std::min(o.dy, 8));
-            if (!just_move(i, o.x + o.dx, o.y)) {
-                if (!just_move(i, o.x, o.y + o.dy)) {
-                    const int row = (o.y + 0x10) & ~0x0F;
-                    if (!just_move(i, o.x, row)) {
+            // 1FAE:2A24: horizontal first; a blocked x keeps the old column.
+            // The vertical move then tries a step-up probe: the ceiling row
+            // when rising, or the floor row minus the body height when
+            // descending.  dy is only cleared when everything is blocked.
+            int mx = o.x + o.dx;
+            if (!just_move(i, mx, o.y)) {
+                mx = o.x;
+            }
+            if (o.dy != 0) {
+                const int ny = o.y + o.dy;
+                if (!just_move(i, mx, ny)) {
+                    const int probe =
+                        (o.dy < 0) ? ((ny + 0x10) & ~0x0F)
+                                   : (((ny & ~0x0F) + 0x10) - o.h);
+                    if (probe == ny || !just_move(i, mx, probe)) {
                         o.dy = 0;
                     }
                 }
-            } else {
-                just_move(i, o.x, o.y + o.dy);
             }
             tile_touch(i);
             return;
         }
 
         case 57: {  // JILLFROG (1fae:2648)
-            if (o.dx != 0) {
-                o.p1b = o.dx;  // facing memory, like the original
+            const int old_dx = o.dx;
+            if (old_dx != 0) {
+                o.p1b = old_dx;  // facing memory, like the original
             }
-            o.dx = in_.h * (((o.x & 7) == 0) ? 8 : 4);
+            // 1FAE:2648: same rule as the bird - 8 px only when x is aligned
+            // AND the previous tick was already moving, else 4 px.
+            const bool full_step = (o.x & 7) == 0 && old_dx != 0;
+            o.dx = in_.h * (full_step ? 8 : 4);
             if (cando(i, o.x, o.y + 1, 3) == 3) {
                 o.dy = std::min(o.dy + 1, 0x0C);
                 o.state = 1;  // airborne / falling pose

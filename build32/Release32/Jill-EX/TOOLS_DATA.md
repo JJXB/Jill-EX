@@ -20,3 +20,19 @@
 
 &#x20; `docs/`.
 
+\* `tools/hud\_layout.py` HUD alignment editor (Tk + Pillow): overlays a
+
+&#x20; reference image, stamps tiles from a PNG or the game's `.dma` + `.sha`
+
+&#x20; tile table, and writes `.hudlayout` files. `--summary` prints pixel/grid
+
+&#x20; coordinates and DMA tile ids/names for engine work; see
+
+&#x20; `docs/hud-layout-tool.md`.
+
+\* `jill_demo_studio.exe` external `.mac` playback viewer/editor, built from
+
+&#x20; `tools/demo_studio` for x64 and Win32 and included in both Windows release
+
+&#x20; zips. See `docs/demo-studio.md`.
+

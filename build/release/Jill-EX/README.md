@@ -3,7 +3,7 @@
 A standalone attempt at reverse engineering and recreating the Jill of the Jungle engine.
 
 ## AI
-This did use Deepseek 4.1 Flash to construct and make. Disclaimer Over.
+This did use Deepseek 4.1 Flash to construct and make. Disclaimer over.
 
 ## Supported Games
 
@@ -12,16 +12,22 @@ This did use Deepseek 4.1 Flash to construct and make. Disclaimer Over.
 * Jill Saves The Prince
 * Onesimus: A Quest for Freedom
 
-No game data or artwork is shipped - supply your own legally obtained copy of the games (see Legal / trademarks).
+No game data or artwork is shipped on PC (PS4 Icon uses Jill portrait, see DISCLAIMER.txt) - supply your own legally obtained copy of the games (see Legal / trademarks).
 
 ## Features
 
+### Platforms
+* Windows 32bit
+* Windows 64bit
+* PlayStation 4 (Tested on 13.52 GoldHEN and shadPS4. Crashes on exit and loading external assets - Working on it)
+* PlayStation Vita (Tested on 3.65)
+
 ### Modernization
-* Modern HUD and Menus with Customization
+* Modern/Classic HUD and Menu Options with Customization
 * High framerate support - 60/90/120/144 Hz - Interpolation as a separate option - Logic still at 18.2hz
 * Expanded Limits (Board Obj Cap = 384, KIND Limit = 138, Visible/Active Obj Cap = 384)
 * Windowed, exclusive fullscreen and borderless modes; resolution presets and 1x-6x window scaling.
-* Noisemaker Menu in Options/Sound (Old Style Noisemaker TBD)
+* Noisemaker Menu in Options/Sound (Old Style Noisemaker Still in progress)
 * Extra Features (All Optional)
   * Minimap
   * Centred fish shot
@@ -33,7 +39,11 @@ No game data or artwork is shipped - supply your own legally obtained copy of th
   * Jill Select: play as the Jill 1/2/3 or Custom Colour in any episode. Onesimus Support WIP
 * Keyboard and gamepad input with rebindable movement, jump and throw.
 * SDL Sound Output
-  * OPL2 FM or Midi out (CMF to Midi)
+* Multiple Music Output options
+  * OPL2 FM 
+  * Midi out (CMF to Midi)
+  * Nuked OPL3
+  * MAME fmopl
 * Cheat menu:
   * Invincible
   * Debug Fly
@@ -47,11 +57,17 @@ No game data or artwork is shipped - supply your own legally obtained copy of th
 [See COMMANDLINE](COMMANDLINE.md)
 [See HOTKEYS](HOTKEYS.md)
 
+## Installation
+Game files go into jilt (Base jill games) and ONESIM (Onesimus)
+* PC: Get the release-x86/64 zip, extract to folder and put the gamedata folders in there (so JIll-EX\jillt). Make sure to rename jill.ini.example to jill.ini. The zip also contains `jill_demo_studio.exe`, the external `.mac` demo viewer/editor.
+* PS4: download PKG file and data files zip for PS4, install PKG, put contents of data files into /data/JillEX and put Gamedata folders in there too
+* PSVita: download the vpk and the data zip for psvita, install vpk and put data zip contents into ux0:\data\JillEX along with gamedata folders.
+
 ## TODO
 
 ### Remaining Realistic Goals
 * Classic Menu work
-* Old Style Noisemaker
+* Old Style Noisemaker work
 * Work on Display Filters to be continued 
 * Mac/Linux/Console builds
 

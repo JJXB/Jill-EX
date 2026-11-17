@@ -195,6 +195,66 @@ are not covered by its licence.  Distributing a built `.pkg` therefore also
 distributes those modules.  Build from source, or use the loose `eboot.bin`
 with a loader, if that is not acceptable.
 
+### Nuked OPL3 (optional music core)
+
+`port/src/third_party/opl3.c` and `opl3.h` are Nuked OPL3 1.8 by Nuke.YKT,
+licensed under the **GNU Lesser General Public License 2.1** (or later).  The
+source headers carry the full notice; the copy is unmodified except for being
+compiled into this project.  The built-in OPL2 core remains the default; the
+Nuked core is selected with `OPTIONS > SOUND > OPL CORE` or `--opl-core 1`.
+Because the LGPL component is statically linked, the component's source and
+this project's source are both shipped so the library can be modified and the
+application relinked.  The PolyForm Noncommercial license continues to cover
+the rest of Jill-EX.
+
+### fmopl (optional music core)
+
+`port/src/third_party/fmopl.c` and `fmopl.h` are fmopl 0.37a by
+Tatsuyuki Satoh (MultiArcadeMachineEmurator development).  This is the AdPlug
+fork, relicensed by its authors under the **GNU Lesser General Public License
+2.1** (or later); the source header carries the full notice, and the copy is
+unmodified except for being compiled into this project.  It is selected with
+`OPTIONS > SOUND > OPL CORE` or `--opl-core 2`.  The same LGPL static-link
+provisions as Nuked apply: the component source and this project's source are
+shipped so the library can be modified and the application relinked.  The
+PolyForm Noncommercial license continues to cover the rest of Jill-EX.
+
+**Not included:** DOSBox's `dbopl` is GPL-2.0 and cannot be combined with the
+PolyForm terms; libADLMIDI is LGPL-3.0 and would require LGPL-3 relink/source
+provisions (and adds a large MIDI-synthesis dependency tree), so neither is
+vendored.  If a GPL-compatible build is ever produced, dbopl could be added to
+that separate build only.
+
+## Vita build (VitaSDK, SDL2 and libvita2d)
+
+The optional Vita target is built with VitaSDK.  SDL2 and **libvita2d** are
+static libraries linked into the SELF; no library source is copied into this
+repository.  SDL2 keeps the zlib licence notice above (audio, events and the
+pad).  libvita2d is used for presentation and is licensed under the **MIT
+License**:
+
+```
+Copyright (c) 2015 Sergi Granell (xerpi), xerpi.g.12@gmail.com
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
 ## Used by the Python tools
 
 The extractor and importer import these packages; they are installed

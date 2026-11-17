@@ -59,7 +59,7 @@ No game data or artwork is shipped on PC (PS4 Icon uses Jill portrait, see DISCL
 
 ## Installation
 Game files go into jilt (Base jill games) and ONESIM (Onesimus)
-* PC: Get the release-x86/64 zip, extract to folder and put the gamedata folders in there (so JIll-EX\jillt)
+* PC: Get the release-x86/64 zip, extract to folder and put the gamedata folders in there (so JIll-EX\jillt). Make sure to rename jill.ini.example to jill.ini. The zip also contains `jill_demo_studio.exe`, the external `.mac` demo viewer/editor.
 * PS4: download PKG file and data files zip for PS4, install PKG, put contents of data files into /data/JillEX and put Gamedata folders in there too
 * PSVita: download the vpk and the data zip for psvita, install vpk and put data zip contents into ux0:\data\JillEX along with gamedata folders.
 

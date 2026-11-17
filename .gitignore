@@ -19,5 +19,13 @@
 /re/*.asm
 /re/*.png
 
+# Demo studio build output and screenshots (generated, contain game art).
+/tools/demo_studio/build/
+/tools/demo_studio/build32/
+/tools/demo_studio/shots/
+/tools/demo_studio/demo_studio.ini
+/captures/
+/demo_studio.ini
+
 # Screenshot/render of the game with the original artwork.
 /hiscores_panel.png

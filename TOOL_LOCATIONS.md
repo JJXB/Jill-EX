@@ -4,6 +4,8 @@ MKPROFILE - "tools\\mkprofile.py" (Python; profiles a Jill-engine EXE into profi
 
 HUDLAYOUT - "tools\\hud_layout.py" (Python/Tk + Pillow; HUD alignment editor with PNG or Jill .dma/.sha tilesets, writes .hudlayout files; see docs\hud-layout-tool.md)
 
+DEMOSTUDIO - "tools\\demo_studio" (C++/SDL2; external .mac playback viewer/editor that links the port/src engine core; x64 build tools\build_demo_studio.cmd + tools\run_demo_studio.cmd, Win32 build tools\build_demo_studio32.cmd + tools\run_demo_studio32.cmd, capture with tools\capture_demo_studio.cmd; the matching jill_demo_studio.exe is included in the x64/x86 release zips; see docs\demo-studio.md)
+
 FFMPEG - "C:\\Apps\\ffmpeg-master-latest-win64-gpl-shared\\bin"
 
 VCPKG - "C:\\vcpkg"
@@ -22,6 +24,18 @@ OXR-Template - "C:\\Users\\jjxb\_\\GIT\\OpenXR-Template"
 
 DXCAP - "C:\\Users\\jjxb\_\\GIT\\DirectX-Capture"
 
+\--ANDROID--
+
+ANDROIDSDK - "D:\Apps\AndroidSDK"
+
+ANDROIDJAVA - "D:\Apps\AndroidSDK\jdk-17" (JAVA_HOME for Android builds; system Java 25 remains on PATH)
+
+ANDROIDGRADLE - "D:\Apps\AndroidSDK\gradle\gradle-8.14.7\bin"
+
+ANDROIDNDK - "D:\Apps\AndroidSDK\ndk\27.3.13750724"
+
+SDL2ANDROID - "D:\Apps\AndroidSDK\SDL2\SDL2-2.32.10\android-project"
+
 \--PS4--
 
 LibOrbisPkg - "D:\\Apps\\LibOrbisPkg"
@@ -33,4 +47,8 @@ opengnm-psbc - "C:\\Users\\jjxb\_\\GIT\\opengnm-psbc"
 vulkanps4 - "C:\\Users\\jjxb\_\\GIT\\vulkan-ps4"
 
 PS4Toolchain - "%OO\_PS4\_TOOLCHAIN%"
+
+\--PSP--
+
+PSPSDK - "D:\Apps\PSPSDK"
 

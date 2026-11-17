@@ -1,8 +1,8 @@
 @echo off
 rem Build a distributable Jill-EX package from the current Release build.
 rem
-rem Included: jill.exe, SDL2.dll, the extractor/importer tools, profiles/,
-rem games/*.game, external/ and the user documentation.
+rem Included: jill.exe, jill_demo_studio.exe, SDL2.dll, the extractor/importer
+rem tools, profiles/, games/*.game, external/ and the user documentation.
 rem Excluded: all original game data (jillt/, ONESIM/ and extracted assets).
 rem
 rem Usage: make_release.cmd [zip-name]
@@ -32,6 +32,12 @@ rem --- game binary -----------------------------------------------------------
 copy /y "port\build32\Release32\jill.exe" "%STAGE%\" >nul || goto :error
 copy /y "port\build32\Release32\SDL2.dll" "%STAGE%\" >nul || goto :error
 
+rem --- demo studio -----------------------------------------------------------
+rem Always rebuild (incremental) so the bundled studio matches port/src.
+call "tools\build_demo_studio32.cmd"
+if errorlevel 1 goto :error
+copy /y "tools\demo_studio\build32\jill_demo_studio.exe" "%STAGE%\" >nul || goto :error
+
 rem --- extractor / importer tools --------------------------------------------
 copy /y "jill_extractor.py" "%STAGE%\" >nul || goto :error
 copy /y "jill_import.py" "%STAGE%\" >nul || goto :error
@@ -51,6 +57,7 @@ for %%F in (README.md ENGINE.md MODS.md EXTASSETS.md EXTRACTOR_README.md
             BUILDING.md TOOLS_DATA.md LICENSE.md THIRD_PARTY_NOTICES.md) do (
     if exist "%%F" copy /y "%%F" "%STAGE%\" >nul
 )
+if exist "docs\demo-studio.md" copy /y "docs\demo-studio.md" "%STAGE%\" >nul
 
 rem --- zip -------------------------------------------------------------------
 if exist "%ZIP%" del /q "%ZIP%"

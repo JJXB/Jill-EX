@@ -1,5 +1,171 @@
 # Progress
 
+## 2026-11-17 (Vita build copies its artifacts to the repo root)
+
+* `build_vita.cmd` now copies `jill.vpk` and `JillEX-Vita-data.zip` to the
+  repository root after a successful build (matching `build_ps4.cmd`, which
+  leaves the `.pkg` and data zip there).  The build-folder copies remain.
+
+## 2026-11-17 (Windows release zips include the demo studio)
+
+* `make_release.cmd` and `make_release_32.cmd` now always rebuild the matching
+  demo studio (incremental) with `tools\build_demo_studio.cmd` (x64) or
+  `tools\build_demo_studio32.cmd` (Win32), copy `jill_demo_studio.exe` into the
+  staged bundle and ship `demo-studio.md` with the other docs.  Both
+  `Jill-EX-release-x64.zip` and `Jill-EX-release-x86.zip` contain the studio;
+  it shares the bundle's `SDL2.dll`, `games/`, `profiles/` and `jill.ini`.
+
+## 2026-11-17 (demo studio: 32-bit Windows build)
+
+* Added `tools/build_demo_studio32.cmd` (Visual Studio Win32 + `sdl2:x86-windows`)
+  and `tools/run_demo_studio32.cmd`.  The 32-bit exe is written to
+  `tools/demo_studio/build32/jill_demo_studio.exe`, so it never overwrites the
+  standard x64 build in `tools/demo_studio/build/jill_demo_studio.exe`.
+* The studio's CMake target now places its exe in the configured binary
+  directory (`CMAKE_BINARY_DIR`) for every configuration, which keeps the two
+  build trees independent without hard-coding the output folder.
+* Verified both: `--selftest` passes on x86 (including the new-file seed) and
+  the x86 headless frame at tick 120 is byte-identical to x64.  The x86 GUI
+  opens with the 32-bit SDL2.dll deployed beside it.
+
+## 2026-11-17 (Jill 2 demo: real RNG and macro input timing)
+
+* `Engine::rnd` is now the game's own generator (`2CA6:0015`): a 32-bit Turbo C
+  LCG, `seed = seed * 0x015A4E35 + 1`, result `(seed >> 16) & 0x7FFF`, and a
+  macro start/stop reseeds it to `0x3039` (`1415:05B2`).  The old xorshift
+  placeholder made every random enemy/caption diverge from the recording.
+* Recorded input is applied one physics update earlier and at most one record
+  per frame, matching `1415:093B` (`delta <= be3a - base` after the frame
+  counter increments).  The old loop applied all due records at tick T, one
+  physics update late; the correction moves the recorded actions onto the same
+  update as the original (board changes in `jn1demo.mac` now land at
+  209/990/1149/2516/2722, still with no deaths).
+* `jn2dem1.mac` (3.jn2) was checked against the original recording.  Up to the
+  first apple (score 12, ~tick 286) the path and health line up.  The first
+  mismatch is at the first vine detach (~R31/R32): the port lands on the blue
+  ledge/black opening about 8-16 px left of the original, then takes a frog
+  hit at ~tick 349 (health 4->3) that the original does not.  The original's
+  detach carries further right into the black room; the port's R38 jump then
+  starts from the higher ledge.  Not fixed yet; the remaining work is the vine
+  detach y/ledge geometry (RNG and the camera were both ruled out).
+
+## 2026-11-17 (demo studio: create new .mac files)
+
+* `CTRL+N` (or `N` in the file picker, or `--new FILE`) creates a fresh `.mac`.
+  The tool asks for a name, refuses to overwrite an existing file, appends
+  `.mac` when there is no extension, and writes a valid seed stream: one tick-0
+  record with mask `H V 1 2 K` and all values zero.  An empty file cannot load
+  because the format has no header, so the seed record is required.
+* The new file opens paused at tick 0 on the selected start state, ready for
+  `INS` (add record at playhead) and the normal field editor; save with
+  `CTRL+S`.  The file picker rescans immediately so the new name appears.
+* `--new` uses the same path for headless/scripted creation; `--selftest` now
+  verifies that the seed record round-trips (6 bytes for the neutral record).
+
+## 2026-11-17 (recorded-demo parity: landing pose, macro camera, bird step)
+
+* Jill 1's `jn1demo.mac` no longer desyncs in the 0.dem vine/jump section
+  (the reported tick 555..833 window).  Three engine mismatches were
+  responsible:
+  * State 0 must jump straight to the shared tail while `p11 < 0` (the
+    landing pose).  The port still ran the walk/idle block, so held Left/Right
+    cut every landing short by 2-4 ticks.  With the landing pose left alone,
+    the recorded jump at tick 825 now fires from the ground at `(1192,832)`
+    instead of mid-air.  `1FAE:0469`.
+  * A blocked walking step still advances the walk pose and keeps `dx`; it
+    does not stop the player.  `1FAE:2069B`.
+  * Starting to walk jumps directly to the shared tail, so the walk-start tick
+    does not run the water/gap test or the jump branch.  `1FAE:04D8`.
+* Macro playback now uses the original edge-triggered camera (`1FAE:000D`,
+  view 15x11 tiles) instead of the centred follow.  The camera also defines
+  the cull rectangle, so the old camera changed when off-screen VINECLIMB
+  sparks updated and made one hit Jill at the top of the 0.dem vine.  With the
+  original camera and the landing fix the demo reaches `1.dem` without dying
+  (previously it stayed in 0.dem, and the first fix alone made it stall on an
+  extra spark).
+* State 2 ceiling handling now matches `26F4:210E`: a successful snap-up keeps
+  `dy`; only a failed move clears it.
+* JILLBIRD/JILLFROG first-step fix: the 8-px step requires the old `dx` to be
+  non-zero, and the bird only updates `p0f` while moving.  `end1.mac` no longer
+  overshoots the JILL/FOOF token: the phoenix reverts to Jill at tick 495 at
+  `(1272,649)` instead of flying past it (the old code gained 4 px on every
+  stop/restart).  The bird's move/step-up probes were corrected at the same
+  time (`1FAE:298B`).
+* Demo-studio additions: `--trace FILE` (per-tick player/camera/input CSV) and
+  `--dump-map FILE` (live tile map), used for the comparisons above.
+* The 1.dem return (`jn1demo.mac` 2415..2630) now lines up: the intro board's
+  1.dem CHECKPT is floating 64 px above the floor, and the original's blocking
+  "JILL ENTERS THE JUNGLE MAP" card lets the recorded walk resume from the
+  floor.  The port free-runs the macro under the caption, so the recorded
+  walk resumed mid-fall and lost the landing pose to the 52-tick Right hold,
+  stopping at x=1024 instead of the feather column at x=1072.  Macro playback
+  now drops the player onto the floor below a restored entrance CHECKPT;
+  the intro walk reaches x=1080, collects both feathers (jump height rises
+  from -24 to -28) and the demo continues into `2.dem` (level 103).  The
+  whole `jn1demo.mac` now visits intro -> 0.dem -> intro -> 1.dem -> intro ->
+  2.dem with no deaths.
+
+## 2026-11-17 (demo studio: scalable UI text, options window, F2 fix)
+
+* Fixed `F2` in the demo studio opening the `.mac` file list instead of the
+  episode setup (a test-only replace had leaked into the key table).  `F2` is
+  now SETUP and `F4` opens the new OPTIONS page; `--selftest` asserts both
+  routes so this cannot regress silently.
+* Added OPTIONS (`F4`): UI text scale (1x/2x/3x), forced game view scale
+  (auto/1x/2x/3x), interpolation mode and classic HUD.  Text scale and game
+  view persist in `demo_studio.ini` beside `jill.ini`.
+* The whole layout now derives from the text scale: row height, column
+  offsets, track height, editor, header/footer and all overlays.  Long info,
+  footer, help, setup and file-picker lines wrap (or use a compact reference
+  size) instead of running off the panel, and the window grows automatically
+  when the bigger timeline needs the room.
+
+## 2026-11-17 (Jill 1 board 50 entrance spawn)
+
+* `50.jn1` is entered from `2.jn1`'s `"50.jn1"` CHECKPT with `p13 = 15`; its
+  own entrance is the `&end1.mac` CHECKPT at tile `(8, 58)` (`x=128, y=928`).
+* `place_at_checkpoint` no longer shifts the ending-macro entrance 16 px left.
+  It now uses the original `26F4:04C7` rule for the macro branch as well
+  (`x &= ~7`, `y -= 0x10`), so Jill spawns at `(128, 912)` between the trees
+  instead of `(112, 912)` (tile 7, inside the left tree).
+* Corrected the demo-studio example for `end1.mac` to `--board 50 --level 15`
+  (level 50 has no matching CHECKPT and falls back to the raw player marker).
+
+## 2026-11-17 (external .mac demo studio)
+
+* New `tools/demo_studio/`: a standalone SDL2 viewer/editor for the recorded
+  `*.mac` input scripts.  It links the real engine core from `port/src`
+  (`engine`, `board`, `tiles`, `shapes`, `profile`, `game`, `external`, ...),
+  not a copy, so the rendered 320x200 frame is the game's own output.  A
+  headless frame after 120 and 2400 ticks of `jn1demo.mac` is byte-identical
+  to `jill.exe --board intro --level 100 --macro jn1demo.mac --dump`.
+* Layout: live game view plus a `LIVE STATE` panel (player/previous position,
+  interpolated draw position, camera, objects, effective input) and an editable
+  timeline.  Timeline shows each record's tick, delta, H/V, jump/throw, key and
+  mask bits; the strip above it maps the whole recording and is click-to-seek.
+* Editing: row/field selection, typed or +/- values, mask-bit toggles, insert at
+  playhead, delete, 64-step undo, save and save-as.  Edits stay in memory until
+  saved and only affect playback after `R` replays the run.
+* Resizable layout: the game view integer-scales, the timeline rows use
+  the game's own 6x8 font (glyph atlas built from the engine's shape bank), and
+  the window reflows down to 960x600.
+* `F5` cycles interpolation: smooth 60 Hz alpha blend, 60 Hz with alpha held at
+  1, and one presented frame per original 18.2 Hz tick.  The live panel prints
+  the blend factor and interpolated position so the effect is measurable.
+* Seeking and stepping back rebuild the run by replaying the engine headlessly
+  from tick 0, so scrubbing is exact and works in both directions.
+* Macro parsing/serialising moved out of `Engine` into `port/src/macro.*`
+  (`MacroRecord`, `macro_parse/load/encode/save`, `macro_state_at`).  `Engine`
+  reads through it and gained `set_macro_records()`, `macro_records()`,
+  `macro_index()` and `input()` for the tool.  Existing playback behaviour and
+  diagnostics are unchanged; `--selftest` exercises parse -> edit -> encode ->
+  parse on the loaded file.
+* Startup state comes from `jill.ini` (`[paths]`, HUD and gameplay options), and
+  the known demo macros auto-fill their board/level from the front-end demo
+  table.  `--headless --ticks N --out FILE.ppm` writes frames without a window.
+* Tool docs: `docs/demo-studio.md`; build with `tools\build_demo_studio.cmd`,
+  run with `tools\run_demo_studio.cmd`.
+
 ## 2026-11-16 (Android toolchain provisioned; port plan written)
 
 * Added `ANDROID_PORT_PLAN.md` — phased plan for an Android port reusing

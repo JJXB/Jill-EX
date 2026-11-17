@@ -30,3 +30,9 @@
 
 &#x20; `docs/hud-layout-tool.md`.
 
+\* `jill_demo_studio.exe` external `.mac` playback viewer/editor, built from
+
+&#x20; `tools/demo_studio` for x64 and Win32 and included in both Windows release
+
+&#x20; zips. See `docs/demo-studio.md`.
+

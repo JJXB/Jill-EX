@@ -9,6 +9,7 @@ rem   port\vita\build\jill.vpk     installable bubble
 rem   port\vita\build\jill.self    the SELF inside it
 rem   port\vita\build\data\        companion data (jill.ini, games, profiles)
 rem   JillEX-Vita-data.zip         the same data, zipped (repo root)
+rem   jill.vpk                     installable bubble (copied to the repo root)
 rem
 rem Usage:  build_vita.cmd            compile + link + vpk + data
 rem         build_vita.cmd clean      remove port\vita\build
@@ -107,9 +108,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -Path '
 if errorlevel 1 goto :fail
 echo Made %OUT%\JillEX-Vita-data.zip
 
+rem --- copy the release artifacts to the repository root ---------------------
+if exist "%OUT%\jill.vpk" (
+    copy /y "%OUT%\jill.vpk" "%ROOT%jill.vpk" >nul
+    if errorlevel 1 goto :fail
+    echo Copied %ROOT%jill.vpk
+)
+copy /y "%OUT%\JillEX-Vita-data.zip" "%ROOT%JillEX-Vita-data.zip" >nul
+if errorlevel 1 goto :fail
+echo Copied %ROOT%JillEX-Vita-data.zip
+
 echo.
 echo Built %OUT%\jill.vpk
 echo Built %OUT%\JillEX-Vita-data.zip
+echo Copied to %ROOT%jill.vpk and %ROOT%JillEX-Vita-data.zip
 echo.
 echo Installing:
 echo   - VPK: copy jill.vpk to the console ^(VitaShell/FTP^) and install it.

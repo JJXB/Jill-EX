@@ -425,13 +425,13 @@ Shapes are written `tileset<<8 | frame`. `O(i).f` is object field `f` (see 6.1).
 
 ### 56. JILLBIRD (1fae:298b) [verified]
 - draw: `_drawshape(0xBB7A<<8 | tbl[p13] + (p0f<0 ? 4:0), x, y)`; table at DGROUP:`0x11FB`, 4-px mirror offset.
-- update: `p0f = dx` (facing), `p13 = (p13+1) % 6`; `dx = 0x3C76 << 3` on an 8-px boundary (else `<< 2`); `dy += 1` gravity; button 1 -> `dy = -6`, sound (1,0x0F), `DGROUP:0x3D9E = 1`; button 2 -> `_addobj(0x3E FIREBULLET, x + sign(p0f)*0x18, y)` with `dx = sign(p0f)*8`, `dy = 0x3C78*2`, sound (1,0x22), `DGROUP:0x3DA0 = 1`; `dy` clamped -8..+8.
-- movement: `_justmove(x+dx, y)`, then on block `_justmove(x, y+dy)` and a step-up probe (`(y+0x10) & ~0xF`, or `((y & ~0xF)+0x10) - h` when descending), zeroing `dy` when nothing works.
+- update: `p0f = dx` **only when `dx != 0`** (facing memory), `p13 = (p13+1) % 6`; `dx = 0x3C76 << 3` only when `(x & 7) == 0` **and the old `dx` was non-zero**, else `dx = 0x3C76 << 2` (the first tick of a move is always a 4-px step); `dy += 1` gravity; button 1 -> `dy = -6`, sound (1,0x0F), `DGROUP:0x3D9E = 1`; button 2 -> `_addobj(0x3E FIREBULLET, x + sign(p0f)*0x18, y)` with `dx = sign(p0f)*8`, `dy = 0x3C78*2`, sound (1,0x22), `DGROUP:0x3DA0 = 1`; `dy` clamped -8..+8.
+- movement: `_justmove(x+dx, y)`; a blocked x keeps the old column. Then, if `dy != 0`, `_justmove(x, y+dy)` and on block a step-up probe (`(y+dy+0x10) & ~0xF` when rising, `((y+dy & ~0xF)+0x10) - h` when descending), zeroing `dy` only when that also fails.
 - `26F4:232E(x, y, 0x4000)` != 0x4000 -> `_playerkill(0x100, 1)`: flown out of the water/into a hazard.
 
 ### 57. JILLFROG (1fae:2648) [verified]
 - draw: base `0x3F<<8 | (p1b < 1 ? 3:0)`; when `state == 1` add 1 if `dy < 1`, else 2 (hop frames).
-- update: `p1b = dx` (facing memory); `dx = 0x3C76 << 3` when `(x & 7) == 0` and moving, else `0x3C76 << 2`. `_cando(x, y+1, 3)`: match -> `dy += 1` capped 0x0C; no match -> `dy = -8` + sound (1,0x12), or `dy = -0x0C` + sound (1,0x2B) while buttons 1/2 are held. `_trymove(x+dx, y+dy)`; fully blocked -> `dy < 0` ? `dy = 0` : snap onto `((y & ~0xF)+0x10 - h)`, `p13 = 0`, `dy = 0`.
+- update: `p1b = dx` (facing memory); `dx = 0x3C76 << 3` only when `(x & 7) == 0` **and the old `dx` was non-zero**, else `0x3C76 << 2` (first move tick is 4 px). `_cando(x, y+1, 3)`: match -> `dy += 1` capped 0x0C; no match -> `dy = -8` + sound (1,0x12), or `dy = -0x0C` + sound (1,0x2B) while buttons 1/2 are held. `_trymove(x+dx, y+dy)`; fully blocked -> `dy < 0` ? `dy = 0` : snap onto `((y & ~0xF)+0x10 - h)`, `p13 = 0`, `dy = 0`.
 - hit: no branch. Returns 1 every tick.
 - Port: `p1b` is only updated while moving; `state = 1` while airborne (so the
   hop frames 1/2 are used) and `state = 0` after the landing snap. `_trymove`

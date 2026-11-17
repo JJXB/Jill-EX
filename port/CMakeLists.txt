@@ -9,6 +9,7 @@ add_executable(jill
     src/main.cpp
     src/app.cpp
     src/engine.cpp
+    src/macro.cpp
     src/player.cpp
     src/board.cpp
     src/tiles.cpp

@@ -2570,15 +2570,16 @@ void Engine::explode1(int x, int y, int n) {
 }
 
 int Engine::rnd(int mod) {
-    // The original FUN_2ca6_0015 is a table-driven generator; a small xorshift
-    // gives the same spread without pulling in its private state.
-    rng_ ^= rng_ << 13;
-    rng_ ^= rng_ >> 17;
-    rng_ ^= rng_ << 5;
+    // 2CA6:0015: Turbo C rand() - 32-bit seed, seed = seed * 0x015A4E35 + 1,
+    // result = (seed >> 16) & 0x7FFF.  Recorded macros reset the seed to
+    // 0x3039 (1415:05B2), so using the real generator is what keeps enemy and
+    // caption randomness in step with the recording.
+    rng_ = rng_ * 0x015A4E35u + 1u;
+    const uint32_t value = (rng_ >> 16) & 0x7FFFu;
     if (mod <= 0) {
         return 0;
     }
-    return static_cast<int>(rng_ % static_cast<uint32_t>(mod));
+    return static_cast<int>(value % static_cast<uint32_t>(mod));
 }
 
 int Engine::view_x() const {
@@ -2610,7 +2611,11 @@ void Engine::follow_camera() {
         return;
     }
     const BoardObject& p = objects_[0];
-    if (classic_camera_) {
+    // Recorded macros were made with the original edge-triggered scroll, and
+    // that camera rect decides which off-screen objects (VINECLIMB sparks,
+    // etc.) update each tick.  A centred follow therefore changes their phase
+    // and eventually the demo path, so macro playback always uses it.
+    if (classic_camera_ || macro_playing_) {
         // 1FAE:000D: the original only scrolls when the player leaves a dead
         // zone.  View w/h are the scroll-window tile counts set by the view
         // mode (15 x 11 for normal play); the horizontal step is 8 px (4 for
@@ -5716,125 +5721,47 @@ bool Engine::start_macro(const std::string& name) {
     while (!clean.empty() && clean.front() == '&') {
         clean.erase(clean.begin());
     }
-    FILE* f = std::fopen(join(data_dir_, clean).c_str(), "rb");
-    if (!f) {
-        std::fprintf(stderr, "macro %s: cannot open\n", clean.c_str());
+    std::vector<MacroRecord> records;
+    std::string diag;
+    if (!macro_load(join(data_dir_, clean), records, diag)) {
+        std::fprintf(stderr, "macro %s: %s\n", clean.c_str(), diag.c_str());
         return false;
     }
-    std::fseek(f, 0, SEEK_END);
-    const long size = std::ftell(f);
-    std::fseek(f, 0, SEEK_SET);
-    if (size <= 0) {
-        std::fclose(f);
-        std::fprintf(stderr, "macro %s: empty file\n", clean.c_str());
-        return false;
+    if (!diag.empty()) {
+        std::fprintf(stderr, "macro %s: %s\n", clean.c_str(), diag.c_str());
     }
-    if (size > 16 * 1024 * 1024) {
-        std::fclose(f);
-        std::fprintf(stderr, "macro %s: file too large (%ld bytes)\n",
-                     clean.c_str(), size);
-        return false;
-    }
-    std::vector<uint8_t> d(static_cast<size_t>(size));
-    const size_t got = std::fread(d.data(), 1, d.size(), f);
-    std::fclose(f);
-    if (got != d.size()) {
-        std::fprintf(stderr, "macro %s: short read (%u of %ld bytes)\n",
-                     clean.c_str(), static_cast<unsigned>(got), size);
-    }
-    d.resize(got);
+    std::fprintf(stderr, "macro %s: %u records, %d ticks\n", clean.c_str(),
+                 static_cast<unsigned>(records.size()),
+                 macro_last_tick(records));
+    return set_macro_records(std::move(records));
+}
 
-    size_t p = 0;
-    bool ok = true;
-    int time = 0;
-    bool first = true;
-    // Record layout: rec[0] is mask + values; every later record starts with
-    // an absolute tick (base-128 varint) and then mask + values.  The
-    // replayer reads the tick after each record, so a record's stored tick is
-    // the deadline at which the next record takes effect.
-    while (p < d.size() && ok) {
-        if (!first) {
-            int value = 0;
-            int shift = 0;
-            bool more = true;
-            while (more) {
-                if (p >= d.size()) {
-                    ok = false;
-                    break;
-                }
-                const uint8_t b = d[p++];
-                value |= (b & 0x7F) << shift;
-                shift += 7;
-                more = (b & 0x80) != 0;
-                if (shift > 28) {
-                    ok = false;
-                }
-            }
-            if (!ok) {
-                break;
-            }
-            if (value < time) {
-                std::fprintf(stderr,
-                             "macro %s: tick %d goes backwards (previous "
-                             "%d) at byte %zu\n",
-                             clean.c_str(), value, time, p);
-            }
-            time = value;
-        } else {
-            first = false;
-        }
-        if (p >= d.size()) {
-            ok = false;
-            break;
-        }
-        const int mask = d[p++];
-        int vals[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-        // Consume all eight mask bits so a future recorder that adds a field
-        // still leaves the stream aligned; only the documented five are used.
-        for (int bit = 0; bit < 8; ++bit) {
-            if ((mask & (1 << bit)) == 0) {
-                continue;
-            }
-            if (p >= d.size()) {
-                ok = false;
-                break;
-            }
-            vals[bit] = static_cast<int8_t>(d[p++]);
-        }
-        if (!ok) {
-            break;
-        }
-        MacroRec r;
-        r.time = time;
-        r.mask = mask;
-        r.h = vals[0] < 0 ? -1 : (vals[0] > 0 ? 1 : 0);
-        r.v = vals[1] < 0 ? -1 : (vals[1] > 0 ? 1 : 0);
-        r.btn1 = vals[2] != 0;
-        r.btn2 = vals[3] != 0;
-        r.key = vals[4] & 0xFF;
-        macro_.push_back(r);
-        macro_last_ = std::max(macro_last_, time);
-        if (macro_.size() > 1000000) {
-            std::fprintf(stderr, "macro %s: too many records\n",
-                         clean.c_str());
-            ok = false;
-            break;
-        }
+bool Engine::set_macro_records(std::vector<MacroRecord> records) {
+    macro_.clear();
+    macro_pos_ = 0;
+    macro_tick_ = 0;
+    macro_last_ = 0;
+    macro_playing_ = false;
+    macro_held1_ = false;
+    macro_held2_ = false;
+    macro_key_ = 0;
+    // 1415:05B2 reseeds the C rand() LCG when a recorded macro starts.
+    rng_ = 0x3039;
+    // Do not let menu/pause inputs bleed into the first macro records.
+    in_ = InputState{};
+    latch1_ = false;
+    latch2_ = false;
+    if (records.empty()) {
+        return false;
     }
-    if (!ok) {
-        std::fprintf(stderr,
-                     "macro %s: malformed or truncated at byte %zu; loaded "
-                     "%u records\n",
-                     clean.c_str(), p,
-                     static_cast<unsigned>(macro_.size()));
-    }
-    if (!macro_.empty()) {
-        std::fprintf(stderr, "macro %s: %u records, %d ticks\n",
-                     clean.c_str(), static_cast<unsigned>(macro_.size()),
-                     macro_last_);
-    }
-    macro_playing_ = !macro_.empty();
-    return macro_playing_;
+    std::stable_sort(records.begin(), records.end(),
+                     [](const MacroRecord& a, const MacroRecord& b) {
+                         return a.time < b.time;
+                     });
+    macro_last_ = macro_last_tick(records);
+    macro_ = std::move(records);
+    macro_playing_ = true;
+    return true;
 }
 
 void Engine::stop_macro() {
@@ -5846,13 +5773,19 @@ void Engine::stop_macro() {
     macro_held1_ = false;
     macro_held2_ = false;
     macro_key_ = 0;
+    rng_ = 0x3039;
     in_ = InputState{};
 }
 
 void Engine::apply_macro_input() {
-    while (macro_pos_ < macro_.size() &&
-           macro_[macro_pos_].time <= macro_tick_) {
-        const MacroRec& r = macro_[macro_pos_++];
+    // 1415:093B tests the next record after be3a has been incremented and
+    // consumes at most one record per frame.  The port's tick 0 is the first
+    // update (the original's elapsed 1), so a record at time T is due on
+    // update T-1 - one update earlier than the old `time <= tick` loop, which
+    // made every recorded action one physics frame late.
+    if (macro_pos_ < macro_.size() &&
+        macro_[macro_pos_].time <= macro_tick_ + 1) {
+        const MacroRecord& r = macro_[macro_pos_++];
         // A record only updates the fields named by its mask; the original
         // leaves the rest of the input state alone between records.
         if (r.mask & 0x01) {
@@ -6061,6 +5994,42 @@ void Engine::process_pending_warp() {
     update_caption_for_level(caption_level);
     if (!map_mode_) {
         place_at_checkpoint(active_level);
+        // Recorded demos leave a level through the original's blocking
+        // "JILL ENTERS ..." card, which the port free-runs (the macro keeps
+        // ticking under it).  A floating return checkpoint therefore leaves
+        // the recorded walk short of the next entrance.  Drop the player onto
+        // the floor below the checkpoint during playback so the recorded walk
+        // starts from the ground, as the original does once the card clears.
+        if (macro_playing_ && restored_hub && has_player_) {
+            BoardObject& p = objects_[0];
+            const int col0 = std::max(0, p.x >> 4);
+            const int col1 = std::min(Board::kCols - 1, (p.x + p.w - 1) >> 4);
+            int floor_row = Board::kRows;
+            for (int row = (p.y + p.h) >> 4; row < Board::kRows; ++row) {
+                bool solid = true;
+                for (int c = col0; c <= col1 && solid; ++c) {
+                    const uint16_t id =
+                        static_cast<uint16_t>(map_[c * Board::kRows + row] & 0x3FFF);
+                    solid = id < TileDefs::kCount &&
+                            (tiles_.at(id).flags & 0x0007) == 0x0006;
+                }
+                if (solid) {
+                    floor_row = row;
+                    break;
+                }
+            }
+            if (floor_row < Board::kRows) {
+                const int ny = floor_row * 16 - p.h;
+                if (ny > p.y) {
+                    p.y = ny;
+                    p.prev_y = ny;
+                    spawn_y_ = ny;
+                    cam_y_ = std::max(0, std::min(ny + 16 - sim_center_y(),
+                                                  Board::kRows * 16 - sim_view_h()));
+                    prev_cam_y_ = cam_y_;
+                }
+            }
+        }
     } else if (has_player_) {
         // Returning to the hub normally restores the stashed board with Jill
         // standing at the entrance she used.  If there is no stashed hub
@@ -6135,9 +6104,10 @@ bool Engine::place_at_checkpoint(int level) {
     int x = p.x;
     int y = p.y;
     if (entrance_macro) {
-        // The recording starts when the player first overlaps the trigger,
-        // i.e. with her right edge at cp.x.  Start 16 px left of the flag.
-        x = (cp.x & ~7) - 16;
+        // Stand on the flag itself.  26F4:04C7 snaps every CHECKPT spawn to
+        // `x &= ~7` and (for normal Jill) `y -= 0x10`, including the ending
+        // macro entrances; the macro starts from there via pending_warp_.
+        x = cp.x & ~7;
         y = cp.y - 16;
         p.x = x;
         p.y = y;

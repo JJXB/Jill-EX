@@ -223,6 +223,8 @@ if dy != 0:
 if p11 < 0:
     changed = 1
     if p11 == -1: p11 = 3                   ; end of the landing pose
+    goto common_tail                        ; 1FAE:0469 - no walk/idle block
+                                            ; while the landing pose runs
 if dx == 0:
     if input.h != 0:                        ; start walking
         changed = 1; p0f = 7; dx = input.h; p11 = 0
@@ -239,10 +241,9 @@ elif dx == input.h:                         ; keep walking
     changed = 1
     if _cando(obj, x + 8*dx, y, 1):
         x += 8*dx; dy = 0
-        p0f = (p0f + 1) & 7
-        p11 = 0
-    else:                                   ; hit a wall
-        p1b = dx; dx = 0; p11 = 4
+    p0f = (p0f + 1) & 7                     ; 1FAE:2069B - a blocked step
+    p11 = 0                                 ; still advances the walk pose
+                                            ; and keeps dx (pushing the wall)
 else:                                       ; opposite direction
     p1b = dx; dx = 0; p11 = 4
 common_tail:                                ; 0x207CA, reached by every path
@@ -292,7 +293,9 @@ if _move(obj, x + 8*input.h, y + dy):       ; 26F4:1E70, mask 3
 if dy < 0:                                  ; ceiling
     row = (y - 1) & ~0xF
     if y == row: dy = 0
-    elif _move(obj, x + 8*input.h, row): dy = 0
+    elif !_move(obj, x + 8*input.h, row): dy = 0   ; a successful snap-up
+                                            ; keeps dy (26F4:210E); only a
+                                            ; failed move clears it
     goto shared
 on_floor = (y & 0xF) == 0
 if !on_floor and !_move(obj, x + 8*input.h, (y & ~0xF) + 0x10):
@@ -593,6 +596,11 @@ because `p11` is also the landing/climb sub-state (see #4.1).
 * `_play` services the sound driver before the input poll and the object
   update, so a sound-triggered wait (SB DSP) stalls a frame at a different
   point than the rest of the logic.
+* The camera is the edge-triggered `1FAE:000D` scroll, not a centred follow.
+  Its viewport (`view_cols` x `view_rows`, 15x11 for normal play) is also the
+  rectangle used to cull objects, so recorded macros must run with it: a
+  different camera changes when off-screen objects (e.g. VINECLIMB sparks)
+  update and the recording's object phases can never line up again.
 
 ---
 

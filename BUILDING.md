@@ -120,6 +120,20 @@ tables after editing the analysis data, run `py -3 re\\gen\_port\_data.py` and
 
 `py -3 re\\gen\_games.py`.
 
+### Demo studio
+
+The external `.mac` viewer/editor is built separately for each Windows target:
+
+```
+cmd /c tools\build_demo_studio.cmd       REM x64  -> tools\demo_studio\build\jill_demo_studio.exe
+cmd /c tools\build_demo_studio32.cmd     REM Win32 -> tools\demo_studio\build32\jill_demo_studio.exe
+```
+
+`make_release.cmd` and `make_release_32.cmd` build and copy the matching studio
+executable into `Jill-EX-release-x64.zip` / `Jill-EX-release-x86.zip`.  It uses
+the same `SDL2.dll`, `games/`, `profiles/` and `jill.ini` as the game.  See
+`docs\demo-studio.md`.
+
 ### PS4 build (OpenOrbis)
 
 The PS4 target is a separate script and does not touch `port\build` or

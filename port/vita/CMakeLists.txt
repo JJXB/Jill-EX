@@ -48,6 +48,7 @@ add_executable(jill
     ${JILL_SRC}/main.cpp
     ${JILL_SRC}/app.cpp
     ${JILL_SRC}/engine.cpp
+    ${JILL_SRC}/macro.cpp
     ${JILL_SRC}/player.cpp
     ${JILL_SRC}/board.cpp
     ${JILL_SRC}/tiles.cpp

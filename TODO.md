@@ -4,10 +4,12 @@
   * Fix PS4 Crashes
     * Quit: Still broken.
   * Check Version? 
-  * Demo option on main menu for original demos (Inputs wrong)
-  * Level 1 > MAP music carryover issue? - Check with the person
+  * Demos - Jill2 still desyncing JN2DEMO1 Desync between T277/R30-T400/R44, JN2DEMO2 fine?, JN2DEMO3 fine? JN3DEMO1 Knife misses but completes anyway, JN3DEMO2 
+  * Level 1 > MAP music carryover issue? - Check with the person - Not happening for me
   * Tiny Landing pause with kneeling animation - Check with others if visible
   * Menu Sizes? (separate Menus themselves and the game render?)
+  * Docs/info readability?
+  * Blinking multicoloured numbers for score 
 * Least Important Ideas
   * Other Games
     * Xargon Support? - no. Separate Project. Use this and xargon's own source code as a base for it.
@@ -17,19 +19,16 @@
     * Select what to export with list and tickboxes (tick/untick all as an option)
     * Double check sound and music playback
   * HUD/Menu 
-    * Custom HUD/Menu - Using hudlayout files
-    * External HUD Customizer - Done
-    * Menu/Font Scale - Done
     * Classic HUD - Health Bar a little off
   * Level Editor? - Base stuff off of HUD editor?
   * Demo
-    * External Playback Editor/Viewer (backwards compatible with original exe if applicable)?
+    * External Playback Editor/Viewer - Done: tools\demo_studio (see docs\demo-studio.md)
     * Dedicated Demo Playback mode (*.mac and *.mex?) - May help with ending key macros.
     * Record Playback mode (.mac or .mex?)
   * Build Other Platforms
     * Mac
     * Linux
-    * Android? - NDK?
+    * Android? - NDK? Installed
     * PS4
       * Builds and runs; quit crash + pack loading fixed 2026-11-13 (awaiting hardware confirmation)
     * Vita
@@ -39,6 +38,12 @@
       * Audio latency / SDL Vita device reopen after suspend-resume - Audio reopens after suspend-resume
       * Real LiveArea artwork (keep it 8-bit indexed in `sce_sys/`)
     * PSP? - Look into PSPSDK
-    * XBOX - OpenXDK?
+    * XBOX - NXDK Installed
 * Way Out there Ideas
+  * Jill Maker Mode (Mouse Controls for editor, hotswitching between editor and gameplay, object selection)
+    * Mouse Cursor highlight by grid
+    * Item/Entity Pallette opened with a hotkey
+    * Click to place, right click to remove, Shift click, alt click for any options (linked triggers etc)
+    * Gameplay/Editor hotswap hotkey
+    * Load/Save map files in native format (jn*, one)
   * Multiplayer.

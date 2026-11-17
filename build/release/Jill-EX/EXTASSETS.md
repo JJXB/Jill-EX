@@ -243,6 +243,11 @@ classified by its aspect ratio (wider than 96 px and at most 20 px tall is a
 MODERN bar, otherwise CLASSIC).  The manifest form is `classic_<name> = file`
 or `modern_<name> = file`.
 
+To align a new panel with an original screenshot or with the engine-drawn
+labels, use `tools/hud_layout.py` and its `.hudlayout` format; see
+[docs/hud-layout-tool.md](docs/hud-layout-tool.md).  The tool does not ship
+inside a pack: it only records coordinates and tile placement for authoring.
+
 ### 5.7 Menu borders: `borders\`
 
 | File | Replaces |
@@ -303,6 +308,28 @@ Effects are addressed by the original logical-id table, so replacing raw slot
 The stem is the original track name without its extension.  For example,
 `funky.ddt` is replaced by `music\funky.ogg`.  Level music requested by a
 `*name.ddt` CHECKPT is looked up the same way.
+
+### 5.12 HUD layouts: `hud\` and autoload
+
+| File | Meaning |
+| --- | --- |
+| `hud\<name>.hudlayout` | a full classic HUD layout selectable by name |
+| `autoload\<name>.hudlayout` | same, always discovered even with no pack mounted |
+
+A `.hudlayout` describes a complete 320x200 classic HUD: entry-3 frame tiles,
+boxes, labels, the health bar and the inventory grid.  It is created with
+`tools/hud_layout.py` (see [docs/hud-layout-tool.md](docs/hud-layout-tool.md)).
+The port discovers layouts in the mounted pack and in `external\autoload\`,
+then lists them in `OPTIONS > HUD > LAYOUT` (ORIGINAL plus each file stem).
+The choice is stored as `[hud] layout = <name>` and can be started with
+`--hud-layout NAME`.
+
+Layouts use the **running game's** shape bank; the `sha` paths inside the file
+are only used by the editor, so a Jill 1 layout can be tried with Jill 2/3 as
+long as the entry/frame ids mean the same thing.  Image-backed sheets and
+`image` parts are not drawn by the engine; use shape entries for in-game HUDs.
+Reserved part names such as `health-bar`, `level-value`, `score-value`,
+`inventory-grid`, `title` and `hint-strip` are driven by live game values.
 
 ---
 
