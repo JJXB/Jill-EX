@@ -1,5 +1,23 @@
 # Progress
 
+## 2026-11-19 (Xbox: playable on hardware, stable at 480i/480p and 720p)
+
+* The original-Xbox target now runs the game on a real console: HDD install,
+  `default.xbe` from `JillEX-Xbox.zip`, Jill 1 playable with a **stable frame
+  rate at 640x480, 480p (720x480) and 720p (1280x720)**, pad input, music and
+  sound effects.  720p renders the 320x200 frame at 3x (960x600, pillarboxed).
+* Bring-up chain (details in the Xbox entries below): trace output was silenced
+  on Xbox and the XBE used NXDK's 64 KiB stack; `CreateFileA` needed `\`
+  separators; SDL video needs `XVideoSetMode()` before `SDL_Init`; pdclib's
+  `memcpy`/`memset` are byte loops (30 ms per presented frame); and the built-in
+  OPL2 core burns ~half the CPU in `sin()`/`pow()` per sample.
+* Final performance measures: framebuffer writes ~1121 MB/s (vs 640 MB/s for
+  cached RAM), `present` ~4-7 ms at 640x480, audio mix ~1 ms per 21 ms buffer
+  with Nuked OPL3, absolute-deadline frame pacer (no more 47 fps cap).
+* Remaining console work is tracked in `port/xbox/README.md`: writable data
+  root for saves, widescreen stretch option, Jill 2/3 / Onesimus / Noisemaker /
+  text pages not yet exercised on hardware, and the unused SDL window surface.
+
 ## 2026-11-19 (morph fit test: jn1 demo 13–14 tick desync fixed)
 
 * **Root cause of the jn1 demo's late frog→Jill morph found.** `1FAE:2E61`
@@ -213,6 +231,93 @@
   and playback uses a fresh temp WAV each time instead of a fixed preview name
   (reusing it made repeat plays silent because winsound held the file open).
   Awaiting user audio verification in the GUI.
+
+## 2026-11-19 (Xbox: display modes, perf instrumentation)
+
+* **Display works on the console** (engine, board and video init all reach the
+  main loop).  The Xbox now offers real output modes instead of only 640x480:
+  `VIDEO > RESOLUTION` lists `DESKTOP` (640x480), `480p (640x480)`,
+  `480p (720x480)` and `720p (1280x720)`; `[video] resolution` stores the
+  choice.  SDL's Xbox driver cannot switch modes, so the mode is set through
+  NXDK's `XVideoSetMode()` (before `SDL_Init` for the start-up mode and from
+  `Screen::apply()` for menu changes) and the window surface is recreated to
+  match the framebuffer.  Modes the AV pack / dashboard does not allow fall
+  back to 640x480 and are traced.
+* `window_width/height()` return the mode size on Xbox (the window must fit the
+  framebuffer; SDL asserts on it) instead of a scale of 320x200.
+* The PS4-only debug overlay and `perf:` logging are now enabled for Xbox:
+  `[debug] overlay = 1` draws the overlay and the frame/tick/draw/present/audio
+  costs are written to `jill.log` every 5 seconds unconditionally (no CLI on
+  the console).  The SDL audio callback measures the mixer cost on Xbox too.
+* The frame pacer no longer busy-spins on Xbox (single core: the spin starved
+  the SDL audio thread each frame).
+* Presentation no longer goes through the SDL window surface: the scaled frame
+  is written straight into `XVideoGetFB()` (one conversion instead of two, and
+  no `SDL_ConvertPixels` pass into write-combined memory), and only the
+  letterbox bars are cleared each frame.
+* Reported frame rate is ~20 fps; the perf line will show whether that is
+  engine draw, presentation or the pacer's sleep.
+
+### Xbox follow-up: on-screen debug text, pacing, presentation
+
+* The debug channel is drawn *on top of the TV picture* by debug BIOSes, and
+  `trace()` was calling `debugPrint` — that was the "text console over the
+  screen".  The Xbox build now logs to `jill.log` only.
+* pdclib's `printf` has no floating-point support (`%f` prints nothing, which
+  is why the first `perf:` lines were empty), so the perf line now logs whole
+  milliseconds with `%u`.
+* Frame pacing uses an **absolute deadline** on Xbox: `Sleep()` overshoots its
+  request by several milliseconds there, and sleeping "the remainder" every
+  frame let that error accumulate (47 fps cap).  The pacer sleeps to a fixed
+  schedule, spins the last ~1 ms, and resyncs after a long frame instead of
+  running several frames back to back.
+* `present_xbox` builds one integer-scaled row and `memcpy`s it into the
+  `scale` framebuffer rows (fewer per-pixel stores into write-combined memory).
+* Changing `RESOLUTION` at runtime no longer recreates the SDL window (the Xbox
+  driver refuses a second window and the frame goes straight to the
+  framebuffer anyway); only `XVideoSetMode` is called.
+
+### Xbox perf: pdclib's memcpy/memset were byte loops
+
+First `perf:` numbers (after fixing the integer formatting) showed
+`fps=25 frame=41 tick=0 draw=5 present=35 audio=10/21 ms` — presentation was
+the bottleneck, at ~40 MB/s.
+
+Root cause: NXDK's pdclib ships reference `memcpy`/`memset` that copy **one
+byte at a time** (`while (n--) *d++ = *s++;`).  Every frame writes ~1 MB into
+the video buffer, so the byte loop alone was ~30 ms on the 733 MHz CPU; it also
+slowed SDL, libc++ and the audio mixer.
+
+* New `port/xbox/xbox_mem.c` provides `memcpy`, `memset` and `memmove` built on
+  `rep movs`/`rep stos` (linked directly, so pdclib's archive members are not
+  pulled in; compiled with `-fno-builtin` so clang cannot rewrite them into
+  calls to themselves).
+* `ScreenSDL::init()` runs a one-off bandwidth check and logs
+  `xbox fb bench: cached=.. MB/s framebuffer=.. MB/s` so the memory path can be
+  measured on the console.
+* The letterbox bars are cleared only when the output geometry changes instead
+  of every frame.
+
+### Xbox perf: built-in OPL2 core was half the CPU
+
+After the memcpy fix the console held 67-79 fps in quiet scenes but dropped to
+~24 fps where a lot is on screen, with `present` and `audio` both inflated.
+The built-in OPL2 core (`port/src/opl2.cpp`) synthesises with doubles and calls
+`std::sin()`/`std::pow()` **per operator per sample**: 9 channels at 48 kHz is
+~37 transcendental calls per sample, i.e. 10-19 ms per 21 ms audio buffer
+(half of the 733 MHz core).  The Xbox build therefore defaults to the integer
+**Nuked OPL3** core (`[audio] opl_core = 1`, selectable in OPTIONS > SOUND >
+OPL CORE), which measures ~1 ms per buffer and is also the more accurate
+emulation.  Desktop/PS4/Vita keep the built-in default.
+
+The perf line now also splits the draw phase:
+
+```
+perf: fps=.. frame=.. tick=.. draw=.. render=.. conv=.. present=.. audio=../.. ms
+```
+
+`render` is `engine.render()` plus the menu/overlay drawing, `conv` is the
+palette -> ARGB conversion + display filter (the remainder of `draw`).
 
 ## 2026-11-18 (original Xbox target: first compiling build)
 

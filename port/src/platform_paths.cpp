@@ -214,9 +214,8 @@ void trace(const char* fmt, ...) {
     std::vsnprintf(line, sizeof(line), fmt, args);
     va_end(args);
 #if defined(JILL_XBOX)
-    // pdclib's stdout/stderr are pseudo streams with an INVALID_HANDLE_VALUE;
-    // the Xbox build logs to the debug channel and to jill.log instead.
-    debugPrint("Jill-EX: %s\n", line);
+    // No debugPrint: on a debug BIOS the Xbox debug channel is drawn on top of
+    // the TV picture, and jill.log is the diagnostics channel anyway.
 #else
     std::fprintf(stderr, "%s\n", line);
     std::fflush(stderr);

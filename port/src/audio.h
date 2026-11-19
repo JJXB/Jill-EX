@@ -66,11 +66,9 @@ public:
     // produced (used by --audio-check).
     int sample_rate() const { return rate_; }
     int channels() const { return channels_; }
-#ifdef JILL_PS4
-    // Audio thread profiling (exposed to the PS4 debug overlay).
+    // Audio thread profiling (PS4 native output; zero on other targets).
     float mix_ms() const { return mix_ms_; }
     float mix_budget_ms() const { return mix_budget_ms_; }
-#endif
     float peak_level() const { return peak_; }
     unsigned long long frames_mixed() const { return frames_mixed_; }
 
@@ -98,9 +96,11 @@ private:
     void* ps4_thread_ = nullptr;  // SDL_Thread*
     int ps4_handle_ = 0;          // sceAudioOut handle
     bool ps4_run_ = false;
+#endif
+
+    // Audio thread profiling (updated by the PS4 native mixer).
     float mix_ms_ = 0.0f;
     float mix_budget_ms_ = 42.6667f;
-#endif
 
     unsigned device_ = 0;
     int rate_ = 0;

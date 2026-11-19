@@ -1,16 +1,18 @@
 * Fixes
-  * Neaten up Classic Menus
+  * Neaten up Classic Menus - Mostly there?
   * Stereo Rendering - SBS, Interlaced - Code Disabled,
   * Fix PS4 Crashes
     * Quit: Still broken.
   * Check Version? 
-  * Demos - Jill2 still desyncing JN2DEMO3 fine? JN3DEM1 Knife misses but completes anyway Desync after T460/R45, JN3DEM2 - blade desyncs somewhere after T250/R16 JN3DEM3 desync after T265/R34
+  * Demos - Jill2 still desyncing JN3DEM1 Knife misses but completes anyway Desync after T460/R45, JN3DEM2 - blade desyncs somewhere after T250/R16 JN3DEM3 desync after T265/R34
   * Level 1 > MAP music carryover issue? - Check with the person - Not happening for me
   * Tiny Landing pause with kneeling animation - Check with others if visible
   * Menu Sizes? (separate Menus themselves and the game render?)
   * Docs/info readability?
   * Blinking multicoloured numbers for score 
-  * Transform tokens need to stay on the board instead of being picked up when activated
+  * Make Nuked Default OPL core
+  * Remove Modern menu and Messagebox.
+
 * Least Important Ideas
   * Other Games
     * Xargon Support - Extractor: done (boards, tiles, shapes+palette, AUDIO SFX/text/EPC, CMF music, macros, CONFIG, saves). Engine port is still a separate project.
@@ -33,7 +35,7 @@
       * Builds and installs (`build_android.cmd` → `JillEX-android.apk`); needs an on-device pass - Not working yet. Change the location of data files to somewhere on internal storage instead (/storage/emulated/0/JillEX)
       * Fire Tablet - Working
       * S25 Ultra - Working
-      * Touch: D-pad + jump + throw + START/BACK work; hi-score name entry / Noisemaker need a keyboard or touch keypad
+      * Touch: D-pad + jump + throw + START/BACK work; hi-score name entry / Noisemaker need a keyboard or touch keypad - Fix Touch
       * Confirm audio latency, suspend/resume and letterboxing on real devices
     * PS4
       * Builds and runs; quit crash + pack loading fixed 2026-11-13 (awaiting hardware confirmation)
@@ -45,10 +47,10 @@
       * Real LiveArea artwork (keep it 8-bit indexed in `sce_sys/`)
     * PSP? - Look into PSPSDK
     * XBOX - NXDK Installed
-      * Builds: `build_xbox.cmd` → `JillEX-Xbox.zip` (contains default.xbe) - Fix xbox hdd first.
-      * First console boot dropped to the dashboard with an empty log: trace output was suppressed on Xbox and the XBE used NXDK's 64 KiB stack (now 1 MiB). Awaiting retest.
-      * Bring-up checklist in `port\xbox\README.md`
-      * Saves/hiscores/log need a writable data root (disc root is read-only)
+      * Runs on hardware: `build_xbox.cmd` → `JillEX-Xbox.zip` (contains default.xbe) - stable frame rate at 480i/480p/720p, pad + music + sfx working (2026-11-19)
+      * Remaining: writable data root for saves/hiscores/log, widescreen stretch option, Jill 2/3 + Onesimus + Noisemaker + text pages untested on console
+      * Details and perf notes in `port\xbox\README.md`
+
 * Way Out there Ideas
   * Jill Maker Mode (Mouse Controls for editor, hotswitching between editor and gameplay, object selection)
     * Mouse Cursor highlight by grid

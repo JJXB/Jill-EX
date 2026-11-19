@@ -382,7 +382,7 @@ int main(int argc, char** argv) {
         opt.window_mode = ini.get_int("video", "window_mode", opt.window_mode);
         opt.scale = ini.get_int("video", "scale", opt.scale);
         opt.renderer = ini.get("video", "renderer", opt.renderer);
-#ifdef JILL_PS4
+#if defined(JILL_PS4) || defined(JILL_XBOX)
         opt.debug = ini.get_bool("debug", "overlay", opt.debug);
 #endif
         opt.resolution = ini.get_int("video", "resolution", opt.resolution);
@@ -550,7 +550,7 @@ int main(int argc, char** argv) {
             }
         } else if (a == "--renderer") {
             opt.renderer = value("--renderer");
-#ifdef JILL_PS4
+#if defined(JILL_PS4) || defined(JILL_XBOX)
         } else if (a == "--debug") {
             opt.debug = true;
 #endif

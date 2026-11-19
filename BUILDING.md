@@ -303,8 +303,8 @@ D:\  E:\JillEX  E:\Apps\Jill-EX  E:\Apps\JillEX  E:\Games\Jill-EX  E:\Games\Jill
 `D:\` is the disc root; a writable root is needed for saves, high scores and
 `jill.log`.  See `port\xbox\README.md` for the port layout, the compile-time
 decisions (no C++ unwinder, `jill_fs` filesystem facade, excluded libc++
-units) and the runtime bring-up checklist.  **The target builds but has not
-yet run on hardware or in Cxbx.**
+units) and the runtime notes.  **Verified on hardware (2026-11-19): playable at
+a stable frame rate in 480i/480p and 720p.**
 
 
 

@@ -93,7 +93,15 @@ struct Options {
     bool air_jump_buffer = false; // --air-jump-buffer: hold jump through a fall
     bool minimap = false;       // --minimap: board overview overlay
     bool animated_water = true; // --no-animated-water: freeze water tiles
+#if defined(JILL_XBOX)
+    // The built-in OPL2 core synthesises with doubles and calls sin()/pow()
+    // per operator per sample: ~10-19 ms per 48 kHz buffer on a 733 MHz CPU,
+    // i.e. half of a single core.  Nuked OPL3 is integer and ~10x cheaper (the
+    // user can still pick BUILTIN in OPTIONS > SOUND > OPL CORE).
+    int opl_core = 1;           // --opl-core: 0 built-in OPL2, 1 Nuked, 2 fmopl
+#else
     int opl_core = 0;           // --opl-core: 0 built-in OPL2, 1 Nuked, 2 fmopl
+#endif
     bool center_fish_shot = false; // --center-fish-shot: vertical fish shot
     bool turtle = false;       // --turtle: Jill 3-style half-speed mode
     int player_look = 0;       // --jill-look N: 0 game default, N = games[N-1]

@@ -177,6 +177,7 @@ add_executable(jill
     ${JILL_SRC}/external.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/xbox_runtime.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/xbox_fs_glue.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/xbox_mem.c
     ${JILL_SRC}/third_party/stb_vorbis.c
     ${JILL_SRC}/third_party/opl3.c
     ${JILL_SRC}/third_party/fmopl.c
@@ -190,6 +191,11 @@ target_include_directories(jill PRIVATE
     "${JILL_SRC}"
     "${NXDK_LIBCXX_DIR}/include"
 )
+
+# The memcpy/memset replacements must not be optimised into calls to themselves
+# (clang recognises the copy loops and would emit memcpy).
+set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/xbox_mem.c"
+    PROPERTIES COMPILE_OPTIONS "-fno-builtin")
 
 target_compile_definitions(jill PRIVATE
     JILL_XBOX=1

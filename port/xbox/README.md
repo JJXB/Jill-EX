@@ -3,10 +3,10 @@
 The Xbox target builds the shared `port/src` engine with NXDK's toolchain and
 its SDL2 port, and produces a plain `default.xbe`.
 
-**Status: builds, not yet run on hardware.**  The engine, SDL2 2.0.9 (Xbox
-video/audio/joystick drivers) and libc++ all compile and link; the linked PE is
-packed into a valid XBE.  Nothing below has been verified on a console or in
-Cxbx/XQEMU yet.
+**Status: runs on hardware.**  Confirmed on a real console: the game boots from
+an HDD install, plays Jill 1 at a stable frame rate in 480i/480p and 720p
+(`VIDEO > RESOLUTION`), with pad input, music (Nuked OPL3) and sound effects.
+The remaining items are listed under *Runtime state* below.
 
 ## Requirements
 
@@ -76,6 +76,9 @@ those.
 * `port/xbox/xbox_runtime.cpp` — `std::terminate`, `uncaught_exception(s)` and
   `__call_once`, because NXDK's `libxboxrt` exception object needs MSVC EH
   machinery a `-fno-exceptions` build cannot link.  The engine never throws.
+* `port/xbox/xbox_mem.c` — fast `memcpy`/`memset`/`memmove` (`rep movs`/`rep
+  stos`).  NXDK's pdclib ships byte-at-a-time reference versions, which cost
+  ~30 ms per frame just to push the 1 MB video buffer.
 * `port/xbox/xbox_fs_glue.cpp` — replaces pdclib's `_PDCLIB_open` (the funnel
   behind `fopen`/`ifstream`/`ofstream`) so `'/'` becomes `'\'`.  NXDK's
   `CreateFileA` goes straight to `NtCreateFile`, which only accepts
@@ -99,8 +102,12 @@ those.
   stack size comes from the XBE header and defaults to 64 KiB, which overflows
   immediately (the console drops back to the dashboard before the first log
   line).
-* `port/src/screen_sdl.cpp` — Xbox joins the PS4 "write the scaled frame into
-  the window surface" path; the SDL2 Xbox port has no accelerated renderer.
+* `port/src/screen_sdl.cpp` — Xbox writes the scaled frame straight into the
+  GPU framebuffer (`XVideoGetFB`), so the frame is converted once instead of
+  twice (SDL's window-surface route copies it again through
+  `SDL_ConvertPixels` into write-combined memory).  `Screen::apply()` sets
+  Xbox output modes (480p/720p) through `XVideoSetMode` and recreates the
+  window surface.
 * `port/src/app.cpp` — Xbox sets the video mode before SDL init, because SDL's
   Xbox driver reads `XVideoGetMode()` (still 0x0 until `XVideoSetMode()` runs),
   and initialises SDL one subsystem at a time so failures are visible in the
@@ -124,16 +131,38 @@ those.
 * SDL2 and libc++ are compiled with the SDK's own flags; only their source
   lists come from NXDK's makefiles.
 
-## Next steps (runtime bring-up)
+## Runtime state
 
-1. Boot in Cxbx-Reloaded or on hardware and read `jill.log` next to the XBE
-   (it is opened first; the same lines go to the debug output).  Expected
-   order: `startup: data root ...`, `startup: log ready`, `startup: games=...`,
-   then the SDL lines (`sdl screen: video mode 640x480`).
-2. Confirm the 320x200 frame is presented (letterboxed at 2x in 640x480).
-3. Verify pad input (`pad:` trace lines) and the X/A mappings.
-4. Verify audio: SDL2's Xbox audio driver is the `xbox` backend (direct sound
-   through `libxboxrt`); check music (OPL2) and effects.
-5. Wire saves/high scores to a writable volume if the data root is the disc.
-6. Watch for missing libc++ pieces on first run (iostream/fstream paths are
-   only exercised once jill.ini and packs are read).
+**Confirmed on hardware:** boots from an HDD install, plays Jill 1 with a stable
+frame rate at 480i/480p and 720p, with pad input, music and sound effects.
+720p uses the 3x integer scale (960x600, pillarboxed) and holds the frame rate.
+
+* Output modes: `VIDEO > RESOLUTION` = `DESKTOP` (640x480), `480p (640x480)`,
+  `480p (720x480)`, `720p (1280x720)`.  `[video] resolution` stores the index.
+  480p/720p need a component/HD AV pack and the dashboard's display settings;
+  unavailable modes fall back to 640x480 and are traced.
+* Diagnostics: `jill.log` gets a `perf: fps=.. frame=.. tick=.. draw=..
+  render=.. conv=.. present=.. audio=../.. ms` line every 5 seconds (whole
+  milliseconds: pdclib's `printf` has no `%f`).  `[debug] overlay = 1` also
+  draws the numbers on screen.  Nothing is printed to the debug channel,
+  because debug BIOSes draw it over the TV picture.
+* Music defaults to the integer **Nuked OPL3** core (`[audio] opl_core = 1`);
+  the built-in OPL2 core uses `sin()`/`pow()` per operator per sample and cost
+  ~10-19 ms per 48 kHz buffer on this CPU.  OPTIONS > SOUND > OPL CORE can
+  switch back.
+* Startup bandwidth check in the log: `xbox fb bench: cached=.. framebuffer=..
+  MB/s` (measured 640 / 1121 MB/s on hardware).
+
+Known limitations / remaining work:
+
+1. Saves, high scores and `jill.log` need a writable data root: use an HDD
+   install (`E:\Apps\Jill-EX`), not a burned disc.
+2. The `hit tick=...` collision trace still writes to `jill.log` during play
+   (shared debug output; harmless but noisy on a slow FATX volume).
+3. 4:3 games are integer-scaled and pillarboxed in 16:9 modes (480p 720x480 /
+   720p).  A widescreen stretch option has not been added.
+4. Only Jill 1 has been exercised on hardware so far (Jill 2/3, Onesimus, text
+   pages, Noisemaker and hiscore entry are untested on the console).
+5. The window surface is still created but unused (the frame goes straight to
+   the GPU framebuffer); removing it would free ~1 MB and a little startup
+   time.

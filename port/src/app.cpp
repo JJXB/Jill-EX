@@ -81,13 +81,15 @@ void compose_stereo(Framebuffer& out, const Framebuffer& left,
     }
 }
 
-#ifdef JILL_PS4
-// --- PS4 debug overlay -----------------------------------------------------
+#if defined(JILL_PS4) || defined(JILL_XBOX)
+// --- console debug overlay --------------------------------------------------
 struct PerfStats {
     double fps = 0.0;
     double frame_ms = 0.0;
     double tick_ms = 0.0;
     double draw_ms = 0.0;
+    double render_ms = 0.0;   // engine.render() + overlays
+    double conv_ms = 0.0;     // palette -> ARGB + filters
     double present_ms = 0.0;
 };
 
@@ -1490,7 +1492,15 @@ struct ResolutionOption {
 };
 
 const ResolutionOption kResolutions[] = {
-#ifdef JILL_VITA
+#if defined(JILL_XBOX)
+    // Xbox output modes.  The XBE is always full-screen; "DESKTOP" means
+    // whatever the console/dashboard booted with, and is presented as 640x480
+    // because NXDK's video layer starts unset (the game sets 640x480 itself).
+    // 480p/720p need a component/HD AV pack and the dashboard's display
+    // settings to allow them; XVideoSetMode fails gracefully when unavailable.
+    {"DESKTOP", 0, 0},        {"480p (640x480)", 640, 480},
+    {"480p (720x480)", 720, 480}, {"720p (1280x720)", 1280, 720},
+#elif defined(JILL_VITA)
     // The Vita panel is 960x544; keep every option inside it.
     {"DESKTOP", 0, 0}, {"960x544", 960, 544}, {"640x480", 640, 480},
     {"480x272", 480, 272},
@@ -1514,8 +1524,15 @@ int match_resolution(int w, int h) {
 const char* const kWindowModes[] = {"WINDOWED", "FULLSCREEN", "BORDERLESS"};
 
 int window_width(const VideoSettings& v) {
+#ifdef JILL_XBOX
+    // The window must match the video mode: SDL's Xbox driver asserts that the
+    // window surface fits in the framebuffer, and the mode itself comes from
+    // XVideoSetMode (see create_screen_sdl()).
+    const int w = v.resolution ? kResolutions[v.resolution].w : 640;
+#else
     int w = v.resolution ? kResolutions[v.resolution].w
                          : Framebuffer::W * v.scale;
+#endif
 #ifdef JILL_VITA
     w = std::min(w, 960);
 #endif
@@ -1523,8 +1540,12 @@ int window_width(const VideoSettings& v) {
 }
 
 int window_height(const VideoSettings& v) {
+#ifdef JILL_XBOX
+    const int h = v.resolution ? kResolutions[v.resolution].h : 480;
+#else
     int h = v.resolution ? kResolutions[v.resolution].h
                          : Framebuffer::H * v.scale;
+#endif
 #ifdef JILL_VITA
     h = std::min(h, 544);
 #endif
@@ -3234,10 +3255,24 @@ int run_sdl(const Options& opt, Engine& engine,
     // SDL's Xbox video driver reads the current video mode during
     // SDL_VideoInit; until XVideoSetMode() has been called that mode is 0x0,
     // so video init fails.  The NXDK SDL sample sets the mode up front too.
-    if (!XVideoSetMode(640, 480, 32, REFRESH_DEFAULT)) {
-        jill_paths::trace("startup: XVideoSetMode 640x480x32 failed");
-    }
+    // VIDEO > RESOLUTION selects 480p/720p here (Xbox output modes).
     {
+        const int mode_index =
+            (opt.resolution >= 0 && opt.resolution < kResolutionCount)
+                ? opt.resolution
+                : 0;
+        int want_w = mode_index ? kResolutions[mode_index].w : 640;
+        int want_h = mode_index ? kResolutions[mode_index].h : 480;
+        if (want_w <= 0 || want_h <= 0) {
+            want_w = 640;
+            want_h = 480;
+        }
+        if (!XVideoSetMode(want_w, want_h, 32, REFRESH_DEFAULT)) {
+            jill_paths::trace(
+                "startup: XVideoSetMode %dx%dx32 unavailable, using 640x480",
+                want_w, want_h);
+            XVideoSetMode(640, 480, 32, REFRESH_DEFAULT);
+        }
         const VIDEO_MODE vm = XVideoGetMode();
         jill_paths::trace("startup: xbox video mode %dx%d %dbpp refresh %d",
                           vm.width, vm.height, vm.bpp, vm.refresh);
@@ -4643,10 +4678,19 @@ int run_sdl(const Options& opt, Engine& engine,
     };
 
     jill_paths::trace("startup: entering main loop");
-#ifdef JILL_PS4
+#if defined(JILL_PS4) || defined(JILL_XBOX)
     PerfStats perf;
     uint64_t perf_last_frame = SDL_GetPerformanceCounter();
     uint64_t perf_log_at = perf_last_frame;
+#if defined(JILL_XBOX)
+    // Always log the perf line on the Xbox: there is no CLI and the console
+    // has no debugger-friendly console, so the log is the only feedback.
+    const bool perf_timing = true;
+    // Absolute presentation deadline (see the pacer at the end of the loop).
+    double next_present = 0.0;
+#else
+    const bool perf_timing = opt.debug;
+#endif
 #endif
     while (running) {
         const uint64_t frame_start = SDL_GetPerformanceCounter();
@@ -4660,8 +4704,8 @@ int run_sdl(const Options& opt, Engine& engine,
             }
         }
         fps_last = frame_start;
-#ifdef JILL_PS4
-        if (opt.debug) {
+#if defined(JILL_PS4) || defined(JILL_XBOX)
+        if (perf_timing) {
             const double dt =
                 static_cast<double>(frame_start - perf_last_frame) / freq;
             if (dt > 0.0001) {
@@ -5123,15 +5167,15 @@ int run_sdl(const Options& opt, Engine& engine,
         if (paused) {
             accumulator = 0.0;  // pause the world while a menu is up
         }
-#ifdef JILL_PS4
+#if defined(JILL_PS4) || defined(JILL_XBOX)
         const uint64_t perf_tick_start = SDL_GetPerformanceCounter();
 #endif
         while (accumulator >= step) {
             engine.tick();
             accumulator -= step;
         }
-#ifdef JILL_PS4
-        if (opt.debug) {
+#if defined(JILL_PS4) || defined(JILL_XBOX)
+        if (perf_timing) {
             perf.tick_ms = perf_ema(
                 perf.tick_ms,
                 static_cast<double>(SDL_GetPerformanceCounter() -
@@ -5208,7 +5252,7 @@ int run_sdl(const Options& opt, Engine& engine,
             music_player.play_sfx(s >> 8, s & 0xFF);
         }
 
-#ifdef JILL_PS4
+#if defined(JILL_PS4) || defined(JILL_XBOX)
         const uint64_t perf_draw_start = SDL_GetPerformanceCounter();
 #endif
         if (splash_active) {
@@ -5287,11 +5331,12 @@ int run_sdl(const Options& opt, Engine& engine,
         if (video.fps_counter) {
             draw_fps_counter(fb, engine, fps_display);
         }
-#ifdef JILL_PS4
+#if defined(JILL_PS4) || defined(JILL_XBOX)
         if (opt.debug) {
             draw_debug_overlay(fb, engine, perf, music_player.mix_ms(),
                                music_player.mix_budget_ms());
         }
+        const uint64_t perf_after_draw = SDL_GetPerformanceCounter();
 #endif
         const uint8_t* out_pal =
             (splash_active && splash_image.palette_ready) ? splash_image.palette
@@ -5349,8 +5394,8 @@ int run_sdl(const Options& opt, Engine& engine,
             }
         }
 #endif
-#ifdef JILL_PS4
-        if (opt.debug) {
+#if defined(JILL_PS4) || defined(JILL_XBOX)
+        if (perf_timing) {
             perf.draw_ms = perf_ema(
                 perf.draw_ms,
                 static_cast<double>(SDL_GetPerformanceCounter() -
@@ -5360,21 +5405,37 @@ int run_sdl(const Options& opt, Engine& engine,
         const uint64_t perf_present_start = SDL_GetPerformanceCounter();
 #endif
         screen->present(argb.data(), Framebuffer::W, Framebuffer::H);
-#ifdef JILL_PS4
-        if (opt.debug) {
+#if defined(JILL_PS4) || defined(JILL_XBOX)
+        if (perf_timing) {
             const uint64_t perf_now = SDL_GetPerformanceCounter();
             perf.present_ms = perf_ema(
                 perf.present_ms,
                 static_cast<double>(perf_now - perf_present_start) / freq *
                     1000.0);
+            perf.render_ms = perf_ema(
+                perf.render_ms,
+                static_cast<double>(perf_after_draw - perf_draw_start) / freq *
+                    1000.0);
+            perf.conv_ms = perf_ema(
+                perf.conv_ms,
+                static_cast<double>(perf_present_start - perf_after_draw) /
+                    freq * 1000.0);
             if (static_cast<double>(perf_now - perf_log_at) / freq >= 5.0) {
                 perf_log_at = perf_now;
+                // pdclib's printf has no floating-point support, so the
+                // numbers are logged as whole milliseconds.
                 jill_paths::trace(
-                    "perf: fps=%.1f frame=%.1f tick=%.1f draw=%.1f "
-                    "present=%.1f audio=%.1f/%.1f ms",
-                    perf.fps, perf.frame_ms, perf.tick_ms, perf.draw_ms,
-                    perf.present_ms, music_player.mix_ms(),
-                    music_player.mix_budget_ms());
+                    "perf: fps=%u frame=%u tick=%u draw=%u render=%u conv=%u "
+                    "present=%u audio=%u/%u ms",
+                    static_cast<unsigned>(perf.fps + 0.5),
+                    static_cast<unsigned>(perf.frame_ms + 0.5),
+                    static_cast<unsigned>(perf.tick_ms + 0.5),
+                    static_cast<unsigned>(perf.draw_ms + 0.5),
+                    static_cast<unsigned>(perf.render_ms + 0.5),
+                    static_cast<unsigned>(perf.conv_ms + 0.5),
+                    static_cast<unsigned>(perf.present_ms + 0.5),
+                    static_cast<unsigned>(music_player.mix_ms() + 0.5f),
+                    static_cast<unsigned>(music_player.mix_budget_ms() + 0.5f));
             }
         }
 #endif
@@ -5405,6 +5466,36 @@ int run_sdl(const Options& opt, Engine& engine,
         const double present_hz =
             video.high_fps > 0 ? static_cast<double>(video.high_fps) : 1.0 / step;
         const double present_time = 1.0 / present_hz;
+#if defined(JILL_XBOX)
+        // Absolute-deadline pacing.  Sleep() on the Xbox overshoots its request
+        // by several milliseconds; sleeping "the remainder" every frame lets
+        // that error accumulate and capped the rate at ~47 Hz.  Sleeping to a
+        // fixed schedule with a short spin absorbs the overshoot instead.
+        double target = next_present;
+        if (target <= 0.0) {
+            target = static_cast<double>(frame_start) / freq;
+        }
+        target += present_time;
+        next_present = target;
+        {
+            const double now_s =
+                static_cast<double>(SDL_GetPerformanceCounter()) / freq;
+            const double remain = target - now_s;
+            if (remain > 0.002) {
+                SDL_Delay(static_cast<Uint32>((remain - 0.001) * 1000.0));
+            }
+            while (static_cast<double>(SDL_GetPerformanceCounter()) / freq <
+                   target) {
+            }
+            // A long frame (board load, heavy scene) must not be "caught up"
+            // by running several frames back to back.
+            const double after =
+                static_cast<double>(SDL_GetPerformanceCounter()) / freq;
+            if (after > target + present_time * 3.0) {
+                next_present = after;
+            }
+        }
+#else
         const double spent =
             static_cast<double>(SDL_GetPerformanceCounter() - frame_start) / freq;
         const double remain = present_time - spent;
@@ -5413,17 +5504,14 @@ int run_sdl(const Options& opt, Engine& engine,
             if (remain_ms > 1.0) {
                 SDL_Delay(static_cast<Uint32>(remain_ms - 0.5));
             }
-#ifndef JILL_PS4
             // Coarse sleep, then a short spin so SDL_Delay's millisecond
             // quantisation does not drag the rate below the chosen value.
-            // PS4 skips the spin: it burns a whole core for tens of
-            // milliseconds each frame and starves the audio thread.
             while (static_cast<double>(
                        SDL_GetPerformanceCounter() - frame_start) /
                        freq < present_time) {
             }
-#endif
         }
+#endif
     }
 
     if (opt.save_slot >= 0) {

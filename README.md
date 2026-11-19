@@ -19,14 +19,14 @@ No game data or artwork is shipped on PC (PS4 Icon uses Jill portrait, see DISCL
 ### Platforms
 * Windows 32bit
 * Windows 64bit
-* PlayStation 4 (Tested on 13.52 GoldHEN and shadPS4. Crashes on exit and loading external assets - Working on it)
+* PlayStation 4 (Tested on 13.52 GoldHEN and shadPS4. Crashes on exit)
 * PlayStation Vita (Tested on 3.65)
-* Android (builds; on-device pass pending)
-* Original Xbox (NXDK - builds, hardware bring-up pending)
+* Android (Playing, tested on FireOS 7.x and Android 16 - OneUI 8.5. Touch controls need work, controller is working fine)
+* Original Xbox (NXDK - tested on hardware at 480i/480p/720p)
 
 ### Modernization
 * Modern/Classic HUD and Menu Options with Customization
-* High framerate support - 60/90/120/144 Hz - Interpolation as a separate option - Logic still at 18.2hz
+* High framerate support - 60/90/120/144 Hz - Interpolation as a separate option - Logic still at 18.2065hz
 * Expanded Limits (Board Obj Cap = 384, KIND Limit = 138, Visible/Active Obj Cap = 384)
 * Windowed, exclusive fullscreen and borderless modes; resolution presets and 1x-6x window scaling.
 * Noisemaker Menu in Options/Sound (Old Style Noisemaker Still in progress)
@@ -64,7 +64,9 @@ Game files go into jilt (Base jill games) and ONESIM (Onesimus)
 * PC: Get the release-x86/64 zip, extract to folder and put the gamedata folders in there (so JIll-EX\jillt). Make sure to rename jill.ini.example to jill.ini. The zip also contains `jill_demo_studio.exe`, the external `.mac` demo viewer/editor.
 * PS4: download PKG file and data files zip for PS4, install PKG, put contents of data files into /data/JillEX and put Gamedata folders in there too
 * PSVita: download the vpk and the data zip for psvita, install vpk and put data zip contents into ux0:\data\JillEX along with gamedata folders.
-* Xbox: build with `build_xbox.cmd`, then extract `JillEX-Xbox.zip` into one folder (for example `E:\Apps\Jill-EX`) and add your gamedata folders - the zip contains `default.xbe`. See `port\xbox\README.md`.
+* Xbox: extract `JillEX-Xbox.zip` (contains `default.xbe`, `jill.ini`, `games\`, `profiles\`) into one folder and add your gamedata folders. Build with `build_xbox.cmd`. Runs on hardware at 480i/480p/720p - see `port\xbox\README.md`.
+* Android: Install JillEX-android.apk. Put Gamedata folders into /sdcard/JillEX.
+
 
 ## TODO
 

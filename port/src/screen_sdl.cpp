@@ -3,11 +3,17 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <vector>
 
 #include "platform_paths.h"
 
 #ifdef JILL_HAVE_SDL
 #include <SDL.h>
+#endif
+
+#ifdef JILL_XBOX
+#include <hal/video.h>
 #endif
 
 // Console targets that present by scaling the ARGB frame into the window
@@ -50,9 +56,16 @@ public:
             window_h = dm.h;
         }
 #ifdef JILL_XBOX
-        if (window_w <= 0 || window_h <= 0) {
-            window_w = 640;
-            window_h = 480;
+        // The window surface must fit the GPU framebuffer (SDL asserts on it),
+        // so take the size straight from NXDK's current video mode.
+        {
+            const VIDEO_MODE vm = XVideoGetMode();
+            if (vm.width > 0 && vm.height > 0) {
+                window_w = vm.width;
+                window_h = vm.height;
+            }
+            jill_paths::trace("sdl screen: xbox mode %dx%d %dbpp",
+                              window_w, window_h, vm.bpp);
         }
 #endif
         jill_paths::trace("sdl screen: video mode %dx%d", window_w, window_h);
@@ -101,6 +114,41 @@ public:
             err = std::string("SDL_GetWindowSurface: ") + SDL_GetError();
             return false;
         }
+#ifdef JILL_XBOX
+        mode_w_ = surface_->w;
+        mode_h_ = surface_->h;
+        // One-off bandwidth check: the presenter writes ~1 MB into the video
+        // buffer every frame, so knowing the achievable write rate tells us
+        // whether a slow frame is memory-bound.  Logged as whole MB/s because
+        // pdclib's printf has no %f.
+        {
+            const VIDEO_MODE vm = XVideoGetMode();
+            uint8_t* fb = XVideoGetFB();
+            const size_t bytes = static_cast<size_t>(vm.width) * vm.height * 4;
+            const double freq = static_cast<double>(SDL_GetPerformanceFrequency());
+            if (fb != nullptr && bytes > 0 && freq > 0.0) {
+                std::vector<uint8_t> cached(bytes);
+                uint64_t t0 = SDL_GetPerformanceCounter();
+                for (int i = 0; i < 5; ++i) {
+                    std::memset(cached.data(), i, bytes);
+                }
+                uint64_t t1 = SDL_GetPerformanceCounter();
+                for (int i = 0; i < 5; ++i) {
+                    std::memset(fb, i, bytes);
+                }
+                XVideoFlushFB();
+                uint64_t t2 = SDL_GetPerformanceCounter();
+                const double cached_s = (t1 - t0) / freq;
+                const double fb_s = (t2 - t1) / freq;
+                jill_paths::trace(
+                    "xbox fb bench: cached=%u MB/s framebuffer=%u MB/s "
+                    "(%u bytes)",
+                    cached_s > 0.0 ? static_cast<unsigned>(5.0 * bytes / cached_s / 1e6) : 0u,
+                    fb_s > 0.0 ? static_cast<unsigned>(5.0 * bytes / fb_s / 1e6) : 0u,
+                    static_cast<unsigned>(bytes));
+            }
+        }
+#endif
         int wx = 0, wy = 0;
         SDL_GetWindowPosition(window_, &wx, &wy);
         jill_paths::trace("sdl screen: window at %d,%d surface %dx%d %s bpp=%d",
@@ -139,6 +187,17 @@ public:
             SDL_SetWindowBordered(window_, SDL_FALSE);
             SDL_SetWindowFullscreen(window_, SDL_WINDOW_FULLSCREEN_DESKTOP);
         }
+#elif defined(JILL_XBOX)
+        // Xbox: VIDEO > RESOLUTION picks the output mode.  SDL's Xbox video
+        // driver cannot switch modes (its SetDisplayMode is a no-op), so the
+        // mode is set through NXDK and the window surface is recreated to match
+        // the new framebuffer size.
+        (void)pixel_w;
+        (void)pixel_h;
+        (void)mode;
+        const int want_w = display_w > 0 ? display_w : 640;
+        const int want_h = display_h > 0 ? display_h : 480;
+        set_xbox_mode(want_w, want_h);
 #elif defined(JILL_DIRECT_PRESENT)
         // PS4 video output is fixed at 1080p; resizing after the window surface
         // is created can invalidate it.
@@ -188,7 +247,9 @@ public:
     }
 
     void present(const uint32_t* argb, int w, int h) override {
-#ifdef JILL_DIRECT_PRESENT
+#if defined(JILL_XBOX)
+        present_xbox(argb, w, h);
+#elif defined(JILL_DIRECT_PRESENT)
         present_direct(argb, w, h);
 #else
         present_renderer(argb, w, h);
@@ -248,6 +309,101 @@ public:
     }
 
 private:
+#ifdef JILL_XBOX
+    // Scale the 320x200 ARGB frame straight into the GPU framebuffer.
+    // SDL's own window-surface route would copy the frame twice: once into the
+    // window surface (this loop) and again through SDL_ConvertPixels into the
+    // video buffer, which is slow write-combined memory on the Xbox.
+    void present_xbox(const uint32_t* argb, int w, int h) {
+        const VIDEO_MODE vm = XVideoGetMode();
+        uint32_t* dst = reinterpret_cast<uint32_t*>(XVideoGetFB());
+        if (dst == nullptr || vm.width <= 0 || vm.height <= 0 || vm.bpp != 32) {
+            present_direct(argb, w, h);  // unusual mode: use the SDL surface
+            return;
+        }
+        int scale = std::min(vm.width / w, vm.height / h);
+        if (scale < 1) {
+            scale = 1;
+        }
+        const int out_w = w * scale;
+        const int out_h = h * scale;
+        const int off_x = (vm.width - out_w) / 2;
+        const int off_y = (vm.height - out_h) / 2;
+
+        // Black out the letterbox bars only; the frame itself overwrites every
+        // pixel it covers.
+        for (int y = 0; y < vm.height; ++y) {
+            uint32_t* row = dst + static_cast<size_t>(y) * vm.width;
+            if (y < off_y || y >= off_y + out_h) {
+                std::memset(row, 0, static_cast<size_t>(vm.width) * 4);
+                continue;
+            }
+            if (off_x > 0) {
+                std::memset(row, 0, static_cast<size_t>(off_x) * 4);
+            }
+            if (off_x + out_w < vm.width) {
+                std::memset(row + off_x + out_w, 0,
+                            static_cast<size_t>(vm.width - off_x - out_w) * 4);
+            }
+        }
+
+        // Build one scaled row, then copy it into the `scale` destination rows.
+        // memcpy into the write-combined framebuffer is much faster than
+        // per-pixel stores.
+        if (row_buf_.size() < static_cast<size_t>(out_w)) {
+            row_buf_.resize(static_cast<size_t>(out_w));
+        }
+        for (int sy = 0; sy < h; ++sy) {
+            const uint32_t* src = argb + static_cast<size_t>(sy) * w;
+            uint32_t* expanded = row_buf_.data();
+            for (int sx = 0; sx < w; ++sx) {
+                const uint32_t c = src[sx] | 0xFF000000u;
+                for (int dx = 0; dx < scale; ++dx) {
+                    *expanded++ = c;
+                }
+            }
+            for (int dy = 0; dy < scale; ++dy) {
+                uint32_t* row = dst +
+                                static_cast<size_t>(off_y + sy * scale + dy) *
+                                    vm.width +
+                                off_x;
+                std::memcpy(row, row_buf_.data(),
+                            static_cast<size_t>(out_w) * sizeof(uint32_t));
+            }
+        }
+        XVideoFlushFB();
+        if (present_count_ < 3 || present_count_ % 120 == 0) {
+            jill_paths::trace("sdl screen: presented #%u (%dx%d -> %dx%d)",
+                              present_count_, w, h, out_w, out_h);
+        }
+        ++present_count_;
+    }
+#endif
+
+#ifdef JILL_XBOX
+    // Set the Xbox output mode and rebuild the window surface to match it.
+    // XVideoSetMode() fails for modes the AV pack / dashboard does not allow,
+    // in which case the current mode stays.
+    void set_xbox_mode(int want_w, int want_h) {
+        if (want_w == mode_w_ && want_h == mode_h_) {
+            return;
+        }
+        if (!XVideoSetMode(want_w, want_h, 32, REFRESH_DEFAULT)) {
+            jill_paths::trace("sdl screen: XVideoSetMode %dx%d unavailable",
+                              want_w, want_h);
+            return;
+        }
+        const VIDEO_MODE vm = XVideoGetMode();
+        jill_paths::trace("sdl screen: mode %dx%d (%dbpp, %d Hz)", vm.width,
+                          vm.height, vm.bpp, vm.refresh);
+        // No window recreation: the frame is presented straight into the GPU
+        // framebuffer (present_xbox), and SDL's Xbox driver refuses a second
+        // window.  The window surface is only a fallback for odd modes.
+        mode_w_ = vm.width;
+        mode_h_ = vm.height;
+    }
+#endif
+
 #ifndef JILL_DIRECT_PRESENT
     void present_renderer(const uint32_t* argb, int w, int h) {
         if (!renderer_) {
@@ -361,6 +517,11 @@ private:
     SDL_Surface* surface_ = nullptr;
     bool first_present_ = false;
     unsigned present_count_ = 0;
+#endif
+#ifdef JILL_XBOX
+    int mode_w_ = 0;
+    int mode_h_ = 0;
+    std::vector<uint32_t> row_buf_;
 #endif
 };
 

@@ -533,7 +533,26 @@ void MusicPlayer::set_sfx_volume(float volume) {
 
 #ifdef JILL_HAVE_SDL
 void MusicPlayer::callback(void* user, uint8_t* stream, int len) {
-    static_cast<MusicPlayer*>(user)->mix(stream, len);
+    MusicPlayer* self = static_cast<MusicPlayer*>(user);
+#if defined(JILL_XBOX)
+    // Report the mixer cost in the perf line: on the Xbox the callback shares
+    // the only CPU core with the game loop.
+    const uint64_t start = SDL_GetPerformanceCounter();
+    self->mix(stream, len);
+    const uint64_t stop = SDL_GetPerformanceCounter();
+    const double freq = static_cast<double>(SDL_GetPerformanceFrequency());
+    if (freq > 0.0) {
+        self->mix_ms_ = static_cast<float>((stop - start) * 1000.0 / freq);
+        const double rate = self->rate_ > 0 ? static_cast<double>(self->rate_)
+                                           : 44100.0;
+        const double frames = static_cast<double>(len) /
+                              (self->format_ == AUDIO_F32SYS ? 4.0 : 2.0) /
+                              (self->channels_ > 0 ? self->channels_ : 2);
+        self->mix_budget_ms_ = static_cast<float>(frames * 1000.0 / rate);
+    }
+#else
+    self->mix(stream, len);
+#endif
 }
 #endif
 
