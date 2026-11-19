@@ -1,5 +1,6 @@
 #include "shapes.h"
 
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 
@@ -19,7 +20,7 @@ uint16_t rd16(const uint8_t* p) {
 bool ShapeBank::load(const std::string& path, std::string& err) {
     FILE* f = std::fopen(path.c_str(), "rb");
     if (!f) {
-        err = "cannot open " + path;
+        err = "cannot open " + path + ": " + std::strerror(errno);
         return false;
     }
     std::fseek(f, 0, SEEK_END);

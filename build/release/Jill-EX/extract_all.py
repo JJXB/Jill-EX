@@ -22,6 +22,8 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(__file__))
 from jill_extractor import (
     BoardFile, DMAFile, SHAFile, VCLFile, DDTFile, CFGFile, MACFile,
+    XargonBoardFile, XargonGraphicsFile, XargonTilesFile, XargonAudioFile,
+    XargonConfigFile, XargonMacroFile, XargonEPCFile,
     discover_games, export_font_assets, export_hud_assets,
     export_palette_assets, export_reference_pack, export_text_page_assets,
     export_theme_assets, export_tile_assets, export_board_previews,
@@ -29,6 +31,46 @@ from jill_extractor import (
 )
 
 BASE = Path(__file__).resolve().parent
+
+
+def _is_xargon(game) -> bool:
+    return game.get('format') == 'xargon'
+
+
+def _load_board(game, path: Path):
+    return XargonBoardFile.load(str(path)) if _is_xargon(game) else BoardFile.load(str(path))
+
+
+def _load_vcl_file(game, path: Path) -> VCLFile:
+    return (XargonAudioFile.load(str(path)) if _is_xargon(game)
+            else VCLFile.load(str(path)))
+
+
+def _load_dma_file(game, path: Path) -> DMAFile:
+    return (XargonTilesFile.load(str(path)) if _is_xargon(game)
+            else DMAFile.load(str(path)))
+
+
+def _board_candidates(game, data_dir: Path, ext: str):
+    targets = [data_dir / f"{n}{ext}" for n in game['boards']]
+    try:
+        for f in sorted(data_dir.glob(f"*{ext}")):
+            if _is_xargon(game):
+                stem = f.stem.lower()
+                if not (stem.startswith('board_') or stem.startswith('map') or
+                        stem.startswith('intro') or stem.startswith('story') or
+                        (stem.startswith('demo') and stem[4:5].isdigit())):
+                    continue
+            if f not in targets:
+                targets.append(f)
+    except OSError:
+        pass
+    if _is_xargon(game):
+        try:
+            targets.extend(p for p in sorted(data_dir.glob("SAVE_*")) if p.is_file())
+        except OSError:
+            pass
+    return targets
 
 
 def board_to_dict(board, game):
@@ -74,20 +116,14 @@ def extract_boards(game, out_dir: Path):
     ext = game['board_ext']
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    targets = [data_dir / f"{n}{ext}" for n in game['boards']]
-    try:
-        for f in sorted(data_dir.glob(f"*{ext}")):
-            if f not in targets:
-                targets.append(f)
-    except OSError:
-        pass
+    targets = _board_candidates(game, data_dir, ext)
 
     count = 0
     for p in targets:
         if not p.exists():
             continue
         try:
-            board = BoardFile.load(str(p))
+            board = _load_board(game, p)
             out_path = out_dir / f"{p.stem}.json"
             with open(out_path, 'w', encoding='utf-8') as f:
                 json.dump(board_to_dict(board, game), f, indent=2)
@@ -106,7 +142,7 @@ def extract_shapes(game, out_dir: Path):
         print(f"SHA file not found: {sha_path}")
         return
 
-    sha = SHAFile.load(str(sha_path))
+    sha = _load_sha(game, sha_path)
     if game.get('palette') and Path(game['palette']).is_file():
         pal = Path(game['palette']).read_bytes()
         sha.set_palette_rgb(pal, from_6bit=(max(pal) <= 63))
@@ -134,7 +170,7 @@ def extract_sounds(game, out_dir: Path):
         print(f"VCL file not found: {vcl_path}")
         return
 
-    vcl = VCLFile.load(str(vcl_path))
+    vcl = _load_vcl_file(game, vcl_path)
     count = 0
     sfx_dir = out_dir / "sfx"
     for i in range(50):
@@ -146,6 +182,14 @@ def extract_sounds(game, out_dir: Path):
             if wav:
                 (sfx_dir / f"sfx_{i:02d}.wav").write_bytes(wav)
             count += 1
+    if _is_xargon(game):
+        epc_path = data_dir / "AUDIO.EPC"
+        if epc_path.is_file():
+            shutil.copy2(epc_path, out_dir / epc_path.name)
+            epc = XargonEPCFile.load(str(epc_path))
+            with open(out_dir / "AUDIO.EPC.json", 'w', encoding='utf-8') as out:
+                json.dump({'durations': epc.durations,
+                           'waveforms': epc.waveforms}, out, indent=2)
     print(f"Extracted {count} sound files to {out_dir}")
 
 
@@ -166,7 +210,7 @@ def extract_pages(game, out_dir: Path):
     if not vcl_path.exists():
         print(f"VCL file not found: {vcl_path}")
         return
-    vcl = VCLFile.load(str(vcl_path))
+    vcl = _load_vcl_file(game, vcl_path)
     sha = None
     sha_path = data_dir / game['sha']
     if sha_path.exists():
@@ -183,7 +227,7 @@ def extract_tiles(game, out_dir: Path):
         print("Shape archive or jill.dma missing")
         return
     sha = _load_sha(game, sha_path)
-    dma = DMAFile.load(str(dma_path))
+    dma = _load_dma_file(game, dma_path)
     count = export_tile_assets(sha, dma, out_dir)
     print(f"Extracted {count} tile images to {out_dir / 'tiles'}")
 
@@ -196,7 +240,7 @@ def extract_hud(game, out_dir: Path):
         print("Shape archive or jill.dma missing")
         return
     sha = _load_sha(game, sha_path)
-    dma = DMAFile.load(str(dma_path))
+    dma = _load_dma_file(game, dma_path)
     count = export_hud_assets(sha, out_dir)
     portrait = export_portrait_asset(sha, out_dir)
     theme = export_theme_assets(game, sha, dma, out_dir)
@@ -224,7 +268,7 @@ def extract_previews(game, out_dir: Path):
         print("Shape archive or jill.dma missing")
         return
     sha = _load_sha(game, sha_path)
-    dma = DMAFile.load(str(dma_path))
+    dma = _load_dma_file(game, dma_path)
     count = export_board_previews(game, sha, dma, out_dir)
     print(f"Rendered {count} board previews to {out_dir}")
 
@@ -238,14 +282,15 @@ def extract_pack(game, out_dir: Path, seconds: float = 60.0):
         print("Shape archive, .vcl or jill.dma missing")
         return
     sha = _load_sha(game, sha_path)
-    vcl = VCLFile.load(str(vcl_path))
-    dma = DMAFile.load(str(dma_path))
+    vcl = _load_vcl_file(game, vcl_path)
+    dma = _load_dma_file(game, dma_path)
     stats = export_reference_pack(game, sha, vcl, dma, out_dir, seconds)
     print("Reference pack: " + ", ".join(f"{k}={v}" for k, v in stats.items()))
 
 
 def _load_sha(game, sha_path: Path) -> SHAFile:
-    sha = SHAFile.load(str(sha_path))
+    sha = (XargonGraphicsFile.load(str(sha_path)) if _is_xargon(game)
+           else SHAFile.load(str(sha_path)))
     pal = game.get('palette')
     if pal and Path(pal).is_file():
         data = Path(pal).read_bytes()
@@ -263,7 +308,8 @@ def extract_config(game, out_dir: Path):
     if not cfg_path.exists():
         print(f"Config file not found: {cfg_path}")
         return
-    cfg = CFGFile.load(str(cfg_path))
+    cfg = (XargonConfigFile.load(str(cfg_path)) if _is_xargon(game)
+           else CFGFile.load(str(cfg_path)))
     data = {
         'game': game['id'],
         'high_scores': [
@@ -288,7 +334,7 @@ def extract_dma(game, out_dir: Path):
     if not dma_path.exists():
         print(f"DMA file not found: {dma_path}")
         return
-    dma = DMAFile.load(str(dma_path))
+    dma = _load_dma_file(game, dma_path)
     data = {
         'game': game['id'],
         'records': [
@@ -329,11 +375,18 @@ def extract_macs(game, out_dir: Path):
     count = 0
     try:
         files = sorted(data_dir.glob("*.mac"))
+        if _is_xargon(game):
+            for pattern in ("*MAC*.XR0", "*MAC*.XR1", "*MAC*.XR2", "*MAC*.XR3"):
+                files.extend(data_dir.glob(pattern))
     except OSError:
         files = []
-    for f in files:
+    for f in sorted(set(files)):
         shutil.copy2(f, out_dir / f.name)
         print(f"  Copied: {f.name}")
+        if _is_xargon(game):
+            macro = XargonMacroFile.load(str(f))
+            with open(out_dir / f"{f.name}.json", 'w', encoding='utf-8') as out:
+                json.dump({'file': f.name, 'records': macro.records}, out, indent=2)
         count += 1
     print(f"Copied {count} MAC files to {out_dir}")
 

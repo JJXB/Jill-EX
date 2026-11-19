@@ -10,6 +10,13 @@
 #include <SDL.h>
 #endif
 
+// Console targets that present by scaling the ARGB frame into the window
+// surface themselves: the PS4 driver needs it, and the Xbox (NXDK) SDL2 2.0.9
+// port only provides a software window framebuffer.
+#if defined(JILL_PS4) || defined(JILL_XBOX)
+#define JILL_DIRECT_PRESENT 1
+#endif
+
 namespace {
 
 #ifdef JILL_HAVE_SDL
@@ -29,17 +36,25 @@ public:
             err = std::string("SDL video: ") + SDL_GetError();
             return false;
         }
-#ifdef JILL_PS4
+#ifdef JILL_DIRECT_PRESENT
         // The PS4 SDL2 video driver reports the real video mode (1080p on
         // hardware, 720p under shadPS4) and uses the window position as the
         // destination offset when blitting to the video buffer.  Creating the
         // window at any other size makes SDL centre it at a negative position,
         // which the driver clamps into the bottom-right corner -> black screen.
+        // The Xbox port has a single 640x480 output; SDL reports it as the
+        // desktop mode and the window covers the whole screen.
         SDL_DisplayMode dm{};
         if (SDL_GetDesktopDisplayMode(0, &dm) == 0 && dm.w > 0 && dm.h > 0) {
             window_w = dm.w;
             window_h = dm.h;
         }
+#ifdef JILL_XBOX
+        if (window_w <= 0 || window_h <= 0) {
+            window_w = 640;
+            window_h = 480;
+        }
+#endif
         jill_paths::trace("sdl screen: video mode %dx%d", window_w, window_h);
         window_ = SDL_CreateWindow("Jill (port skeleton)", 0, 0, window_w,
                                    window_h, 0);
@@ -58,6 +73,17 @@ public:
         }
         mode = 2;  // always borderless fullscreen on the handheld panel
         jill_paths::trace("sdl screen: vita mode %dx%d", window_w, window_h);
+#elif defined(JILL_ANDROID)
+        // The window is the device display and always fullscreen.  Landscape
+        // is enforced by the manifest; the hint keeps SDL from rotating it
+        // into a portrait surface.
+        SDL_DisplayMode dm{};
+        if (SDL_GetDesktopDisplayMode(0, &dm) == 0 && dm.w > 0 && dm.h > 0) {
+            window_w = dm.w;
+            window_h = dm.h;
+        }
+        SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+        jill_paths::trace("sdl screen: android mode %dx%d", window_w, window_h);
 #endif
         SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
         window_ = SDL_CreateWindow("Jill (port skeleton)", SDL_WINDOWPOS_CENTERED,
@@ -69,7 +95,7 @@ public:
             return false;
         }
 
-#ifdef JILL_PS4
+#ifdef JILL_DIRECT_PRESENT
         surface_ = SDL_GetWindowSurface(window_);
         if (!surface_) {
             err = std::string("SDL_GetWindowSurface: ") + SDL_GetError();
@@ -113,9 +139,17 @@ public:
             SDL_SetWindowBordered(window_, SDL_FALSE);
             SDL_SetWindowFullscreen(window_, SDL_WINDOW_FULLSCREEN_DESKTOP);
         }
-#elif defined(JILL_PS4)
+#elif defined(JILL_DIRECT_PRESENT)
         // PS4 video output is fixed at 1080p; resizing after the window surface
         // is created can invalidate it.
+        (void)pixel_w;
+        (void)pixel_h;
+        (void)mode;
+        (void)display_w;
+        (void)display_h;
+#elif defined(JILL_ANDROID)
+        // Android owns the window size and orientation.  SDL_RenderSetLogicalSize
+        // in present_renderer() already scales the 320x200 frame to the surface.
         (void)pixel_w;
         (void)pixel_h;
         (void)mode;
@@ -154,7 +188,7 @@ public:
     }
 
     void present(const uint32_t* argb, int w, int h) override {
-#ifdef JILL_PS4
+#ifdef JILL_DIRECT_PRESENT
         present_direct(argb, w, h);
 #else
         present_renderer(argb, w, h);
@@ -165,6 +199,34 @@ public:
         if (window_) {
             SDL_SetWindowTitle(window_, title);
         }
+    }
+
+    bool touch_to_frame(float nx, float ny, int& x, int& y) override {
+#if defined(JILL_DIRECT_PRESENT)
+        // Direct window-surface presentation has no SDL renderer/logical size.
+        (void)nx;
+        (void)ny;
+        (void)x;
+        (void)y;
+        return false;
+#else
+        if (!window_ || !renderer_) {
+            return false;
+        }
+        int ww = 0;
+        int wh = 0;
+        SDL_GetWindowSizeInPixels(window_, &ww, &wh);
+        if (ww <= 0 || wh <= 0) {
+            return false;
+        }
+        float lx = 0.0f;
+        float ly = 0.0f;
+        SDL_RenderWindowToLogical(renderer_, static_cast<int>(nx * ww),
+                                  static_cast<int>(ny * wh), &lx, &ly);
+        x = static_cast<int>(lx);
+        y = static_cast<int>(ly);
+        return x >= 0 && y >= 0 && x < 320 && y < 200;
+#endif
     }
 
     void shutdown() override {
@@ -180,13 +242,13 @@ public:
             SDL_DestroyWindow(window_);
             window_ = nullptr;
         }
-#ifdef JILL_PS4
+#ifdef JILL_DIRECT_PRESENT
         surface_ = nullptr;
 #endif
     }
 
 private:
-#ifndef JILL_PS4
+#ifndef JILL_DIRECT_PRESENT
     void present_renderer(const uint32_t* argb, int w, int h) {
         if (!renderer_) {
             return;
@@ -295,7 +357,7 @@ private:
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;
     SDL_Texture* texture_ = nullptr;
-#ifdef JILL_PS4
+#ifdef JILL_DIRECT_PRESENT
     SDL_Surface* surface_ = nullptr;
     bool first_present_ = false;
     unsigned present_count_ = 0;

@@ -566,7 +566,7 @@ private:
     int prev_cam_y_ = 0;
     int frame_ = 0;
     int water_sound_ = -0x100;  // DGROUP:0x439E, last water-splash frame
-    uint32_t rng_ = 0x3039;  // Turbo C rand() LCG (2CA6:0004/0015)
+    uint32_t rng_ = 0x3039;  // Turbo C rand() LCG (2CA6:0004/0015), demo seed 12345
     bool hud_classic_ = false;
     bool hud_portrait_ = true;
     bool hide_text_kinds_ = false;

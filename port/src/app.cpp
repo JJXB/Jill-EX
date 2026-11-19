@@ -19,9 +19,15 @@
 #include "external.h"
 #include "framebuffer.h"
 #include "game.h"
+#include "platform_except.h"
 #include "platform_paths.h"
 #include "profile.h"
 #include "screen.h"
+#include "timing.h"
+
+#ifdef JILL_XBOX
+#include <hal/video.h>
+#endif
 
 #ifdef JILL_HAVE_SDL
 #include <SDL.h>
@@ -29,6 +35,10 @@
 
 #ifdef JILL_PS4
 #include "../ps4/ps4_pad.h"
+#endif
+
+#ifdef JILL_ANDROID
+#include "touch.h"
 #endif
 
 namespace {
@@ -728,6 +738,27 @@ void poll_input(const uint8_t* keys, const Bindings& b,
     }
     jump = jump || g_ps4_pad.cross;
     throw_btn = throw_btn || g_ps4_pad.square;
+#endif
+
+#ifdef JILL_ANDROID
+    // On-screen controls feed the same movement/jump/throw state as a pad.
+    {
+        const touch::State& t = touch::current();
+        if (t.left) {
+            --h;
+        }
+        if (t.right) {
+            ++h;
+        }
+        if (t.up) {
+            --v;
+        }
+        if (t.down) {
+            ++v;
+        }
+        jump = jump || t.jump;
+        throw_btn = throw_btn || t.throw_btn;
+    }
 #endif
 
     engine.set_input(h, v, jump, throw_btn);
@@ -3199,11 +3230,45 @@ int run_sdl(const Options& opt, Engine& engine,
                                   SDL_INIT_EVENTS | SDL_INIT_GAMECONTROLLER |
                                   SDL_INIT_JOYSTICK;
 #endif
+#if defined(JILL_XBOX)
+    // SDL's Xbox video driver reads the current video mode during
+    // SDL_VideoInit; until XVideoSetMode() has been called that mode is 0x0,
+    // so video init fails.  The NXDK SDL sample sets the mode up front too.
+    if (!XVideoSetMode(640, 480, 32, REFRESH_DEFAULT)) {
+        jill_paths::trace("startup: XVideoSetMode 640x480x32 failed");
+    }
+    {
+        const VIDEO_MODE vm = XVideoGetMode();
+        jill_paths::trace("startup: xbox video mode %dx%d %dbpp refresh %d",
+                          vm.width, vm.height, vm.bpp, vm.refresh);
+    }
+#endif
     jill_paths::trace("startup: SDL_Init subsystems=0x%x", sdl_subsystems);
+#if defined(JILL_XBOX)
+    // One subsystem at a time: a single SDL_Init() gives no clue which driver
+    // failed when there is no debugger attached to the console.
+    {
+        const Uint32 order[] = {SDL_INIT_VIDEO, SDL_INIT_JOYSTICK,
+                                SDL_INIT_GAMECONTROLLER, SDL_INIT_EVENTS};
+        for (Uint32 subsystem : order) {
+            if ((sdl_subsystems & subsystem) == 0) {
+                continue;
+            }
+            jill_paths::trace("startup: SDL init 0x%x", subsystem);
+            if (SDL_InitSubSystem(subsystem) != 0) {
+                jill_paths::trace("startup: SDL init 0x%x failed: %s",
+                                  subsystem, SDL_GetError());
+                return 1;
+            }
+            jill_paths::trace("startup: SDL init 0x%x ok", subsystem);
+        }
+    }
+#else
     if (SDL_Init(sdl_subsystems) != 0) {
         std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
     }
+#endif
     jill_paths::trace("startup: SDL ready");
     std::atexit(SDL_Quit);
 
@@ -3452,6 +3517,9 @@ int run_sdl(const Options& opt, Engine& engine,
     bool running = true;
     int page_axis_x = 0;  // text-page stick edge latches
     int page_axis_y = 0;
+#ifdef JILL_ANDROID
+    touch::State touch_prev;
+#endif
     // -1 = auto: show the splash for the game being started.  0 disables it.
     int splash_index = video.splash;
     if (splash_index < 0) {
@@ -3484,7 +3552,10 @@ int run_sdl(const Options& opt, Engine& engine,
                       display_w, display_h);
     };
     apply_video();
-    const double step = 1.0 / 18.2065;  // one BIOS tick per update (18.2 fps)
+    // One original BIOS timer tick per update.  See timing.h: the game's
+    // custom int 1Ch handler divides PIT channel 0 by 64 and its own counter
+    // by 64, i.e. 1,193,182 / 65,536 Hz exactly.
+    const double step = jill_time::kLogicStep;
     double accumulator = 0.0;
     uint64_t last = SDL_GetPerformanceCounter();
     const double freq = static_cast<double>(SDL_GetPerformanceFrequency());
@@ -3704,7 +3775,7 @@ int run_sdl(const Options& opt, Engine& engine,
         music_player.set_sfx_overrides(overrides);
     };
     auto refresh_external_visuals = [&]() {
-        try {
+        JILL_TRY {
             if (ext_assets.mounted()) {
                 if (!engine.apply_external(ext_assets, palette)) {
                     std::fprintf(stderr, "external: %s has no usable art\n",
@@ -3714,14 +3785,14 @@ int run_sdl(const Options& opt, Engine& engine,
             } else {
                 engine.apply_external(ext_assets, palette);  // clears overrides
             }
-        } catch (const std::exception& e) {
+        } JILL_CATCH(const std::exception& e) {
             // Console filesystems throw on calls the desktop tolerates; never
             // let a pack with bad art take the whole game down.
-            jill_paths::trace("external: visuals failed: %s", e.what());
+            jill_paths::trace("external: visuals failed: %s", JILL_EXC_TEXT(e));
         }
     };
     auto apply_pack = [&](int index) {
-        try {
+        JILL_TRY {
             if (index < 0 || index >= static_cast<int>(ext_assets.packs().size())) {
                 ext_assets.unmount();
                 refresh_external_visuals();
@@ -3746,8 +3817,9 @@ int run_sdl(const Options& opt, Engine& engine,
             } else {
                 music_player.stop();
             }
-        } catch (const std::exception& e) {
-            jill_paths::trace("external: pack switch failed: %s", e.what());
+        } JILL_CATCH(const std::exception& e) {
+            jill_paths::trace("external: pack switch failed: %s",
+                              JILL_EXC_TEXT(e));
         }
     };
     // Mount the initial pack from --pack / [external] pack.
@@ -4609,6 +4681,13 @@ int run_sdl(const Options& opt, Engine& engine,
 #endif
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
+#ifdef JILL_ANDROID
+            if (ev.type == SDL_FINGERDOWN || ev.type == SDL_FINGERMOTION ||
+                ev.type == SDL_FINGERUP) {
+                touch::handle_event(ev);
+                continue;
+            }
+#endif
             if (ev.type == SDL_QUIT) {
                 running = false;
             } else if (score_entry.active &&
@@ -4991,6 +5070,16 @@ int run_sdl(const Options& opt, Engine& engine,
             }
         }
 
+#ifdef JILL_ANDROID
+        {
+            touch::State touch_now;
+            touch::update(*screen, touch_now);
+            touch::emit(touch_prev, touch_now);
+            touch::publish(touch_now);
+            touch_prev = touch_now;
+        }
+#endif
+
         const uint8_t* keys = SDL_GetKeyboardState(nullptr);
         static const uint8_t kNoKeys[SDL_NUM_SCANCODES] = {};
         if (!keys) {
@@ -5219,6 +5308,12 @@ int run_sdl(const Options& opt, Engine& engine,
         } else if (video.filter == 2) {
             filter_crt(argb, Framebuffer::W, Framebuffer::H);
         }
+#ifdef JILL_ANDROID
+        // On-screen controls are an overlay on the presented frame, so they
+        // scale with the game and line up with the touch hit-testing.
+        touch::draw(argb.data(), Framebuffer::W, Framebuffer::H,
+                    touch::current());
+#endif
 #ifdef JILL_PS4
         // First-frame diagnostic: prove whether the game frame itself is black
         // and leave an image on disk for inspection.
@@ -5605,7 +5700,7 @@ int run_app(const Options& opt) {
                       game.id.c_str(), game.data_dir.c_str(),
                       game.palette.c_str());
     if (!engine.init(game, err)) {
-        std::fprintf(stderr, "%s\n", err.c_str());
+        jill_paths::trace("startup: engine init failed: %s", err.c_str());
         return 2;
     }
     jill_paths::trace("startup: engine ready");

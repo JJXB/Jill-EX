@@ -3,15 +3,23 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
-#include <filesystem>
 #include <string>
 
 #include "app.h"
 #include "config.h"
+#include "platform_except.h"
+#include "platform_fs.h"
 #include "platform_paths.h"
 
 #ifdef _WIN32
 #include <windows.h>
+#endif
+
+#ifdef JILL_ANDROID
+#include <android/log.h>
+
+#include <csignal>
+#include <cstdio>
 #endif
 
 #ifdef JILL_PS4
@@ -27,6 +35,74 @@ extern "C" unsigned int sceUserMainThreadStackSize = 1024 * 1024;
 extern "C" unsigned int sceLibcHeapSize = 32 * 1024 * 1024;
 #endif
 
+#ifdef JILL_ANDROID
+// SDLActivity resolves "SDL_main" from libmain.so.  This header renames main
+// to SDL_main and declares it with C linkage, which is what dlsym() needs.
+#include <SDL_main.h>
+#include <SDL_system.h>
+#include <jni.h>
+#endif
+
+#ifdef JILL_ANDROID
+namespace {
+
+// A native crash otherwise only reaches logcat as a "Fatal signal" line from
+// debuggerd, which some Fire OS builds suppress.  Record the signal under the
+// JillEX tag before re-raising it.
+void android_fatal_signal(int sig) {
+    char line[128];
+    std::snprintf(line, sizeof(line),
+                  "fatal: native signal %d (crash before/inside SDL_main)", sig);
+    __android_log_write(ANDROID_LOG_FATAL, "JillEX", line);
+    std::signal(sig, SIG_DFL);
+    std::raise(sig);
+}
+
+void install_signal_handlers() {
+    std::signal(SIGSEGV, android_fatal_signal);
+    std::signal(SIGBUS, android_fatal_signal);
+    std::signal(SIGILL, android_fatal_signal);
+    std::signal(SIGFPE, android_fatal_signal);
+    std::signal(SIGABRT, android_fatal_signal);
+}
+
+// Startup failures return from SDL_main, which makes SDLActivity finish() the
+// activity (looks like a failed launch).  Hand the failure to the Java error
+// screen instead, which stays up and shows the tail of jill.log.
+void android_show_startup_error(int rc) {
+    JNIEnv* env = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
+    if (env == nullptr) {
+        return;
+    }
+    jobject activity = static_cast<jobject>(SDL_AndroidGetActivity());
+    if (activity == nullptr) {
+        return;
+    }
+    jclass cls = env->GetObjectClass(activity);
+    if (cls == nullptr) {
+        return;
+    }
+    const jmethodID mid = env->GetStaticMethodID(
+        cls, "showStartupError", "(Ljava/lang/String;)V");
+    if (mid != nullptr) {
+        char text[128];
+        std::snprintf(text, sizeof(text),
+                      "SDL_main returned rc=%d.", rc);
+        jstring message = env->NewStringUTF(text);
+        env->CallStaticVoidMethod(cls, mid, message);
+        if (message != nullptr) {
+            env->DeleteLocalRef(message);
+        }
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+        }
+    }
+    env->DeleteLocalRef(cls);
+}
+
+}  // namespace
+#endif
+
 namespace {
 
 // Directory holding jill.ini (and therefore the relative games/, profiles/ and
@@ -34,8 +110,9 @@ namespace {
 // directory and up to four parents, so launching port\build\Release\jill.exe
 // directly still finds the repository configuration.
 std::string config_directory(const char* argv0) {
-    namespace fs = std::filesystem;
-#if defined(JILL_PS4) || defined(JILL_VITA)
+    namespace fs = jill_fs;
+#if defined(JILL_PS4) || defined(JILL_VITA) || defined(JILL_ANDROID) || \
+    defined(JILL_XBOX)
     // Console: jill.ini, games/, profiles/ and the game data all live in one
     // writable folder.  main() chdir()s there before any file is opened.
     (void)argv0;
@@ -79,6 +156,54 @@ std::string config_directory(const char* argv0) {
     }
     return {};
 #endif
+}
+
+#if defined(JILL_XBOX)
+// The XBE may be launched from a read-only volume (an XISO mapped as D:), so
+// the diagnostic log falls back to a writable folder.  The same lines always
+// go to the debug channel as well.
+void open_xbox_log() {
+    if (jill_paths::log_open(jill_paths::resolve("jill.log"))) {
+        return;
+    }
+    static const char* const kFallbacks[] = {"E:\\JillEX\\", "E:\\", "C:\\"};
+    for (const char* dir : kFallbacks) {
+        std::error_code ec;
+        jill_fs::create_directories(jill_fs::path(dir), ec);
+        if (jill_paths::log_open(std::string(dir) + "jill.log")) {
+            return;
+        }
+    }
+}
+#endif
+
+// pdclib declares atof()/strtod() but does not implement them, so the one
+// fractional command-line option (--music-seconds) is parsed here: "12" and
+// "12.5" are accepted.
+double parse_seconds(const char* text) {
+    double whole = 0.0;
+    double fraction = 0.0;
+    double divisor = 1.0;
+    bool after_point = false;
+    for (const char* p = text; p != nullptr && *p != '\0'; ++p) {
+        if (*p == '.') {
+            if (after_point) {
+                break;
+            }
+            after_point = true;
+            continue;
+        }
+        if (*p < '0' || *p > '9') {
+            break;
+        }
+        if (after_point) {
+            divisor *= 10.0;
+            fraction += static_cast<double>(*p - '0') / divisor;
+        } else {
+            whole = whole * 10.0 + static_cast<double>(*p - '0');
+        }
+    }
+    return whole + fraction;
 }
 
 void usage() {
@@ -180,7 +305,27 @@ void usage() {
 }  // namespace
 
 int main(int argc, char** argv) {
-#if defined(JILL_PS4) || defined(JILL_VITA)
+#ifdef JILL_ANDROID
+    install_signal_handlers();
+    jill_paths::trace("startup: native main entered");
+#endif
+#if defined(JILL_XBOX)
+    // The Xbox has no console, and pdclib's stdout/stderr are pseudo streams
+    // whose handle is INVALID_HANDLE_VALUE, so freopen() cannot redirect them.
+    // Diagnostics go to the debug channel (xemu/Cxbx/XBDM) and to jill.log;
+    // open_xbox_log() falls back to a writable folder if the XBE sits on a
+    // read-only disc.
+    open_xbox_log();
+    jill_paths::trace("startup: log ready");
+    jill_paths::trace("startup: data root %s", jill_paths::data_root().c_str());
+    {
+        std::string root_err;
+        if (!jill_paths::ensure_data_root(root_err)) {
+            jill_paths::trace("startup: %s", root_err.c_str());
+            return 1;
+        }
+    }
+#elif defined(JILL_PS4) || defined(JILL_VITA) || defined(JILL_ANDROID)
     // The console filesystem root is read-only; create the writable game
     // folder and run from it before touching jill.ini or any asset path.
     {
@@ -194,12 +339,18 @@ int main(int argc, char** argv) {
 #endif
     // Make relative `games/`, `profiles/`, asset and save paths work when the
     // executable is launched from Explorer or another working directory.
+    // The Xbox build has no chdir: every console path is resolved against the
+    // data root instead.
+#if defined(JILL_XBOX)
+    const std::string cfg_dir = jill_paths::data_root();
+#else
     const std::string cfg_dir = config_directory(argc > 0 ? argv[0] : nullptr);
     if (!cfg_dir.empty()) {
         std::error_code ec;
-        std::filesystem::current_path(cfg_dir, ec);
+        jill_fs::current_path(cfg_dir, ec);
     }
-#if defined(JILL_PS4) || defined(JILL_VITA)
+#endif
+#if defined(JILL_PS4) || defined(JILL_VITA) || defined(JILL_ANDROID)
     // There is no console on the console: keep a diagnostic log next to the
     // data so failures can be inspected over FTP.  Use the absolute path:
     // shadPS4 (among others) does not implement chdir, so the process working
@@ -211,12 +362,12 @@ int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IOLBF, 0);
     std::setvbuf(stderr, nullptr, _IONBF, 0);
     jill_paths::trace("startup: log ready");
-#if defined(JILL_PS4) || defined(JILL_VITA)
+    // std::set_terminate lives in NXDK's libxboxrt EH support, which pulls in
+    // the MSVC exception machinery the Xbox build does not link (-fno-exceptions).
     std::set_terminate([] {
         jill_paths::trace("fatal: std::terminate (uncaught exception or abort)");
         std::abort();
     });
-#endif
 #endif
     Options opt;
     // jill.ini supplies the defaults; command-line arguments override it.
@@ -557,7 +708,7 @@ int main(int argc, char** argv) {
         } else if (a == "--music-file") {
             opt.music_file = value("--music-file");
         } else if (a == "--music-seconds") {
-            opt.music_seconds = std::atof(value("--music-seconds"));
+            opt.music_seconds = parse_seconds(value("--music-seconds"));
         } else if (a == "--dump-music") {
             opt.dump_music = value("--dump-music");
         } else if (a == "--audio-check") {
@@ -571,7 +722,8 @@ int main(int argc, char** argv) {
             return 2;
         }
     }
-#if defined(JILL_PS4) || defined(JILL_VITA)
+#if defined(JILL_PS4) || defined(JILL_VITA) || defined(JILL_ANDROID) || \
+    defined(JILL_XBOX)
     // Make every configured path absolute under the console data root.
     // shadPS4 and some loaders stub chdir, so relative paths are not
     // dependable even though we still attempt the chdir above.
@@ -622,12 +774,12 @@ int main(int argc, char** argv) {
     // calls std::terminate, and the loader reports nothing at all.  Report it
     // in jill.log instead of vanishing.
     int rc = 0;
-    try {
+    JILL_TRY {
         rc = run_app(opt);
-    } catch (const std::exception& e) {
-        jill_paths::trace("fatal: exception: %s", e.what());
+    } JILL_CATCH(const std::exception& e) {
+        jill_paths::trace("fatal: exception: %s", JILL_EXC_TEXT(e));
         rc = 1;
-    } catch (...) {
+    } JILL_CATCH(...) {
         jill_paths::trace("fatal: unknown exception");
         rc = 1;
     }
@@ -638,6 +790,12 @@ int main(int argc, char** argv) {
     // (CE-34878-0).  Terminate the process directly instead.
     jill_paths::trace("startup: exiting (rc=%d)", rc);
     _exit(rc);
+#elif defined(JILL_ANDROID)
+    jill_paths::trace("startup: SDL_main returning rc=%d", rc);
+    if (rc != 0) {
+        android_show_startup_error(rc);
+    }
+    return rc;
 #else
     return rc;
 #endif

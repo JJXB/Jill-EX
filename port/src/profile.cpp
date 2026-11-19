@@ -6,7 +6,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
-#include <filesystem>
 #include <fstream>
 #include <map>
 #include <memory>
@@ -14,6 +13,7 @@
 #include <vector>
 
 #include "gamedata.inc"
+#include "platform_fs.h"
 
 namespace {
 
@@ -429,7 +429,7 @@ const ProfileDef* load_one(const std::string& id, int depth) {
 }  // namespace
 
 int load_profile_dir(const std::string& dir, std::string& err) {
-    namespace fs = std::filesystem;
+    namespace fs = jill_fs;
     std::error_code ec;
     if (!fs::exists(dir, ec) || !fs::is_directory(dir, ec)) {
         return 0;

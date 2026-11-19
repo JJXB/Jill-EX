@@ -55,6 +55,7 @@ struct StudioOptions {
     std::string out;                  // --out: frame PPM / selftest .mac
     std::string trace;                // --trace FILE: headless per-tick CSV
     std::string dump_map;             // --dump-map FILE: headless live tile map
+    std::string dump_objects;         // --dump-objects FILE: headless object table
     bool classic_camera = false;      // --classic-camera: original dead-zone scroll
     std::string screenshot_dir;       // --screenshot-dir DIR (F9 writes here)
 };

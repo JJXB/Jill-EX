@@ -1,5 +1,418 @@
 # Progress
 
+## 2026-11-19 (morph fit test: jn1 demo 13–14 tick desync fixed)
+
+* **Root cause of the jn1 demo's late frog→Jill morph found.** `1FAE:2E61`
+  does not morph unconditionally: after resizing the body it probes
+  `_cando(x & ~7, y, 1)` at the feet-planted y (`old_bottom - new_h`) first,
+  then at the unchanged y, and only applies the morph if one probe fits.  The
+  port skipped both probes, so the frog morphed the instant it touched the
+  2.dem return token at `(208,928)` while still inside the rock, 13–14 ticks
+  before the original.  `Engine::morph_player` now mirrors the two probes and
+  applies the successful probe's y.  No `*.mac` file was touched.
+* jn1 demo route now matches the video: frog hops out to `(192,924)` and the
+  morph happens at **tick 3588** at `(200,912)` (video: tick 3588); Jill walks
+  to the chain, jumps at 3628 from x=408, clears level 103 at **tick 4059**
+  (`t = 256.3 s`) with **Level 103 Score 229**, then the intro credits run to
+  tick 4299 (score 329).
+* A/B regression check against the pre-fix build: `end1.mac` (board 50 level
+  15, 800 ticks) and `jn2dem1.mac` (1000 ticks) are trace-identical, so the
+  fit test only changes the blocked-token case.
+* The earlier "frog is stuck at x=224" video reading was wrong — the camera
+  follows the frog, so its world x is 224 → 200 → 192 over 3573–3586, exactly
+  the port's trace; only the morph timing was off.
+* Docs: `_trymove` order corrected (full → y-only → x-only, mask adds the
+  fall bit), morph probe documented in `jill1-kind-handlers.md`,
+  `port-save-splash-cheats.md` and the new `--dump-objects` studio option in
+  `demo-studio.md`.
+* Release zips rebuilt (x64 + x86).  `jill.exe` and the studio produce
+  byte-identical frames for jn1 ticks 3588 and 4059, so the shipped binaries
+  contain the fix.
+* **Jill 2 demo re-check (TODO).** The 2026-11-16 10-46-29 video is the Jill 2
+  attract demos.  Its score digit changes 0 → 12 at 18.95 s, which pins tick 0
+  to ≈3.19 s (the port's pickup is tick 287), and the health bar steps at
+  8.25 / 12.25 / 14.75 s → ticks 92 / 165 / 210, matching the port's 89 / 164 /
+  210.  So the macro timing and the early logic are in sync, and the port's
+  existing camera is the one the demo was recorded with.
+  A faithful version of the `1FAE:000D` vertical dead zone was tried
+  (camera follows the player's own step while inside `[y-0x50, y-0x20]`,
+  snaps to the edge otherwise; start at the board origin) — it moved the
+  framing closer to the video but shifted the health drops to 143 / 239 and
+  made jn1 diverge (0.dem loop), so it was reverted.  Recorded playback keeps
+  the verified snap camera.
+  The remaining jn2 difference is local: at tick 342 the recorded `b1` press
+  makes the port's Jill jump under a low ceiling (state 2, 2-tick hang, then
+  `dy = 0`) and she falls from y=800 at tick 346; the video's Jill stays on
+  the ledge until ≈350.  The port then clips the kind-22 frog at (1320,822)
+  at tick 350 (2-px AABB overlap) and loses health; the original misses it.
+  Everything is deterministic (no RNG in the frog handler), so the open
+  question is the exact jump/ceiling result for a blocked up-move in the
+  Jill 2 player handler.
+* Follow-up: the player's state-0 jump and state-2 ceiling code in
+  `1FC1:01E0` were disassembled and match the port exactly (the jump has no
+  headroom check; the ceiling snap is `row = (y-1) & ~0xF`, `dy = 0` only
+  when the snap move fails).  The real bug found there was in the shared
+  BUNNY/FROG handler (`1644:36EE`): gravity is `dy += 1; if (dy > 0x0C)
+  dy = 0x0A`, not a cap at 10 — fixed in the port (the hop can reach 11-12
+  px/tick).  That changes jn2's later hits (health 2 at 439, 1 at 520) but
+  not the tick-350 frog landing.
+  The frog only starts moving when it enters the cull margin: it sits at
+  `(1344,870)` with `p13 = 0` until ≈tick 160 and then hops, so its phase is
+  set by the camera rect.  The port's vertical camera is still ≈25-30 px away
+  from the video's in the mid-demo window, which shifts that phase (the
+  frog lands on Jill at 350).  A DOSBox save-state / memory dump of
+  `cam_y` and the frog's `p13` at a few ticks would settle the remaining
+  camera trajectory faster than the 30 fps video allows.
+* **jn2dem2: star pickups fixed.** The 10-px macro collectible slack made the
+  first jump grab all three spinning-blade stars (`p13 = 8`) at
+  `(128,192)`, `(144,176)`, `(160,192)`.  The recording's boxes only touch
+  the left/middle pair (ticks 126/128) and leave the third for the second
+  pass upward (tick 180), which is what the video (10-46-29, 58.75 s+)
+  shows.  The slack is gone: hit tests are plain AABB again.  Verified:
+  jn1 is unchanged (the intro feathers now register on their real ticks,
+  112/114 and 483, instead of 2 ticks early; morph 3588, level card 4059 and
+  229→329 all stand), `end1` and `jn2dem1` traces are byte-identical.
+  Remaining in jn2dem2: from ≈tick 498 Jill stands at `(592,208)` while the
+  health drains to 0 and the level restarts repeatedly, whereas the video
+  keeps progressing — a separate, later divergence.
+* jn2dem2 T492/R67 follow-up (damage burst on landing).  The kind 7 DEMON at
+  `(582,192)` is boxed in by the `BOULD1` tile at `(608,224)`, so its
+  `_justmove` fails every tick and `1644:2974`'s "blocked" branch spits a
+  FIREBALL every tick; each new fireball hits the landing Jill (498 demon
+  touch, 511–515 fireballs, health 0 at 514).  The video's health bar drops
+  only about every 13 ticks (≈519/536/569/583), so the original's demon is
+  not cornered there — an upstream entity-phase divergence, not a hit
+  cooldown.  Two real bugs found on the way and fixed:
+  - `player_kill` OR-ed `0xC000` into the *player object's* flags.  `26F4:05E7`
+    raises the HUD damage flash (`DGROUP:0x83D0` = board header+0x2A) instead;
+    the object bits mean "off-screen/blocked" and the update pass stamped the
+    player's cells into the tile map, freezing her and making adjacent
+    enemies look blocked.  The flash itself is still not rendered.
+  - The per-frame `0xC000` map/object marks are now cleared at the start of
+    `Engine::tick()` (they were cleared at the end of `render()`, so headless
+    runs accumulated them across ticks).
+
+## 2026-11-18 (exact 18.2065 Hz tick; deterministic fish bubbles)
+
+* **Tick rate is now the exact original ratio.** `1581:0236` installs the
+  custom int 1Ch handler (`1530:0440`).  Without the SB FM driver it programmes
+  PIT channel 0 with divisor `65536/64 = 1024` and bumps `DGROUP:0x3E28` every
+  64th interrupt; with the driver the frequency argument is 0, which the
+  routine turns into divisor 65536 and divider 1.  Both reduce to exactly one
+  8253 reload: `1,193,182 / 65,536 = 18.206510... Hz` (the `/18` elsewhere is
+  just tick-count-to-seconds display math).  `port/src/timing.h` now derives
+  `kLogicHz`/`kLogicStep` from that ratio and both the game loop (`app.cpp`)
+  and the demo studio use it instead of the truncated `18.2065` literal.
+* Macro playback still consumes one record per `Engine::tick()`, so the replay
+  sequence is independent of the wall-clock rate; this change removes the
+  last 0.7 ppm pacing error and keeps the game and studio in lockstep.
+* Fish form bubbles called `std::rand()` directly, so a fish-form replay used
+  the C library's default-seeded generator instead of the original Turbo C
+  LCG.  They now use `Engine::rnd(4)`, the generator macro playback already
+  seeds to 12345, matching the original `rand() & 3` bubble cadence and its
+  effect on the object list.
+
+## 2026-11-18 (morph tokens persist; 2.dem star pickup)
+
+* **Transformation tokens are not pickups.** `1a41:000f` jumps from the morph
+  call (`1a41:00b4`) straight to the tail at `0146`, skipping
+  `sound(3,0x19)`, `_addinv` **and** `_killobj`.  `Engine::on_hit` case 28 now
+  morphs and returns without adding the item or killing the object, so the
+  fish/spider/bird/frog and `"FOOF!"` tokens stay on the board and can be
+  touched again to re-activate the form.
+* `Engine::morph_player` now returns early when the player already has the
+  requested kind (`1FAE:005E`), otherwise the persisting `"FOOF!"` token under
+  2.dem's spawn point re-ran the morph every frame and pinned the player there.
+* 2.dem's spinning blade (p13 = 8, the star-shaped pickup on the water shaft)
+  was 4-10 px outside the frog's box on the recorded path, so the demo never
+  collected it.  Collectible tokens (p13 1/2/3/8/9/10) now get the same 10-px
+  macro-playback slack that the ending's JILL icon already used;
+  transformation tokens are excluded so the frog token cannot fire early.
+* `jn1demo.mac` still runs intro -> 0.dem -> intro -> 1.dem -> intro -> 2.dem
+  with no deaths (end 1312,878) and `end1.mac` still morphs at 232, reverts at
+  494/495.
+
+## 2026-11-18 (extractor: Xargon planar tile decode)
+
+* User-supplied screenshots (shape viewer vs. the real DOS game) showed stage
+  tiles/objects rendered as scrambled streaks although sprites were fine.
+  Cause: `xlate_table()`'s `shm_blflag` 4-plane shuffle is undone by
+  `ldrawsh_vga()` at draw time, so the net on-screen pixels are the archive's
+  original byte order.  `XargonGraphicsFile` now keeps frame payloads linear
+  instead of applying the intermediate plane reorder (the earlier reorder
+  happened to look plausible on some banks, which is why it slipped through).
+* Indices 250/251 are Xargon's runtime sky colour (`setcolor(250, ...)` in
+  XARGON.C / X_EDITOR.C), not fixed palette colours.  Both are now treated as
+  transparent in the alpha mask, and `frame_indices()` folds them into 0 so
+  the palettised exporters skip them as well.
+* Verified against the supplied red-flower frame (bank 14, frame 20): the
+  preview now shows the flower top over a transparent background, and the
+  full `BOARD_01.XR1` preview shows flowers, waterfalls and clouds matching
+  the game screenshot.  Player/enemy sprites unchanged.
+
+## 2026-11-18 (extractor: Xargon shape preview fix)
+
+* `XargonGraphicsFile` now marks 8-bit banks with the identity-palette flag
+  that Jill's shape decoder expects (Xargon's `numcolorbits==8` uses
+  `init8bit()` regardless of `shm_fontf`); previously those banks rendered
+  all black in the shape viewer.  Frames also carry an alpha mask for source
+  colour 0 (Xargon's `cmtab[0][0]=255` transparency), so sprites no longer
+  appear inside a solid black box.  Original flags remain in `entry.raw_flags`.
+* Verified by rendering banks 6 (player sprites), 8 (tiles) and the font bank
+  to PNGs with a contrasting background, plus a GUI `draw_shape` pass; board
+  previews are unchanged.
+
+## 2026-11-18 (extractor: Xargon format support)
+
+* Added Xargon volume detection to `jill_extractor.discover_games()` via
+  `jill.ini [paths] xargon = D:/Emu/DOS/C/Xargon`.  Detected from data files
+  (not `games/*.game`) so the C++ port, which has no Xargon engine profile,
+  does not offer broken games.  Volumes 1-3 appear as `Xargon 1/2/3` in the
+  Game menu and reuse the existing Boards/Shapes/Sounds/Config tabs.
+* New parsers in `jill_extractor.py`: `XargonBoardFile` (raw 128x64 tile map,
+  31-byte objects, 96-byte `pltype` + `cnt_fruit` trailer instead of Jill's
+  70-byte header, plus `save()`), `XargonTilesFile` (900 defaults + XOR flag
+  overlays), `XargonGraphicsFile` (12-byte shape sub-header, `colortab`
+  translation, `shm_blflag` 4-plane decode, embedded 64x12 DAC palette from
+  bank 5), `XargonAudioFile` (VCL header + 128 SB macros), `XargonConfigFile`,
+  `XargonMacroFile` (`[bits][values][varint dt]`), `XargonEPCFile`, and
+  Xargon kind names from `X_OBJ.DEF`.
+* CMF tracks render via the built port using a Jill game as host and an
+  absolute `--music-file` path; batch export keeps volumes distinct with
+  `SONG_n_XRn.wav` names.  `extract_all.py` was updated to use the Xargon
+  parsers for `--game xargon1/2/3`.
+* Verified headlessly: parsers, GUI tab population, board rendering (rendered
+  `BOARD_01.XR1` to PNG), SFX/text/macro config views, CMF render/play and
+  CLI extraction.  Audio output itself still needs a user pass.
+
+## 2026-11-18 (jn1demo frog leap: macro buttons are not edge-latched)
+
+* From the studio recording around T3153/R389: the 2.dem frog section holds
+  `b1` for 19–169 ticks (`R386–R388`, `R391–R401`, `R402–R411`, `R414–R428`).
+  `Engine::apply_macro_input` was still gating recorded buttons with
+  `latch1_`/`latch2_`, so each hold became a single-tick press.  The original
+  macro player (`1415:093B`) feeds `3C7A`/`3C7E` directly and never runs the
+  normal input poll, so the latches do not apply.  Macro playback now sets
+  `in_.btn1`/`in_.btn2` straight from the record; the frog holds the leap
+  (`dy = -0x0C`) instead of dropping back into the water.
+* `jn1demo.mac` still reaches intro → 0.dem → intro → 1.dem → intro → 2.dem
+  with no deaths (final frame 1312,878), and `end1.mac` still morphs at 494 and
+  reverts at 495.  Normal-Jill recordings have short `b1` taps, so their route
+  is unchanged.
+
+## 2026-11-18 (extractor sound playback)
+
+* `jill_extractor.py`: listbox entries are written as `SFX  1: ...` / `Page  3: ...`
+  (zero-padded id plus trailing colon), but the play/save/select/export handlers
+  did `int(text.split()[1])`, which raised `ValueError: invalid literal for int()
+  with base 10: '1:'`.  New `_entry_index()` helper strips the colon and is used
+  by every handler, including the WAV-import slot lookup (which had silently
+  returned `None`).
+* Music entries (`Music: funky.ddt`, `Title music: ...`) are file-backed, not
+  `Music N` VCL indexes; `_entry_filename()` now routes them to the CMF renderer,
+  and playback uses a fresh temp WAV each time instead of a fixed preview name
+  (reusing it made repeat plays silent because winsound held the file open).
+  Awaiting user audio verification in the GUI.
+
+## 2026-11-18 (original Xbox target: first compiling build)
+
+* New `port/xbox/` CMake project builds the shared `port/src` engine with NXDK
+  and its SDL2 2.0.9 port, then runs `cxbe` to produce
+  `port\xbox\build\default.xbe` (1.66 MB).  `build_xbox.cmd` also stages
+  `jill.ini`, `games/*.game` and `profiles/*` into `build\data` and
+  `JillEX-Xbox.zip`.  Desktop (`build.cmd`) rebuilds unchanged.
+* NXDK's shipped `share/toolchain-nxdk.cmake` cannot be used as-is on Windows
+  (it points CMake at the extension-less `bin/nxdk-cc`/`bin/nxdk-link`), so
+  `port/xbox/nxdk.toolchain.cmake` overrides the launchers with their `.cmd`
+  wrappers, and the project builds libc++ and SDL2 from the SDK's checked-out
+  sources (a source checkout has no prebuilt `libc++.lib`/`libSDL2.lib`, and
+  NXDK's makefiles refuse to run outside a MinGW shell).
+* Portability work in shared code:
+  * New `jill_fs` facade (`port/src/platform_fs.{h,cpp}`): desktop/PS4/Vita/
+    Android alias `std::filesystem`, Xbox uses a Win32 implementation
+    (`FindFirstFileA`/`GetFileAttributesA`/`CreateDirectoryA`) because
+    libc++'s `<filesystem>` is POSIX-only and not compiled by NXDK.
+    `external.cpp`, `game.cpp`, `profile.cpp`, `platform_paths.cpp` and
+    `main.cpp` now use it.
+  * New `port/src/platform_except.h`: the three defensive try/catch blocks
+    compile as plain blocks on Xbox (no C++ unwinder, `-fno-exceptions`).
+  * `port/xbox/xbox_compat.h` (force-included) restores `std::printf` (NXDK's
+    libc++ sets `_LIBCPP_HAS_NO_STDOUT`), declares the `<locale>` helpers
+    `wcsnrtombs`/`mbsnrtowcs`, and pins pdclib's Annex K guard macro.
+  * `port/xbox/xbox_runtime.cpp` provides `std::terminate`,
+    `uncaught_exception(s)` and `__call_once`; NXDK's `libxboxrt` EH object
+    needs MSVC EH machinery, so libc++'s `exception`, `future`, `thread`,
+    `condition_variable`, `mutex` and `random` units are excluded (unused).
+  * Windows-only backends guarded: MIDI (`winmm`) and Media Foundation audio
+    are disabled on Xbox; `STBI_NO_STDIO`/`DR_MP3_NO_STDIO` (memory decoding,
+    no `fopen_s`); `MINIZ_NO_STDIO`/`MINIZ_NO_TIME`; `STBI_NO_SIMD` (Pentium
+    III, no SSE2).
+  * `screen_sdl.cpp`: Xbox shares the PS4 direct window-surface presentation
+    path (the SDL2 Xbox port has no accelerated renderer); the 320x200 frame
+    is integer scaled into 640x480.
+  * `main.cpp`: no `chdir` on console (data root is absolute), local
+    `--music-seconds` parser (pdclib declares but does not implement
+    `atof`/`strtod`).
+* Xbox data root is the first of `D:\`, `E:\JillEX`, `E:\Apps\Jill-EX`,
+  `E:\Apps\JillEX`, `E:\Games\Jill-EX`, `E:\Games\JillEX` that contains a
+  `jill.ini` (`D:\` = disc root).  `jill.log`, saves and high scores still
+  need a writable root.
+* **Not run on hardware or in Cxbx yet.**  Bring-up checklist in
+  `port/xbox/README.md`.
+
+### Xbox first hardware attempt (same day)
+
+First console boot returned to the dashboard immediately and `jill.log` stayed
+at 0 bytes.  Two causes:
+
+* `jill_paths::trace()` only printed on desktop when `JILL_TRACE` was set; the
+  guard was `!PS4 && !VITA && !ANDROID && !XBOX`, so the Xbox build never wrote
+  a single diagnostic line.  `JILL_XBOX` is now excluded from that guard and
+  `trace()` writes to the debug channel (`debugPrint`) plus `jill.log`.
+* The XBE was linked with NXDK's default 64 KiB stack (`-stack:65536`), and
+  NXDK's CRT runs `main()` on a thread that takes its stack size from the XBE
+  header.  The engine needs far more; the overflow raises
+  `EXCEPTION_STACK_OVERFLOW` and the console drops to the dashboard.  The Xbox
+  target now links `-stack:1048576` (verified in the PE header).
+
+Startup diagnostics reworked for the Xbox:
+
+* `main()` opens `jill.log` before anything else and no longer calls
+  `freopen()`/`setvbuf()` on stdout/stderr: pdclib's standard streams are
+  pseudo streams whose handle is `INVALID_HANDLE_VALUE`.
+* `jill_paths::log_open()` now reports failure, and the Xbox build falls back
+  to `E:\JillEX\`, `E:\` and `C:\` when the XBE sits on a read-only disc.
+* The data root is the folder the XBE was launched from (`XeImageFileName`),
+  so an HDD folder, a disc or an FTP deployment all work; the fixed
+  `D:\`/`E:\...` list is only a fallback.
+* `build_xbox.cmd` now stages `default.xbe` inside the install bundle, so
+  `JillEX-Xbox.zip` is the complete deployable folder (XBE + `jill.ini`,
+  `games/`, `profiles/`, `external/`, README).
+
+Second boot got as far as `startup: engine init game=jill1 data=D:\jillt` and
+then exited.  Cause: `join()` builds `D:\jillt/jill.dma`, and NXDK's
+`CreateFileA()` hands the name straight to `NtCreateFile`, whose object manager
+only treats `\` as a separator (`/` works on desktop Windows but not here), so
+every `tiles`/`shapes`/page/board/asset open failed.  `jill.ini` and pack
+manifests use `/` too (`palette = profiles/onesimus.pal`).  Fixes:
+
+* New `port/xbox/xbox_fs_glue.cpp` replaces pdclib's `_PDCLIB_open` glue (the
+  single funnel behind `fopen`, `std::ifstream` and `std::ofstream`) with the
+  same implementation plus `/` -> `\` normalisation.
+* The `jill_fs` Win32 helpers normalise names for
+  `GetFileAttributesA`/`FindFirstFileA`/`CreateDirectoryA` as well.
+* `Engine::init` now traces each load step and the failure reason, so a missing
+  data file is visible in `jill.log` instead of vanishing into the pseudo
+  stderr.
+* External asset scanning tolerates a read-only root (runs without packs
+  instead of failing).
+
+Third boot reached `startup: SDL_Init subsystems=0x6220` and stopped: SDL's
+Xbox video driver (`XBOX_VideoInit`) reads the current mode with
+`XVideoGetMode()` and adds it as the display, but NXDK leaves that mode 0x0
+until the application calls `XVideoSetMode()` (the NXDK SDL sample does it
+before `SDL_Init`), so video init failed.  The Xbox path now:
+
+* calls `XVideoSetMode(640, 480, 32, REFRESH_DEFAULT)` before SDL init and
+  traces the resulting `XVideoGetMode()`,
+* initialises SDL one subsystem at a time (`VIDEO`, `JOYSTICK`,
+  `GAMECONTROLLER`, `EVENTS`) and traces each result, so a driver failure on
+  the console is visible in `jill.log` instead of vanishing into stderr.
+
+## 2026-11-18 (Android: shared /sdcard/JillEX data folder)
+
+* The Android data root moved from app-private storage
+  (`/sdcard/Android/data/org.jillex/files`) to `/sdcard/JillEX`, so game data,
+  saves and `jill.ini` are visible to any file manager and `adb push` does not
+  depend on the package name.  `platform_paths.cpp` now returns that constant.
+* Because the folder is outside the app sandbox and targetSdk is 35, the app
+  requests "All files access" (`MANAGE_EXTERNAL_STORAGE`) on API 30+; on API
+  24-29 it requests `WRITE_EXTERNAL_STORAGE` (plus
+  `requestLegacyExternalStorage` for Android 10).  `JillEXActivity` shows a
+  GRANT ACCESS screen before SDL starts, rechecks in `onResume` and recreates
+  when the grant arrives.  adb alternative:
+  `adb shell appops set org.jillex MANAGE_EXTERNAL_STORAGE allow`.
+* Asset install, the startup-error screen, `jill.log`, `README.txt`,
+  `build_android.cmd` and the docs now use `/sdcard/JillEX`.  Existing installs
+  must move `jillt/`, `ONESIM/` and saves from the old app-data folder once.
+* Startup failures now name the reason: `tiles.cpp`/`shapes.cpp` append
+  `strerror(errno)` (`No such file or directory` vs `Permission denied`), and
+  `Engine::init` logs the contents of the game data directory when a required
+  `.dma`/`.sha` cannot be opened.  Tile and shape paths also go through
+  `jill_paths::resolve_file()`, so an uppercase `JILL.DMA` works on Android's
+  case-sensitive storage.
+
+## 2026-11-18 (Android: startup diagnostics and missing-data screen)
+
+* Fire tablet launches returned straight to the launcher.  The S25 Ultra log
+  showed why: `engine.init()` runs before the menu and returns 2 when
+  `jillt/jill.dma` is missing, and SDLActivity then `finish()`es the activity.
+  The Fire tablet had a complete `jillt/` and is now confirmed working; the
+  S25 had the folder but not its files.
+* The data-folder pre-check was not enough (an empty `jillt/` passes it).
+  `main.cpp` now calls `JillEXActivity.showStartupError(rc)` through JNI when
+  `SDL_main` returns non-zero.  The activity keeps the screen up (the SDL
+  thread's automatic `finish()` is ignored when it runs off the UI thread),
+  prints the failure, the `adb push` commands and the tail of `jill.log`, and
+  offers RETRY (`recreate()`); Back still exits normally.
+* First attempt at that screen still closed: SDL calls `finish()` from the SDL
+  thread before the posted UI runnable ran, so the instance flag was not set
+  yet.  `showStartupError()` now sets a `static volatile` pending flag
+  synchronously before posting; `finish()` checks that flag and only ignores
+  calls from non-UI threads.
+* Diagnostics: the activity logs device/model/ABI, the data folder and the
+  SDL-ready state; `main.cpp` installs SIGSEGV/BUS/ILL/FPE/ABRT handlers that
+  report `fatal: native signal N` under `JillEX`, logs
+  `startup: native main entered` and `startup: SDL_main returning rc=N`.
+  Verify with `adb logcat -d -s JillEX SDL AndroidRuntime libc`.
+
+## 2026-11-18 (Android: universal ABIs and 16 KB page alignment)
+
+* Device feedback fixed two install failures:
+  * Fire tablet reported `INSTALL_FAILED_NO_MATCHING_ABIS`: the APK was
+    arm64-only.  The build is now universal — `arm64-v8a`, `armeabi-v7a`,
+    `x86_64`, `x86` (APK ~6.0 MB).  A single-ABI build is still available with
+    `gradlew.bat assembleDebug -PjillAbis=arm64-v8a`.
+  * S25 Ultra rejected the native libraries with "16kb load segment
+    alignment".  `add_link_options(-Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384)`
+    applies to SDL2 and libmain; every LOAD segment in all four ABIs now
+    reports `0x4000` alignment (`llvm-readelf -l`).
+* `port/android/README.md`, `BUILDING.md` and the build script notes describe
+  the ABI list and the 16 KB requirement.  APK is still copied to
+  `JillEX-android.apk` (git-ignored).
+
+## 2026-11-17 (Android target: first installable APK)
+
+* New `port/android/` Gradle project builds the shared `port/src` engine for
+  Android with the NDK 27 toolchain, SDK 35, minSdk 24 and `arm64-v8a`.  SDL2
+  2.32.10 is compiled from the installed source tree (`JILL_SDL2_DIR`), so
+  `libSDL2.so` and the copied `org.libsdl.app` Java glue are version-matched.
+  `main.cpp` includes `SDL_main.h` on Android; `SDLActivity` resolves the
+  exported `SDL_main` in `libmain.so`.
+* `build_android.cmd` stages `jill.ini`, `games/*.game`, `profiles/*` and the
+  data README into `app/src/main/assets/`, runs `assembleDebug`, and copies the
+  result to `JillEX-android.apk` in the repository root (git-ignored).  First
+  build is ~3 min (SDL2 + engine), incremental ~6 s.  APK is 1.62 MB and
+  contains `libSDL2.so`, `libmain.so` and only the configuration assets.
+* Data root is `SDL_AndroidGetExternalStoragePath()`
+  (`/sdcard/Android/data/org.jillex/files`) with internal storage as fallback.
+  `JillEXActivity` installs the bundled config on first launch without
+  overwriting `jill.ini`; `trace()` now also writes to logcat (`JillEX`).
+  Game data (`jillt/`, `ONESIM/`) is pushed with adb, as with the console
+  builds.
+* Touch controls (`port/src/touch.cpp`): D-pad, A=jump, X=throw, START, BACK.
+  The overlay is drawn into the 320x200 ARGB frame and fingers are mapped back
+  through the new `Screen::touch_to_frame()` (logical size, integer scale and
+  letterbox aware).  Gameplay feeds `poll_input()` directly; menus receive
+  synthetic `SDL_CONTROLLERBUTTONDOWN/UP` events, so the existing menu, pause,
+  text-page and demo code is unchanged.  `screen_sdl.cpp` uses the real display
+  mode, keeps landscape and skips desktop window resizing on Android.
+* Not yet run on hardware.  Open items: on-device check of rendering, audio
+  latency, suspend/resume and the touch zones; hi-score name entry and the
+  Noisemaker QWERTY page still need a keyboard or a touch keypad
+  (plan Milestone C).  Desktop, PS4 and Vita paths are unchanged apart from the
+  shared `trace()` rewrite and the `touch_to_frame()` default no-op.
+
 ## 2026-11-17 (Vita build copies its artifacts to the repo root)
 
 * `build_vita.cmd` now copies `jill.vpk` and `JillEX-Vita-data.zip` to the
@@ -32,7 +445,7 @@
 
 * `Engine::rnd` is now the game's own generator (`2CA6:0015`): a 32-bit Turbo C
   LCG, `seed = seed * 0x015A4E35 + 1`, result `(seed >> 16) & 0x7FFF`, and a
-  macro start/stop reseeds it to `0x3039` (`1415:05B2`).  The old xorshift
+  macro start/stop reseeds it to `0x3039` (12345, `1415:05B2`).  The old xorshift
   placeholder made every random enemy/caption diverge from the recording.
 * Recorded input is applied one physics update earlier and at most one record
   per frame, matching `1415:093B` (`delta <= be3a - base` after the frame

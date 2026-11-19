@@ -11,6 +11,7 @@ Supports:
 - Music files (.ddt - CMF format)
 - Config files (.cfg)
 - Input macros (.mac)
+- Xargon volumes (GRAPHICS/TILES/AUDIO/CONFIG/SONG/BOARD_*.XR1-3, DEMO_MAC.XR0)
 - Enhanced pack export: fonts, HUD panels, text pages, palettes,
   board previews and ready-to-edit external asset packs
 """
@@ -77,9 +78,14 @@ def render_cmf_wav(game: Dict[str, Any], track: Path, out_wav: Path,
                        "Export Raw / --dump-music)")
     out_wav = Path(out_wav)
     out_wav.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [str(exe), "--game", game['id'], "--data",
-           str(Path(game['data_dir'])), "--dump-music", str(out_wav),
-           "--music-file", track.name, "--music-seconds",
+    # Xargon ships raw CMF tracks but the port has no Xargon engine profile;
+    # render the track with a Jill profile as host.  track_path() accepts an
+    # absolute path as-is, so the Xargon file itself is still the source.
+    host = game.get('music_host') or game
+    music_arg = (str(track) if game.get('format') == 'xargon' else track.name)
+    cmd = [str(exe), "--game", host['id'], "--data",
+           str(Path(host['data_dir'])), "--dump-music", str(out_wav),
+           "--music-file", music_arg, "--music-seconds",
            f"{max(1.0, seconds):.1f}"]
     try:
         proc = subprocess.run(cmd, cwd=str(BASE_DIR), capture_output=True,
@@ -113,6 +119,11 @@ def export_music_wavs(game: Dict[str, Any], out_dir: Path,
         files.extend(data_dir.glob("*.ddt"))
         files.extend(data_dir.glob("*.ark"))
         files.extend(data_dir.glob("*.ARK"))
+        # Xargon: SONG_?.XR1/2/3 and SONG_D.XR0 are raw CMF files
+        files.extend(data_dir.glob("*.XR1"))
+        files.extend(data_dir.glob("*.XR2"))
+        files.extend(data_dir.glob("*.XR3"))
+        files.extend(data_dir.glob("*.XR0"))
     except OSError:
         pass
     seen = set()
@@ -120,7 +131,11 @@ def export_music_wavs(game: Dict[str, Any], out_dir: Path,
         if f.name.lower() in seen or not is_cmf_file(f):
             continue
         seen.add(f.name.lower())
-        out = music_dir / f"{f.stem}.wav"
+        if game.get('format') == 'xargon':
+            # Same SONG_n name exists in every volume; keep them distinct.
+            out = music_dir / f"{f.stem}_{f.suffix.lstrip('.')}.wav"
+        else:
+            out = music_dir / f"{f.stem}.wav"
         ok, msg = render_cmf_wav(game, f, out, seconds)
         if ok:
             print(f"  Rendered: {f.name} -> {out.name}")
@@ -152,6 +167,36 @@ def play_wav_file(path: Path, async_: bool = True) -> bool:
     except Exception as e:
         print(f"Playback error: {e}")
         return False
+
+
+def _entry_index(text: str, label: str) -> Optional[int]:
+    """Read the numeric id from a sound-list entry such as ``SFX  1: ...``.
+
+    ``refresh_sounds`` formats entries with ``f"{label} {i:2d}: ..."``: the
+    number is space padded and followed by a colon, so ``int(text.split()[1])``
+    raised ``ValueError: invalid literal for int() with base 10: '1:'``.
+    """
+    if not text.startswith(label):
+        return None
+    rest = text[len(label):].lstrip()
+    if not rest:
+        return None
+    token = rest.split(maxsplit=1)[0].rstrip(':')
+    try:
+        return int(token)
+    except ValueError:
+        return None
+
+
+def _entry_filename(text: str) -> Optional[str]:
+    """Return the file name from a Music/Title music/Demo list entry."""
+    if text.startswith(("Music:", "Title music:", "Demo:", "EPC:")):
+        parts = text.split()
+        return parts[-1] if len(parts) > 1 else None
+    low = text.lower()
+    if low.endswith((".ddt", ".ark", ".cmf")):
+        return text.split()[-1]
+    return None
 
 
 # ============================================================================
@@ -1141,6 +1186,458 @@ class MACFile:
         return mac
 
 
+# ----------------------------------------------------------------------------
+# XARGON FORMATS
+#
+# Xargon is a sibling Epic engine: board tile maps, 31-byte object records,
+# CMF music and the audio bank layout match Jill's parsers.  The differences
+# are the board trailer, the shape pixel translation, tile defaults, config
+# and the demo stream order.  Specs: Xargon-EX/docs/file-formats.md, and the
+# reconstructed C source in D:\Emu\DOS\C\Xargon\SRC.
+# ----------------------------------------------------------------------------
+
+# X_OBJ.DEF: kind id -> kind name (there is no kind 76).
+XARGON_KIND_NAMES = {
+    0: "PLAYER", 1: "KILLME", 2: "HEROSWIM", 3: "HEROBEE", 4: "MINE",
+    5: "TINY", 6: "TEXT6", 7: "TEXT8", 8: "BRIDGER", 9: "DOOR",
+    10: "CENTEXPL", 11: "ADDSTEP", 12: "PAD", 13: "SPRING", 14: "ARROW",
+    15: "MASHER", 16: "PLATFORM", 17: "CHECKPT", 18: "ELEV", 19: "MAPDEMO",
+    20: "KEY", 21: "HEART", 22: "EMERALD", 23: "EAGLE", 24: "EPIC",
+    25: "GRUNT", 26: "BOX", 27: "SCORE", 28: "TOKEN", 29: "SWITCH",
+    30: "BUTTON", 31: "POKER", 32: "BULLET", 33: "BONUS", 34: "ROCK",
+    35: "FIREBALL", 36: "LASER", 37: "TORPEDO", 38: "FRAGEXPL",
+    39: "FIREEXPL", 40: "FLASH", 41: "HITWALL", 42: "GEMS", 43: "SPEAR",
+    44: "STALAG", 45: "BOULDER", 46: "BALL", 47: "FIRE", 48: "SEAROCK",
+    49: "TORCH", 50: "BITER", 51: "CLOUD", 52: "CENTIPEDE", 53: "ALIEN",
+    54: "LEECH", 55: "TROLL", 56: "BLOB", 57: "HITHERO", 58: "LIZARD",
+    59: "SPIKES", 60: "XARGBOT", 61: "TRANSPORT", 62: "TRANSPAD",
+    63: "EFFECTS", 64: "KRUSTY", 65: "GHOUL", 66: "BUBBLE", 67: "EEL",
+    68: "BADFISH", 69: "BAT", 70: "HOPPER", 71: "TXTMSG", 72: "FRONT",
+    73: "TIMERPAD", 74: "TURRET", 75: "CREEPER", 77: "BEE", 78: "CLIMBER",
+    79: "SPIDER", 80: "SKULL", 81: "SEAMONSTER", 82: "ROBOT",
+    83: "REDFISH", 84: "ICONS", 85: "STORY1", 86: "STORY2", 87: "XARGON",
+    88: "MAP",
+}
+
+# XARGON.H kind flags (kind default flags, not the per-object objflags word).
+XARGON_KIND_FLAGS = {
+    0x0008: "MSGTOUCH", 0x0040: "INSIDE", 0x0080: "FRONT",
+    0x0100: "TRIGGER", 0x0200: "BACK", 0x0400: "ALWAYS",
+    0x0800: "KILLABLE", 0x1000: "FIREBALL", 0x4000: "WEAPON",
+}
+
+
+class XargonBoardObject(BoardObject):
+    """31-byte objtype - byte layout matches BoardObject, names do not."""
+    KIND_NAMES = XARGON_KIND_NAMES
+    # objflags are per-instance redraw/modification scratch bits.  The flags
+    # in X_OBJ.DEF are kind defaults, so do not present them as object flags.
+    FLAG_BITS = {}
+
+
+class XargonBoardFile(BoardFile):
+    """BOARD_??.XRn, MAP, INTRO, STORY, DEMO? and SAVE_n raw dumps."""
+
+    def __init__(self):
+        super().__init__()
+        self.player: Dict[str, Any] = {}
+        self.player_raw: bytes = b''
+        self.fruit_count: int = 0
+
+    @classmethod
+    def load(cls, filepath: str) -> 'XargonBoardFile':
+        with open(filepath, 'rb') as f:
+            data = f.read()
+        return cls.parse(data, os.path.basename(filepath))
+
+    @classmethod
+    def parse(cls, data: bytes, filename: str = "") -> 'XargonBoardFile':
+        if len(data) < 0x4002:
+            raise ValueError("File too small for Xargon board")
+        board = cls()
+        board.filename = filename
+        board.tile_map = list(struct.unpack('<8192H', data[0:0x4000]))
+
+        obj_count = struct.unpack('<H', data[0x4000:0x4002])[0]
+        if obj_count > 1024:
+            raise ValueError(f"Invalid object count: {obj_count}")
+        offset = 0x4002
+        for _ in range(obj_count):
+            board.objects.append(
+                XargonBoardObject.from_bytes(data[offset:offset + 31]))
+            offset += 31
+
+        if offset + 97 > len(data):
+            raise ValueError("Xargon board truncated before player state")
+        pl = data[offset:offset + 96]
+        offset += 96
+        board.player_raw = pl
+        board.player = {
+            'level': struct.unpack('<H', pl[0:2])[0],
+            'health': struct.unpack('<H', pl[2:4])[0],
+            'emeralds': struct.unpack('<H', pl[4:6])[0],
+            'numinv': struct.unpack('<H', pl[6:8])[0],
+            'inventory': list(struct.unpack('<30H', pl[8:68])),
+            'ouched': struct.unpack('<H', pl[68:70])[0],
+            'score': struct.unpack('<I', pl[92:96])[0],
+        }
+        board.fruit_count = data[offset]
+        offset += 1
+
+        # Synthesise a Jill-style header so the shared info display works.
+        h = BoardHeader()
+        h.level_id = board.player['level']
+        h.health = board.player['health']
+        h.key_count = min(board.player['numinv'], 16)
+        h.key_ids = board.player['inventory'][:16]
+        h.score = board.player['score']
+        h.score_copy = board.player['score']
+        h.reserved = pl[8:70]
+        board.header = h
+
+        for obj in board.objects:
+            if obj.string_offset or obj.string_segment:
+                if offset + 2 > len(data):
+                    break
+                str_len = struct.unpack('<H', data[offset:offset + 2])[0]
+                offset += 2
+                s = data[offset:offset + str_len].decode('ascii', errors='replace')
+                offset += str_len + 1
+                board.strings.append(s)
+                obj.attached_string = s
+        return board
+
+    def save(self, filepath: str):
+        out = bytearray()
+        out.extend(struct.pack('<8192H', *self.tile_map))
+        out.extend(struct.pack('<H', len(self.objects)))
+        for obj in self.objects:
+            out.extend(obj.to_bytes())
+        out.extend(self.player_raw or bytes(96))
+        out.append(self.fruit_count)
+        for s in self.strings:
+            encoded = s.encode('ascii', errors='replace')
+            out.extend(struct.pack('<H', len(encoded)))
+            out.extend(encoded)
+            out.append(0)
+        with open(filepath, 'wb') as f:
+            f.write(out)
+
+
+class XargonTilesFile(DMAFile):
+    """TILES.XRn - 900 info records overlay a fixed set of defaults."""
+
+    TILE_COUNT = 900
+    DEFAULT_SHAPE = 0x4500
+    DEFAULT_FLAGS = 0x4006  # f_notvine | f_notstair | f_notwater
+
+    @classmethod
+    def load(cls, filepath: str) -> 'XargonTilesFile':
+        with open(filepath, 'rb') as f:
+            data = f.read()
+        return cls.parse(data)
+
+    @classmethod
+    def parse(cls, data: bytes) -> 'XargonTilesFile':
+        tiles = cls()
+        for i in range(cls.TILE_COUNT):
+            tiles.records.append(DMARecord(i, cls.DEFAULT_SHAPE,
+                                           cls.DEFAULT_FLAGS, ""))
+        ptr = 0
+        while ptr + 6 < len(data):
+            index, shape, xor_flags = struct.unpack('<HHH', data[ptr:ptr + 6])
+            ptr += 6
+            if ptr >= len(data):
+                break
+            name_len = data[ptr]
+            ptr += 1
+            name = data[ptr:ptr + name_len].decode('ascii', errors='replace')
+            ptr += name_len
+            if index >= cls.TILE_COUNT:
+                continue
+            rec = tiles.records[index]
+            rec.shape_id = shape
+            rec.attr ^= xor_flags       # Xargon toggles flags, does not assign
+            rec.name = name
+        return tiles
+
+    def get_record(self, tile_id: int) -> Optional[DMARecord]:
+        if 0 <= tile_id < len(self.records):
+            return self.records[tile_id]
+        return None
+
+
+class XargonGraphicsFile(SHAFile):
+    """GRAPHICS.XRn - shape archive with colortab/plane pixel translation."""
+
+    @classmethod
+    def parse(cls, data: bytes) -> 'XargonGraphicsFile':
+        sha = cls()
+        sha.file_data = data
+        if len(data) < 0x300:
+            raise ValueError("Xargon GRAPHICS file too small")
+        sha.offsets = list(struct.unpack('<128I', data[0:0x200]))
+        sha.sizes = list(struct.unpack('<128H', data[0x200:0x300]))
+        for i in range(128):
+            if sha.sizes[i] > 0 and sha.offsets[i] < len(data):
+                sha.entries[i] = sha._parse_entry(i, data)
+
+        # The 768-byte runtime palette is embedded as a 64x12 8-bit shape.
+        # Bank 5 is the in-game palette; bank 53 is the intro/default one.
+        palettes: Dict[int, bytes] = {}
+        for i, entry in enumerate(sha.entries):
+            if entry is None or entry.src_bpp != 8:
+                continue
+            for frame in entry.frames:
+                if frame['width'] == 64 and frame['height'] == 12:
+                    # The raw payload is the DAC palette; 'data' has already
+                    # been through the bank's colortab/plane translation.
+                    palettes[i] = bytes(frame.get('raw_data', frame['data'])[:768])
+                    break
+        if 5 in palettes:
+            pal = palettes[5]
+        elif palettes:
+            pal = next(iter(palettes.values()))
+        else:
+            pal = None
+        if pal:
+            sha.embedded_palette = pal
+            if max(pal) <= 63:
+                sha.vga_palette = [int(c * 255 / 63) for c in pal[:768]]
+            else:
+                sha.vga_palette = list(pal[:768])
+        return sha
+
+    def _parse_entry(self, index: int, data: bytes) -> ShapeEntry:
+        entry = ShapeEntry()
+        off = self.offsets[index]
+        raw = data[off:off + self.sizes[index]]
+        entry.raw_data = raw
+        if len(raw) < 12:
+            return entry
+
+        num_shapes = raw[0]
+        entry.frame_count = num_shapes
+        entry.unk1 = struct.unpack('<H', raw[1:3])[0]
+        entry.size_2bpp, entry.size_4bpp, entry.size_8bpp = \
+            struct.unpack('<HHH', raw[3:9])
+        bpp = raw[9]
+        flags = struct.unpack('<H', raw[10:12])[0]
+        entry.src_bpp = bpp
+        entry.raw_flags = flags
+        # Xargon's numcolorbits==8 banks use the identity colortab regardless
+        # of shm_fontf.  Jill's decoder treats flags bit 0 as "no per-entry
+        # palette"; set it so 8-bit banks use the global DAC palette instead
+        # of rendering with an empty palette (all black).
+        entry.flags = flags | 1 if bpp == 8 else flags
+        ptr = 12
+
+        # shm_fontf (bit 0) and 8-bit banks use an identity colortab.
+        pal_long: List[int] = []
+        if (flags & 1) or bpp == 8:
+            colortab = list(range(256))
+        else:
+            colortab = []
+            for _ in range(1 << bpp):
+                if ptr + 4 > len(raw):
+                    break
+                value = struct.unpack('<I', raw[ptr:ptr + 4])[0]
+                ptr += 4
+                pal_long.append(value)
+                colortab.append((value >> 16) & 0xFF)
+        entry.palette = pal_long
+
+        def xlate(b: int) -> int:
+            return colortab[b] if b < len(colortab) else b
+
+        for _ in range(num_shapes):
+            if ptr + 3 > len(raw):
+                break
+            xs, ys, storetype = raw[ptr], raw[ptr + 1], raw[ptr + 2]
+            ptr += 3
+            payload = raw[ptr:ptr + xs * ys]
+            ptr += xs * ys
+            data_offset = ptr - xs * ys
+
+            # Xargon's shm_blflag banks run the pixels through a 4-plane
+            # layout in xlate_table(), which ldrawsh_vga() then reassembles
+            # when drawing.  The net on-screen image is the original byte
+            # order, so keep the payload linear for preview/export.
+            source = list(payload)
+
+            # Xargon treats index 0 as transparent (cmtab[0][0]=255) and
+            # reserves 250/251 for the runtime sky colour (setcolor(250,...)).
+            # Keep source indices in frame['data'] for palettised export; the
+            # viewer applies this alpha mask on top.
+            mapped = bytearray(xlate(b) for b in source)
+            alpha = bytes(0 if b in (0, 250, 251) else 255 for b in source)
+            entry.frames.append({
+                'width': xs, 'height': ys, 'opcode': 0,
+                'data': bytes(mapped), 'raw_data': payload, 'alpha': alpha,
+                'offset': data_offset, 'storetype': storetype,
+            })
+        return entry
+
+    def frame_indices(self, entry_idx: int, frame_idx: int):
+        raw = super().frame_indices(entry_idx, frame_idx)
+        if not raw:
+            return raw
+        w, h, px = raw
+        # Exporters skip index 0; fold Xargon's sky indices into it.
+        return w, h, bytes(0 if b in (250, 251) else b for b in px)
+
+    def decode_frame_to_image(self, entry_idx: int, frame_idx: int,
+                              video_mode: int = 4) -> Optional[Image.Image]:
+        img = super().decode_frame_to_image(entry_idx, frame_idx, video_mode)
+        entry = self.entries[entry_idx] if entry_idx < 128 else None
+        if img is None or entry is None or frame_idx >= len(entry.frames):
+            return img
+        alpha = entry.frames[frame_idx].get('alpha')
+        if alpha and len(alpha) == img.width * img.height:
+            img.putalpha(Image.frombytes('L', (img.width, img.height),
+                                         bytes(alpha)))
+        return img
+
+
+class XargonAudioFile(VCLFile):
+    """AUDIO.XRn - identical header to VCL plus a 128-entry SB macro table."""
+
+    def __init__(self):
+        super().__init__()
+        self.macros: List[bytes] = []
+
+    @classmethod
+    def load(cls, filepath: str) -> 'XargonAudioFile':
+        with open(filepath, 'rb') as f:
+            data = f.read()
+        return cls.parse(data)
+
+    @classmethod
+    def parse(cls, data: bytes) -> 'XargonAudioFile':
+        base = VCLFile.parse(data)
+        audio = cls()
+        audio.file_data = base.file_data
+        audio.sfx_offsets = base.sfx_offsets
+        audio.sfx_sizes = base.sfx_sizes
+        audio.sfx_rates = base.sfx_rates
+        audio.music_offsets = base.music_offsets
+        audio.music_sizes = base.music_sizes
+        # 128 records of [u16 len][len bytes] at 0x280 (PC speaker only).
+        ptr = 0x280
+        for _ in range(128):
+            if ptr + 2 > len(data):
+                break
+            length = struct.unpack('<H', data[ptr:ptr + 2])[0]
+            ptr += 2
+            if length:
+                audio.macros.append(data[ptr:ptr + length])
+                ptr += length
+        return audio
+
+
+class XargonConfigFile:
+    """CONFIG.XRn - 10 high scores, 7 save names, 11 settings (232 bytes)."""
+
+    def __init__(self):
+        self.high_score_names: List[str] = [""] * 10
+        self.high_scores: List[int] = [0] * 10
+        self.save_slot_labels: List[str] = [""] * 7
+        self.options: List[int] = [0] * 11
+        self.raw_data: bytes = b''
+
+    @classmethod
+    def load(cls, filepath: str) -> 'XargonConfigFile':
+        with open(filepath, 'rb') as f:
+            data = f.read()
+        return cls.parse(data)
+
+    @classmethod
+    def parse(cls, data: bytes) -> 'XargonConfigFile':
+        cfg = cls()
+        cfg.raw_data = data
+        if len(data) < 0xF0:
+            return cfg
+
+        def text_at(offset: int, length: int) -> str:
+            return data[offset:offset + length].split(b'\x00', 1)[0] \
+                .decode('ascii', errors='replace')
+
+        for i in range(10):
+            cfg.high_score_names[i] = text_at(i * 10, 10)
+        cfg.high_scores = list(struct.unpack('<10I', data[0x64:0x8C]))
+        for i in range(7):
+            cfg.save_slot_labels[i] = text_at(0x8C + i * 10, 10)
+        cfg.options = list(struct.unpack('<11H', data[0xD2:0xF0]))
+        return cfg
+
+
+class XargonEPCFile:
+    """AUDIO.EPC - 40 PC-speaker instrument waveforms and their durations."""
+
+    def __init__(self):
+        self.waveforms: List[List[int]] = []
+        self.durations: List[int] = []
+        self.raw_data: bytes = b''
+
+    @classmethod
+    def load(cls, filepath: str) -> 'XargonEPCFile':
+        with open(filepath, 'rb') as f:
+            data = f.read()
+        return cls.parse(data)
+
+    @classmethod
+    def parse(cls, data: bytes) -> 'XargonEPCFile':
+        epc = cls()
+        epc.raw_data = data
+        for i in range(40):
+            start = i * 256
+            words = list(struct.unpack('<128h', data[start:start + 256]))
+            if -1 in words:
+                words = words[:words.index(-1)]
+            epc.waveforms.append(words)
+        if len(data) >= 0x2850:
+            epc.durations = list(struct.unpack('<40h', data[0x2800:0x2850]))
+        return epc
+
+
+class XargonMacroFile(MACFile):
+    """DEMO_MAC/END_MAC - [bits][values][varint dt] (dt is the delay to next)."""
+
+    @classmethod
+    def load(cls, filepath: str) -> 'XargonMacroFile':
+        with open(filepath, 'rb') as f:
+            data = f.read()
+        return cls.parse(data)
+
+    @classmethod
+    def parse(cls, data: bytes) -> 'XargonMacroFile':
+        mac = cls()
+        ptr = 0
+        tick = 0
+        names = ['horiz_dir', 'vert_dir', 'action1', 'action2', 'ascii_key']
+        while ptr < len(data):
+            bits = data[ptr]
+            ptr += 1
+            values: Dict[str, int] = {}
+            for bit, name in enumerate(names):
+                if bits & (1 << bit) and ptr < len(data):
+                    values[name] = struct.unpack('b', data[ptr:ptr + 1])[0]
+                    ptr += 1
+            dt = 0
+            if ptr < len(data):
+                first = data[ptr]
+                ptr += 1
+                if first & 0x80:
+                    if ptr < len(data):
+                        dt = (first & 0x7F) | (data[ptr] << 7)
+                        ptr += 1
+                else:
+                    dt = first
+            mac.records.append({'time': tick, 'mask': bits, 'values': values})
+            tick += dt
+        return mac
+
+
 # ============================================================================
 # ENHANCED ASSET EXPORTERS (fonts, text pages, palettes, tiles, HUD, packs)
 # ============================================================================
@@ -1392,6 +1889,12 @@ def _render_board(board: BoardFile, sha: SHAFile, dma: DMAFile) -> Image.Image:
     return canvas
 
 
+def _load_board_for_game(game: Dict[str, Any], path: Path) -> BoardFile:
+    if game.get('format') == 'xargon':
+        return XargonBoardFile.load(str(path))
+    return BoardFile.load(str(path))
+
+
 def export_board_previews(game: Dict[str, Any], sha: SHAFile, dma: DMAFile,
                           out_dir: Path) -> int:
     """Write full board renders and 320x200 pack-ready backgrounds."""
@@ -1407,7 +1910,14 @@ def export_board_previews(game: Dict[str, Any], sha: SHAFile, dma: DMAFile,
         if p.exists():
             targets.append(p)
     try:
+        xargon = game.get('format') == 'xargon'
         for p in sorted(data_dir.glob(f"*{ext}")):
+            if xargon:
+                stem = p.stem.lower()
+                if not (stem.startswith('board_') or stem.startswith('map') or
+                        stem.startswith('intro') or stem.startswith('story') or
+                        (stem.startswith('demo') and stem[4:5].isdigit())):
+                    continue
             if p not in targets:
                 targets.append(p)
     except OSError:
@@ -1417,7 +1927,7 @@ def export_board_previews(game: Dict[str, Any], sha: SHAFile, dma: DMAFile,
     count = 0
     for p in targets:
         try:
-            board = BoardFile.load(str(p))
+            board = _load_board_for_game(game, p)
             img = _render_board(board, sha, dma)
             img.save(full_dir / f"{p.stem}.png")
             # Nearest-neighbour keeps every pixel on the game palette; a
@@ -1453,7 +1963,7 @@ def export_theme_assets(game: Dict[str, Any], sha: SHAFile, dma: DMAFile,
     if intro is None:
         return False
     try:
-        board = BoardFile.load(str(intro))
+        board = _load_board_for_game(game, intro)
         full = _render_board(board, sha, dma)
         # Port menu panel: tiles (36,0)..(55,13), centred vertically.
         crop = full.crop((36 * 16, 12, 36 * 16 + 320, 12 + 200))
@@ -1716,6 +2226,7 @@ def _game_from_episode(episode: int, data_dir: Path) -> Dict[str, Any]:
         'id': f"jill{episode}",
         'title': prof['name'],
         'profile': f"jill{episode}",
+        'format': 'jill',
         'episode': episode,
         'data_dir': data_dir,
         'sha': prof['sha'],
@@ -1775,6 +2286,7 @@ def discover_games(base_dir: Path) -> List[Dict[str, Any]]:
             'id': gid,
             'title': m.get('title', prof['name']),
             'profile': profile,
+            'format': 'jill',
             'episode': episode,
             'data_dir': data_dir,
             'sha': m.get('shapes', prof['sha']),
@@ -1786,6 +2298,60 @@ def discover_games(base_dir: Path) -> List[Dict[str, Any]]:
             'palette': (base_dir / pal) if pal else None,
             'title_music': m.get('title_music', prof['title_music']),
         })
+
+    # Xargon is detected from [paths] instead of games/*.game: the C++ port
+    # loads every manifest and has no Xargon engine profile, so adding one
+    # would offer broken games there.  Any configured directory holding
+    # GRAPHICS.XR1 + AUDIO.XR1 qualifies, including an `xargon` path key.
+    xargon_dirs: List[Path] = []
+    for key, value in path_sec.items():
+        if key in ('games', 'profiles') or not value:
+            continue
+        candidate = Path(value)
+        if not candidate.is_absolute():
+            candidate = base_dir / candidate
+        if ((candidate / 'GRAPHICS.XR1').is_file() and
+                (candidate / 'AUDIO.XR1').is_file() and
+                candidate not in xargon_dirs):
+            xargon_dirs.append(candidate)
+
+    if xargon_dirs:
+        host = next((g for g in games if g.get('format') == 'jill'
+                     and Path(g['data_dir']).is_dir()), None)
+        if host is None:
+            host = _game_from_episode(1, base_dir / 'jillt')
+        for data_dir in xargon_dirs:
+            for volume in (1, 2, 3):
+                if not (data_dir / f"GRAPHICS.XR{volume}").is_file():
+                    continue
+                gid = f"xargon{volume}"
+                if gid in seen_ids:
+                    continue
+                seen_ids.add(gid)
+                cfg_name = next(
+                    (f"CONFIG.XR{v}" for v in (volume, 1, 2, 3)
+                     if (data_dir / f"CONFIG.XR{v}").is_file()), None)
+                title_music = next(
+                    (f"SONG_0.XR{v}" for v in (volume, 1)
+                     if (data_dir / f"SONG_0.XR{v}").is_file()), None)
+                games.append({
+                    'id': gid,
+                    'title': f"Xargon {volume}",
+                    'profile': gid,
+                    'format': 'xargon',
+                    'episode': volume,
+                    'volume': volume,
+                    'data_dir': data_dir,
+                    'sha': f"GRAPHICS.XR{volume}",
+                    'dma': f"TILES.XR{volume}",
+                    'vcl': f"AUDIO.XR{volume}",
+                    'cfg': cfg_name,
+                    'board_ext': f".XR{volume}",
+                    'boards': [],          # refresh_boards globs *.XRn
+                    'palette': None,        # embedded in GRAPHICS.XRn
+                    'title_music': title_music,
+                    'music_host': host,     # port renders CMF via a Jill profile
+                })
 
     if games:
         return games
@@ -2543,35 +3109,48 @@ class JillExtractorApp:
             return
         text = self.sound_listbox.get(selection[0])
         
-        if text.startswith("SFX "):
+        sfx_idx = _entry_index(text, "SFX ")
+        if sfx_idx is not None:
             if not self.vcl_file:
                 return
-            parts = text.split()
-            sfx_idx = int(parts[1])
             if self.vcl_file.play_sound(sfx_idx, "sfx"):
                 self.status_var.set(f"Playing SFX {sfx_idx}")
             else:
                 self.status_var.set("Playback failed")
-        elif text.startswith("Music "):
+            return
+
+        music_idx = _entry_index(text, "Music ")
+        if music_idx is not None:
             if not self.vcl_file:
                 return
-            parts = text.split()
-            music_idx = int(parts[1])
             if self.vcl_file.play_sound(music_idx, "music"):
                 self.status_var.set(f"Playing Music {music_idx}")
             else:
                 self.status_var.set("Playback failed")
-        elif text.lower().endswith((".ddt", ".ark")):
-            filename = text.split()[-1]
-            path = self.game_path / filename
-            tmp = Path(tempfile.gettempdir()) / f"jill_preview_{Path(filename).stem}.wav"
-            ok, msg = render_cmf_wav(self.current_game, path, tmp, 30.0)
+            return
+
+        filename = _entry_filename(text)
+        if filename:
+            # Each play needs its own file: winsound keeps the WAV open while
+            # it plays, so reusing a fixed preview name made repeat plays of
+            # the same track silent.
+            fd, tmp_name = tempfile.mkstemp(
+                prefix=f"jill_preview_{Path(filename).stem}_", suffix=".wav")
+            os.close(fd)
+            tmp = Path(tmp_name)
+            ok, msg = render_cmf_wav(self.current_game,
+                                     self.game_path / filename, tmp, 30.0)
             if ok and play_wav_file(tmp):
                 self.status_var.set(f"Playing {filename} (port OPL2 render)")
             else:
                 self.status_var.set(msg if not ok else "Playback failed")
                 if not ok:
                     messagebox.showwarning("Music playback", msg)
+                else:
+                    try:
+                        tmp.unlink()
+                    except OSError:
+                        pass
     
     def stop_sound(self):
         if HAS_WINSOUND:
@@ -2584,22 +3163,21 @@ class JillExtractorApp:
             return
         text = self.sound_listbox.get(selection[0])
         
-        if text.startswith("SFX "):
+        sfx_idx = _entry_index(text, "SFX ")
+        music_idx = _entry_index(text, "Music ")
+        filename = _entry_filename(text)
+
+        if sfx_idx is not None:
             if not self.vcl_file:
                 return
-            parts = text.split()
-            sfx_idx = int(parts[1])
             default_name = f"sfx_{sfx_idx}.wav"
             type_ = "sfx"
-        elif text.startswith("Music "):
+        elif music_idx is not None:
             if not self.vcl_file:
                 return
-            parts = text.split()
-            music_idx = int(parts[1])
             default_name = f"music_{music_idx}.wav"
             type_ = "music"
-        elif text.lower().endswith((".ddt", ".ark")):
-            filename = text.split()[-1]
+        elif filename:
             filepath = filedialog.asksaveasfilename(
                 defaultextension=".wav",
                 filetypes=[("WAV", "*.wav")],
@@ -2644,6 +3222,7 @@ class JillExtractorApp:
         """Load all game files for the selected game."""
         game = self.current_game
         base_path = self.game_path
+        xargon = game.get('format') == 'xargon'
         
         # Reset
         self.sha_file = None
@@ -2660,7 +3239,8 @@ class JillExtractorApp:
         sha_path = base_path / game['sha']
         if sha_path.exists():
             try:
-                self.sha_file = SHAFile.load(str(sha_path))
+                self.sha_file = (XargonGraphicsFile.load(str(sha_path)) if xargon
+                                 else SHAFile.load(str(sha_path)))
                 # Optional custom palette (e.g. Onesimus)
                 pal_path = game.get('palette')
                 if pal_path and Path(pal_path).is_file():
@@ -2669,7 +3249,10 @@ class JillExtractorApp:
                         self.sha_file.set_palette_rgb(pal_data, from_6bit=(max(pal_data) <= 63))
                     except Exception:
                         pass
-                self.status_var.set(f"Loaded {game['sha']}: {sum(1 for e in self.sha_file.entries if e)} entries")
+                extra = ""
+                if xargon and getattr(self.sha_file, 'embedded_palette', None):
+                    extra = " + embedded palette"
+                self.status_var.set(f"Loaded {game['sha']}: {sum(1 for e in self.sha_file.entries if e)} entries{extra}")
             except Exception as e:
                 self.status_var.set(f"Error loading SHA: {e}")
         else:
@@ -2679,7 +3262,8 @@ class JillExtractorApp:
         dma_path = base_path / game['dma']
         if dma_path.exists():
             try:
-                self.dma_file = DMAFile.load(str(dma_path))
+                self.dma_file = (XargonTilesFile.load(str(dma_path)) if xargon
+                                 else DMAFile.load(str(dma_path)))
             except Exception as e:
                 print(f"Error loading DMA: {e}")
         
@@ -2687,7 +3271,8 @@ class JillExtractorApp:
         vcl_path = base_path / game['vcl']
         if vcl_path.exists():
             try:
-                self.vcl_file = VCLFile.load(str(vcl_path))
+                self.vcl_file = (XargonAudioFile.load(str(vcl_path)) if xargon
+                                 else VCLFile.load(str(vcl_path)))
             except Exception as e:
                 print(f"Error loading VCL: {e}")
         
@@ -2697,7 +3282,8 @@ class JillExtractorApp:
             cfg_path = base_path / cfg_name
             if cfg_path.exists():
                 try:
-                    self.cfg_file = CFGFile.load(str(cfg_path))
+                    self.cfg_file = (XargonConfigFile.load(str(cfg_path)) if xargon
+                                     else CFGFile.load(str(cfg_path)))
                 except Exception as e:
                     print(f"Error loading CFG: {e}")
         
@@ -2738,6 +3324,11 @@ class JillExtractorApp:
         self.refresh_dma()
         self.refresh_config()
     
+    def _load_board_file(self, path: Path) -> BoardFile:
+        if self.current_game.get('format') == 'xargon':
+            return XargonBoardFile.load(str(path))
+        return BoardFile.load(str(path))
+
     def refresh_boards(self):
         self.board_listbox.delete(0, tk.END)
         self.board_paths = []
@@ -2751,11 +3342,25 @@ class JillExtractorApp:
             if board_path.exists():
                 boards.append(board_path)
         
-        # Also check for any other board files
+        # Also check for any other board files.  An Xargon volume directory
+        # mixes boards with GRAPHICS/AUDIO/TILES/CONFIG/SONG files, so only
+        # the names the engine loads as boards are considered.
         try:
+            xargon = game.get('format') == 'xargon'
             for f in sorted(base_path.glob(f"*{ext}")):
+                if xargon:
+                    stem = f.stem.lower()
+                    if not (stem.startswith('board_') or stem.startswith('map') or
+                            stem.startswith('intro') or stem.startswith('story') or
+                            (stem.startswith('demo') and stem[4:5].isdigit())):
+                        continue
                 if f not in boards:
                     boards.append(f)
+            # Runtime saves are board dumps with no extension.
+            if xargon:
+                for f in sorted(base_path.glob("SAVE_*")):
+                    if f.is_file() and f not in boards:
+                        boards.append(f)
         except OSError:
             pass
         
@@ -2765,7 +3370,7 @@ class JillExtractorApp:
                 continue
             seen.add(board_path)
             try:
-                board = BoardFile.load(str(board_path))
+                board = self._load_board_file(board_path)
                 info = f"{board_path.name} - {len(board.objects)} objs, {len(board.strings)} strings"
                 self.board_listbox.insert(tk.END, info)
             except Exception as e:
@@ -2784,7 +3389,7 @@ class JillExtractorApp:
         
         if board_path.exists():
             try:
-                self.current_board = BoardFile.load(str(board_path))
+                self.current_board = self._load_board_file(board_path)
                 self.display_board_info()
                 self.draw_board()
             except Exception as e:
@@ -2805,6 +3410,14 @@ class JillExtractorApp:
         info.append(f"Tile Map: 128x64 = {len(board.tile_map)} cells")
         info.append(f"Objects: {len(board.objects)} (max 192)")
         info.append(f"Strings: {len(board.strings)}")
+        if isinstance(board, XargonBoardFile):
+            p = board.player
+            info.append("")
+            info.append("=== Xargon Player State ===")
+            info.append(f"Level: {p['level']}   Health: {p['health']}   "
+                        f"Emeralds: {p['emeralds']}   Fruit: {board.fruit_count}")
+            info.append(f"Inventory ({p['numinv']}): {p['inventory'][:p['numinv']]}")
+            info.append(f"Ouched: {p['ouched']}   Score: {p['score']}")
         info.append("")
         info.append("=== Board Header ===")
         h = board.header
@@ -3028,7 +3641,7 @@ class JillExtractorApp:
             out_dir = filedialog.askdirectory()
             if out_dir:
                 try:
-                    board = BoardFile.load(str(board_path))
+                    board = self._load_board_file(board_path)
                     out_path = Path(out_dir) / f"{board_path.stem}_extracted.json"
                     
                     # Export as JSON
@@ -3126,7 +3739,7 @@ class JillExtractorApp:
         for board_path in targets:
             if board_path.exists():
                 try:
-                    board = BoardFile.load(str(board_path))
+                    board = self._load_board_file(board_path)
                     out_path = Path(out_dir) / f"{board_path.stem}.json"
                     
                     data = {
@@ -3233,7 +3846,8 @@ class JillExtractorApp:
         info.append(f"Shape Entry {entry_idx}")
         info.append(f"  Frame count: {entry.frame_count}")
         info.append(f"  Source BPP: {entry.src_bpp}")
-        info.append(f"  Flags: 0x{entry.flags:04X} ({'no palette' if entry.flags & 1 else 'has palette'}, {'planar' if entry.flags & 4 else 'packed'})")
+        raw_flags = getattr(entry, 'raw_flags', entry.flags)
+        info.append(f"  Flags: 0x{raw_flags:04X} ({'no palette' if entry.flags & 1 else 'has palette'}, {'planar' if entry.flags & 4 else 'packed'})")
         info.append(f"  Decoded sizes: 2bpp={entry.size_2bpp}, 4bpp={entry.size_4bpp}, 8bpp={entry.size_8bpp}")
         
         if entry.palette:
@@ -3453,12 +4067,7 @@ class JillExtractorApp:
         if not sel:
             return None
         text = self.sound_listbox.get(sel[0])
-        if text.startswith("SFX "):
-            try:
-                return int(text.split()[1])
-            except (IndexError, ValueError):
-                return None
-        return None
+        return _entry_index(text, "SFX ")
     
     def import_wav_to_vcl(self):
         vcl_path = self._current_vcl_path()
@@ -3514,10 +4123,13 @@ class JillExtractorApp:
     
     def refresh_sounds(self):
         self.sound_listbox.delete(0, tk.END)
+        xargon = self.current_game.get('format') == 'xargon'
+        bank_label = "Xargon Audio Bank" if xargon else "VCL Sound Bank"
+        page_label = "Xargon Text Chunks" if xargon else "VCL Text Pages"
         
-        # VCL sounds
+        # VCL / AUDIO.XR sounds
         if self.vcl_file:
-            self.sound_listbox.insert(tk.END, "=== VCL Sound Bank ===")
+            self.sound_listbox.insert(tk.END, f"=== {bank_label} ===")
             for i in range(50):
                 if self.vcl_file.sfx_sizes[i] > 0:
                     self.sound_listbox.insert(tk.END, 
@@ -3525,12 +4137,19 @@ class JillExtractorApp:
                         f"size={self.vcl_file.sfx_sizes[i]}, rate={self.vcl_file.sfx_rates[i]}Hz")
             
             self.sound_listbox.insert(tk.END, "")
-            self.sound_listbox.insert(tk.END, "=== VCL Text Pages ===")
+            self.sound_listbox.insert(tk.END, f"=== {page_label} ===")
             for i in self.vcl_file.text_page_indexes():
                 self.sound_listbox.insert(tk.END,
                     f"Page {i:2d}: offset=0x{self.vcl_file.music_offsets[i]:08X}, "
                     f"size={self.vcl_file.music_sizes[i]}")
-        
+
+        if xargon:
+            epc_path = self.game_path / "AUDIO.EPC"
+            if epc_path.is_file():
+                self.sound_listbox.insert(tk.END, "")
+                self.sound_listbox.insert(tk.END, "=== PC Speaker Instruments ===")
+                self.sound_listbox.insert(tk.END, f"EPC: {epc_path.name}")
+
         # DDT/ARK music files (Onesimus stores CMF tracks as SONG*.ARK)
         title_music = self.current_game.get('title_music')
         if title_music:
@@ -3540,11 +4159,16 @@ class JillExtractorApp:
                 self.sound_listbox.insert(tk.END, f"=== {title_music} ===")
                 self.sound_listbox.insert(tk.END, f"Title music: {track_path.name}")
         
-        # Other CMF tracks
+        # Other CMF tracks (SONG_?.XRn for Xargon, .ddt/.ark for Jill)
         try:
             tracks = list(self.game_path.glob("*.ddt")) + \
                      list(self.game_path.glob("*.ark")) + \
                      list(self.game_path.glob("*.ARK"))
+            if xargon:
+                tracks.extend(self.game_path.glob("*.XR0"))
+                tracks.extend(self.game_path.glob("*.XR1"))
+                tracks.extend(self.game_path.glob("*.XR2"))
+                tracks.extend(self.game_path.glob("*.XR3"))
             seen = set()
             for ddt_file in sorted(tracks, key=lambda p: p.name.lower()):
                 key = ddt_file.name.lower()
@@ -3554,8 +4178,14 @@ class JillExtractorApp:
                 if title_music and ddt_file.name.lower() == title_music.lower():
                     continue
                 self.sound_listbox.insert(tk.END, f"Music: {ddt_file.name}")
-            # MAC files
-            for mac_file in sorted(self.game_path.glob("*.mac")):
+            # Recorded input demos (Jill .mac, Xargon *MAC*.XR0/1)
+            demos = list(self.game_path.glob("*.mac"))
+            if xargon:
+                demos.extend(self.game_path.glob("*MAC*.XR0"))
+                demos.extend(self.game_path.glob("*MAC*.XR1"))
+                demos.extend(self.game_path.glob("*MAC*.XR2"))
+                demos.extend(self.game_path.glob("*MAC*.XR3"))
+            for mac_file in sorted(set(demos), key=lambda p: p.name.lower()):
                 self.sound_listbox.insert(tk.END, f"Demo: {mac_file.name}")
         except OSError:
             pass
@@ -3569,21 +4199,23 @@ class JillExtractorApp:
         idx = selection[0]
         text = self.sound_listbox.get(idx)
         
-        if text.startswith("SFX "):
-            # Parse SFX index
-            parts = text.split()
-            sfx_idx = int(parts[1])
+        sfx_idx = _entry_index(text, "SFX ")
+        page_idx = _entry_index(text, "Page ")
+        music_idx = _entry_index(text, "Music ")
+        filename = _entry_filename(text)
+
+        if sfx_idx is not None:
             self.display_sound_info(sfx_idx)
-        elif text.startswith("Page "):
-            parts = text.split()
-            page_idx = int(parts[1])
+        elif page_idx is not None:
             self.display_text_page_info(page_idx)
-        elif text.startswith("Music "):
-            parts = text.split()
-            music_idx = int(parts[1])
+        elif music_idx is not None:
             self.display_music_info(music_idx)
-        elif text.lower().endswith((".ddt", ".ark")):
-            self.display_ddt_info(text.split()[-1])
+        elif text.startswith("Demo:"):
+            self.display_mac_info(filename)
+        elif text.startswith("EPC:"):
+            self.display_epc_info(filename)
+        elif filename:
+            self.display_ddt_info(filename)
         elif text.endswith(".mac"):
             self.display_mac_info(text.split()[-1])
     
@@ -3676,12 +4308,28 @@ class JillExtractorApp:
         self.sound_detail_text.delete(1.0, tk.END)
         self.sound_detail_text.insert(tk.END, '\n'.join(info))
     
+    def display_epc_info(self, filename: str):
+        path = self.game_path / filename
+        if not path.exists():
+            return
+        epc = XargonEPCFile.load(str(path))
+        lines = [f"PC Speaker Instruments: {filename}",
+                 f"  Instruments: {len(epc.waveforms)}",
+                 f"  Raw size: {len(epc.raw_data)} bytes", ""]
+        for i, (wave, duration) in enumerate(zip(epc.waveforms, epc.durations)):
+            lines.append(f"  [{i:2d}] samples={len(wave):3d} duration={duration:6d} "
+                         f"first={wave[:8]}")
+        self.sound_detail_text.delete(1.0, tk.END)
+        self.sound_detail_text.insert(tk.END, '\n'.join(lines))
+
     def display_mac_info(self, filename: str):
         path = self.game_path / filename
         if not path.exists():
             return
         
-        mac = MACFile.load(str(path))
+        mac = (XargonMacroFile.load(str(path))
+               if self.current_game.get('format') == 'xargon'
+               else MACFile.load(str(path)))
         info = []
         info.append(f"MAC File: {filename}")
         info.append(f"  Records: {len(mac.records)}")
@@ -3706,24 +4354,21 @@ class JillExtractorApp:
             return
         text = self.sound_listbox.get(selection[0])
         
-        if text.startswith("SFX "):
-            parts = text.split()
-            sfx_idx = int(parts[1])
+        sfx_idx = _entry_index(text, "SFX ")
+        page_idx = _entry_index(text, "Page ")
+        music_idx = _entry_index(text, "Music ")
+        filename = _entry_filename(text)
+
+        if sfx_idx is not None:
             self.export_sound(sfx_idx, "sfx")
-        elif text.startswith("Page "):
-            parts = text.split()
-            page_idx = int(parts[1])
+        elif page_idx is not None:
             self.export_text_page(page_idx)
-        elif text.startswith("Music "):
-            parts = text.split()
-            music_idx = int(parts[1])
+        elif music_idx is not None:
             self.export_sound(music_idx, "music")
-        elif text.lower().endswith((".ddt", ".ark")):
-            filename = text.split()[-1]
+        elif filename:
             self.export_file(self.game_path / filename)
         elif text.endswith(".mac"):
-            filename = text.split()[-1]
-            self.export_file(self.game_path / filename)
+            self.export_file(self.game_path / text.split()[-1])
     
     def export_sound(self, index: int, type_: str):
         if not self.vcl_file:

@@ -1,0 +1,93 @@
+plugins {
+    id 'com.android.application'
+}
+
+import java.util.Properties
+
+// SDL2 source tree.  The Gradle project compiles SDL2 from source next to the
+// engine, which guarantees the Java glue in src/main/java/org/libsdl/app
+// matches the native library.  Resolution order:
+//   local.properties sdl2.dir  ->  SDL2_ANDROID env var  ->  the toolchain copy
+// from TOOL_LOCATIONS.md.
+def localProps = new Properties()
+def localFile = rootProject.file('local.properties')
+if (localFile.exists()) {
+    localFile.withInputStream { localProps.load(it) }
+}
+def sdl2Dir = localProps.getProperty('sdl2.dir') ?: System.getenv('SDL2_ANDROID')
+if (!sdl2Dir) {
+    sdl2Dir = 'D:/Apps/AndroidSDK/SDL2/SDL2-2.32.10'
+}
+sdl2Dir = sdl2Dir.replace('\\', '/')
+
+android {
+    namespace 'org.jillex'
+    compileSdk 35
+    ndkVersion '27.3.13750724'
+
+    defaultConfig {
+        applicationId 'org.jillex'
+        minSdk 24
+        targetSdk 35
+        versionCode 1
+        versionName '1.0'
+
+        // Universal sideload APK: 64-bit ARM for modern phones (S25 etc.),
+        // 32-bit ARM for older Fire tablets, and the two x86 ABIs for Intel
+        // Fire tablets and emulators.  Override for a quick single-ABI build:
+        //   gradlew.bat assembleDebug -PjillAbis=arm64-v8a
+        def abiList = (findProperty('jillAbis') ?: 'arm64-v8a,armeabi-v7a,x86_64,x86')
+                .split(',')
+        ndk {
+            abiFilters.addAll(abiList)
+        }
+
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_static',
+                          "-DJILL_SDL2_DIR=${sdl2Dir}",
+                          '-DCMAKE_BUILD_TYPE=Release'
+                cppFlags '-std=c++17'
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file('src/main/jni/CMakeLists.txt')
+            version '3.22.1'
+        }
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+            jniDebuggable true
+        }
+        release {
+            minifyEnabled false
+            // Sideloaded build: sign with the local debug key so
+            // assembleRelease produces an installable APK.
+            signingConfig signingConfigs.debug
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+
+    lint {
+        abortOnError false
+    }
+}
+
+dependencies {
+}

@@ -6,6 +6,12 @@
 #include <cstring>
 #include <type_traits>
 
+#if defined(JILL_XBOX)
+// Both decoders are only used through their in-memory entry points, and the
+// NXDK C library has no fopen_s()/_wfopen_s(), which the vendored headers
+// select under _MSC_VER.
+#define DR_MP3_NO_STDIO
+#endif
 #define DR_MP3_IMPLEMENTATION
 #include "third_party/dr_mp3.h"
 
@@ -15,7 +21,7 @@
 #include "third_party/stb_vorbis.c"
 #undef STB_VORBIS_HEADER_ONLY
 
-#if defined(_WIN32)
+#if defined(_WIN32) && !defined(JILL_XBOX)
 #include <windows.h>
 #include <mfapi.h>
 #include <mfidl.h>
@@ -189,7 +195,7 @@ bool decode_wav(const uint8_t* d, size_t size, DecodedAudio& out,
     return true;
 }
 
-#if defined(_WIN32)
+#if defined(_WIN32) && !defined(JILL_XBOX)
 template <typename T>
 void release(T*& p) {
     if (p) {
@@ -380,7 +386,7 @@ bool decode_audio_memory(const uint8_t* data, size_t size, const std::string& ex
     if (e == "wav") {
         return decode_wav(data, size, out, err);
     }
-#if defined(_WIN32)
+#if defined(_WIN32) && !defined(JILL_XBOX)
     if (e == "m4a" || e == "mp4" || e == "aac" || e == "m4b") {
         return decode_mf(data, size, out, err);
     }
@@ -395,7 +401,7 @@ bool decode_audio_memory(const uint8_t* data, size_t size, const std::string& ex
     if (size >= 4 && std::memcmp(data, "RIFF", 4) == 0) {
         return decode_wav(data, size, out, err);
     }
-#if defined(_WIN32)
+#if defined(_WIN32) && !defined(JILL_XBOX)
     {
         std::string mf_err;
         if (decode_mf(data, size, out, mf_err)) {

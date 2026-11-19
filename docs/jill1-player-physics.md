@@ -584,9 +584,11 @@ because `p11` is also the landing/climb sub-state (see #4.1).
 ## 9. Determinism notes
 
 * Fixed 18.2 Hz update (or 9.1 Hz with `T`), not delta-time based.
-* `rand()` = `FUN_1CA6_0015` (Turbo C `rand`, LCG seeded at boot). It is used
-  for the jump-caption index, bubble spawns and enemy AI; the port needs the
-  same LCG (or a recorded seed) for demo replay.
+* `rand()` = `FUN_1CA6_0015` (Turbo C `rand`: 32-bit seed, `seed = seed *
+  0x015A4E35 + 1`, result `(seed >> 16) & 0x7FFF`). It is used for the
+  jump-caption index, bubble spawns and enemy AI.  Demo playback reseeds it to
+  **12345 (`0x3039`)** in `1415:05B2`; a different generator or seed diverges
+  on every random enemy/caption.
 * Update order is fully determined by the active list: player first, then
   ascending object index.
 * The input edge latches (`0x3D9E`/`0x3DA0`) are game state: the player sets

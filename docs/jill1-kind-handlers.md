@@ -45,7 +45,7 @@ Turbo C symbol list; addresses are exact.
 | `26F4:1ad4` | `_setorigin(obj,x,y)` | set x/y, clamped to `0..0x7F0` / `0..0x3F0` **[verified]** |
 | `26F4:2227` | `_cando(obj,x,y,mask)` | AABB test against the per-tile attribute table at DGROUP:`0x83EE` (8 bytes/tile); returns `mask` if every covered cell satisfies `attr & mask`, else 0 **[verified]** |
 | `26F4:1d73` | `_justmove(obj,x,y)` | `_cando(...,1)` then `_setorigin` **[verified]** |
-| `26F4:1c89` | `_trymove(obj,x,y)` | try the full move, then x-only, then y-only (wall sliding); returns 1/2/4 for the axis that worked, 0 if stuck **[verified]** |
+| `26F4:1c89` | `_trymove(obj,x,y)` | mask = `1`, plus `2` when `y > obj.y` (a fall must also pass the fall bit).  Tries the full move, then **y-only**, then **x-only** (wall sliding); returns 1 (full), 2 (y moved), 4 (x moved), 0 if stuck.  The x-only probe is skipped when `x` did not change, so "did not move" is reported as 0. **[verified]** |
 | `26F4:1f35` | `_crawl(obj,dx,dy)` | `_trymove` plus a floor/step probe (`26F4:1b8f`); used by walking enemies **[inferred]** |
 | `26F4:2605` | `_fishdo(obj,x,y)` | move test with mask `0x2001` (water is walkable) **[inferred]** |
 | `26F4:1da8` | `_onscreen(obj)` | AABB vs the camera rect pointer at DGROUP:`0xB7F2` **[verified]** |
@@ -138,7 +138,7 @@ Shapes are written `tileset<<8 | frame`. `O(i).f` is object field `f` (see 6.1).
 - Shared handler with FROG (kind 22); everything below applies to both, only the kind byte (and therefore the tileset) differs.
 - draw: `_drawshape(tileset<<8 | (dx<0 ? 3:0) + (state==1 ? (dy>0?2:0)+(dy<1?1:0) : 0), x, y)` - a 2x2 walk strip plus a hop frame.
 - hit: player -> `_hitplayer`.
-- update: state 0: `p13++`; once `p13 > 0x10` -> `state = 1`, `_pointvect` towards the player, `dx <<= 2`, `dy = -10` (hop), return 1. state 1: gravity `dy += 1` (capped 10), `p13 = (p13+1) % 4`, `_crawl(dx, 0)`, bounce `dx` on contact, and re-land (`state = 0`) when the tile under it is clear.
+- update: state 0: `p13++`; once `p13 > 0x10` -> `state = 1`, `_pointvect` towards the player, `dx <<= 2`, `dy = -10` (hop), return 1. state 1: gravity `dy += 1`; only when `dy > 0x0C` is it dropped back to `0x0A` (the hop can reach 11-12 px/tick), then `_trymove(x+dx, y+dy)`; if that moved only in x or not at all: `dy < 0` ? `dy = 0` : snap onto `((y+dy) & ~0xF) + 0x10 - h`, `_pointvect` again, `dx = sign`, `state = 0`, `p13 = 0`, sound (1,0x12).
 
 ### 9. INCHWORM (1644:1c33) [verified]
 - draw: `_drawshape(0x3E<<8 | (dx<0 ? 3:0) + p11, x, y)` - 3 walk frames per side.
@@ -256,11 +256,11 @@ Shapes are written `tileset<<8 | frame`. `O(i).f` is object field `f` (see 6.1).
 
 ### 28. TOKEN (1a41:000f) [verified]
 - draw: `_drawshape(0x0E00 + table[p13], x, y)` with the 8-entry word table at DGROUP:`0x0ED4` (38,12,13,11,14,15,18,20).
-- hit: player only. If `table1[p13]` (DGROUP:`0x0EEA`) != 0 it calls `1fae:2E61(p13)`; else it decrements `table2[p13]` (DGROUP:`0x0F2C`) and shows `_putbotmsg(farstr[p13], 7)` from the far-pointer table at DGROUP:`0x0F00`. Then `_sound(3,0x19)`, `_addinv(p13)`, `_killobj`, `flags |= 0xC000`.
+- hit: player only. If `table1[p13]` (DGROUP:`0x0EEA`) != 0 it calls `1fae:2E61(p13)` and jumps straight to the handler tail (`1a41:00b4 -> 0146`): **no** sound, **no** `_addinv` and **no** `_killobj`, so the token stays on the board and can be touched again. Otherwise it decrements `table2[p13]` (DGROUP:`0x0F2C`) and shows `_putbotmsg(farstr[p13], 7)` from the far-pointer table at DGROUP:`0x0F00`, then `_sound(3,0x19)`, `_addinv(p13)`, `_killobj`, `flags |= 0xC000`.
 - the four strings are `"FOOF!"`, `"USE KEYS TO OPEN DOORS"`, `"YOU FOUND A KNIFE"`, `"YOU FOUND A GEM"`; entries 4-7 have `table1 = 1` so they go through `1fae:2E61` instead.
 - the same far-pointer table has entries 8-10: `"YOU FOUND A SPINNING BLADE"`, `"EXTRA JUMPING POWER"` and `"SHIELD OF INVINCIBILITY"` (items 8, 9, 10). **[verified]**
 - `if not table1[p13]` decrements `table2[p13]` and prints the hint only while it is still positive, i.e. each hint appears once per level (`table2` is 1 for entries 0-3 and 8-10, -1 for 4-7). **[verified]**
-- `1fae:2E61(item)` (linear `0x12941`) is the morph helper the special entries call: 4-7 set the player kind to `0x39/0x38/0x37/0x36` (57 JILLFROG, 56 JILLBIRD, 55 JILLSPIDER, 54 JILLFISH) and 0 (the `"FOOF!"` token) reverts a morphed player to kind 0.  Both branches still run `_addinv(p13)`, so the item also enters the inventory. **[verified]**
+- `1fae:2E61(item)` (linear `0x12941`) is the morph helper the special entries call: 4-7 set the player kind to `0x39/0x38/0x37/0x36` (57 JILLFROG, 56 JILLBIRD, 55 JILLSPIDER, 54 JILLFISH) and 0 (the `"FOOF!"` token) reverts a morphed player to kind 0.  If the player is already in the requested form the helper returns at `1fae:005E` without touching anything, so a standing touch is harmless.  Otherwise it resizes the body, then fits it with two `_cando(x & ~7, y, 1)` probes: first at the feet-planted y (`old_bottom - new_h`), then at the unchanged y.  If both fail the morph is skipped and retried on the next touch; the y from the successful probe is the one applied.  This is why the jn1 demo's frog cannot morph back beside the 2.dem return token until it has hopped to an 8-px-aligned, clear spot (tick 3588, `(200,912)`), and why `end1.mac`'s bird lands a tick later at `(296,792)` before becoming Jill. **[verified]**
 - shipped boards use p13 values 0, 4, 5, 7, 8 and 9; 8 grants the spin-blade and 9 the feather that raises the jump by 4 per copy (`docs/jill1-player-physics.md` #4). **[verified]**
 - update: returns 0 (static pickup).
 

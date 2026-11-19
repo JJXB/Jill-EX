@@ -52,3 +52,7 @@ PS4Toolchain - "%OO\_PS4\_TOOLCHAIN%"
 
 PSPSDK - "D:\Apps\PSPSDK"
 
+\--XBOX--
+
+NXDK - "D:\Apps\NXDK" (NXDK_DIR; toolchain + SDL2/libc++ sources; cxbe at tools\cxbe\cxbe.exe)
+

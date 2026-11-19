@@ -80,6 +80,7 @@ void usage() {
         "  --ticks N        headless: advance N world ticks before the dump\n"
         "  --trace FILE     headless: write a per-tick player/state CSV\n"
         "  --dump-map FILE  headless: write the live 128x64 tile map as text\n"
+    "  --dump-objects FILE  headless: write the object table at the end tick\n"
         "  --classic-camera use the original edge-triggered scroll during playback\n"
         "  --out FILE       headless frame PPM; with --selftest, the .mac to write\n"
         "  --screenshot-dir DIR  where F9 writes PPM screenshots\n"
@@ -164,6 +165,8 @@ int main(int argc, char** argv) {
             opt.trace = value(i, "--trace");
         } else if (a == "--dump-map") {
             opt.dump_map = value(i, "--dump-map");
+        } else if (a == "--dump-objects") {
+            opt.dump_objects = value(i, "--dump-objects");
         } else if (a == "--classic-camera") {
             opt.classic_camera = true;
         } else if (a == "--screenshot-dir") {

@@ -610,7 +610,9 @@ void Engine::form_update(int i) {
                 o.dy += in_.v * 2 + (o.dy < 2 ? 1 : 0);
                 o.dy = std::max(-8, std::min(o.dy, 8));
             }
-            if ((std::rand() & 3) == 0) {
+            // Original: `rand() & 3`.  Must use the engine's Turbo C LCG so a
+            // recorded macro stays deterministic and in step with the original.
+            if (rnd(4) == 0) {
                 add_obj(0x3A, o.x + 6, o.y - 2);  // bubble
                 o = objects_[static_cast<size_t>(i)];
             }
@@ -748,15 +750,22 @@ void Engine::form_update(int i) {
                 o.state = 1;
                 sound(1, 0x12);
             }
-            if (move_obj(i, o.x + o.dx, o.y + o.dy) == 0) {
+            // 1FAE:2648 calls _trymove and treats "y did not move" as a
+            // landing: _trymove returns 1 (both axes), 2 (y only), 4 (x only)
+            // or 0 (stuck), and `(r & 3) == 0` is true for the x-only and
+            // stuck cases, i.e. whenever the fall was blocked.  Testing only
+            // for 0 let a falling frog keep its horizontal 8-px steps while
+            // hanging on the floor tile (dy stayed 12 for ~18 ticks).
+            const int nx = o.x + o.dx;
+            const int ny = o.y + o.dy;
+            if ((move_obj(i, nx, ny) & 3) == 0) {
                 if (o.dy < 0) {
                     o.dy = 0;
                 } else {
-                    o.y = ((o.y & ~0x0F) + 0x10 - o.h);
+                    move_obj(i, nx, ((ny & ~0x0F) + 0x10) - o.h);
                     o.p13 = 0;
                     o.dy = 0;
                     o.state = 0;  // grounded idle frame
-                    set_origin(i, o.x, o.y);
                 }
             }
             tile_touch(i);

@@ -5,8 +5,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <filesystem>
 #include <fstream>
+
+#include "platform_fs.h"
 
 namespace {
 
@@ -221,7 +222,7 @@ bool load_game_manifest(const std::string& path, GameDef& out, std::string& err)
 
 int discover_games(const std::string& dir, std::vector<GameDef>& out,
                    std::string& err) {
-    namespace fs = std::filesystem;
+    namespace fs = jill_fs;
     std::error_code ec;
     if (!fs::exists(dir, ec) || !fs::is_directory(dir, ec)) {
         return 0;

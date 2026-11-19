@@ -10,13 +10,14 @@
 #include "external.h"
 #include "platform_paths.h"
 #include "profile.h"
+#include "timing.h"
 #include "ui.h"
 
 namespace fs = std::filesystem;
 
 namespace {
 
-constexpr double kTickStep = 1.0 / 18.2065;  // one original BIOS tick
+constexpr double kTickStep = jill_time::kLogicStep;  // one original BIOS tick
 constexpr int kPad = 16;
 constexpr int kHeaderH = 40;
 constexpr int kFooterH = 36;
@@ -463,9 +464,14 @@ bool Studio::select_game(int index, std::string& err) {
             continue;
         }
         const std::string stem = entry.path().stem().string();
-        if (std::find(board_choices_.begin(), board_choices_.end(), stem) ==
+        // `.dem` demo boards need the extension kept: the engine appends the
+        // manifest's board extension when the name has none, so a bare "0"
+        // would look for 0.jn1 instead of 0.dem.
+        const std::string choice = (ext == ".dem") ? entry.path().filename().string()
+                                                   : stem;
+        if (std::find(board_choices_.begin(), board_choices_.end(), choice) ==
             board_choices_.end()) {
-            board_choices_.push_back(stem);
+            board_choices_.push_back(choice);
         }
     }
     std::sort(board_choices_.begin() + std::min<size_t>(g.boards.size(),
@@ -2897,6 +2903,26 @@ int Studio::run_headless(std::string& err) {
             }
         }
         std::fclose(mf);
+    }
+    if (!opt_.dump_objects.empty()) {
+        FILE* of = std::fopen(opt_.dump_objects.c_str(), "wb");
+        if (!of) {
+            err = "cannot write " + opt_.dump_objects;
+            return 2;
+        }
+        std::fprintf(of,
+                     "# idx kind x y dx dy w h state p0f p11 p13 flags ttl\n");
+        const auto& objs = engine_->objects();
+        for (size_t i = 0; i < objs.size(); ++i) {
+            const BoardObject& o = objs[i];
+            std::fprintf(of,
+                         "%3d %2d %4d %4d %3d %3d %2d %2d %3d %3d %3d %3d "
+                         "0x%04X %d\n",
+                         static_cast<int>(i), o.kind, o.x, o.y, o.dx, o.dy,
+                         o.w, o.h, o.state, o.p0f, o.p11, o.p13,
+                         static_cast<unsigned>(o.flags), o.ttl);
+        }
+        std::fclose(of);
     }
     engine_->render(fb_, true, 1.0f);
     const std::string out =

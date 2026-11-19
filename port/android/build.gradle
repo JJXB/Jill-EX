@@ -1,0 +1,17 @@
+// Jill-EX Android build (Gradle + AGP + SDL2 source).
+//
+// build_android.cmd drives everything; see port/android/README.md.
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.7.3'
+    }
+}
+
+tasks.register("clean", Delete) {
+    delete rootProject.layout.buildDirectory
+}

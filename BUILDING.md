@@ -220,6 +220,93 @@ mixer cost (`A mix/budget ms`).  Every 5 seconds the same values are written to
 See `PS4_PORT_PLAN.md` for the renderer design, verified toolchain constraints,
 the FluidSynth licence verdict and the remaining on-device work.
 
+### Android build (Android SDK/NDK + SDL2)
+
+The Android target is a separate Gradle project in `port\android` and does not
+touch `port\build` or `port\build32`.  Prerequisites (see `TOOL_LOCATIONS.md`):
+Android SDK/NDK, JDK 17 and the SDL2 source tree (2.32.10).
+
+```
+cmd /c build_android.cmd          :: assembleDebug + copy the APK to the root
+cmd /c build_android.cmd install  :: ... and adb install -r
+cmd /c build_android.cmd clean    :: remove app/build and app/.cxx
+```
+
+Outputs:
+
+* `port\android\app\build\outputs\apk\debug\app-debug.apk` (installable debug APK)
+* `JillEX-android.apk` in the repository root (git-ignored)
+
+The APK is universal: `arm64-v8a`, `armeabi-v7a`, `x86_64` and `x86` (~6 MB).
+Native libraries are linked with 16 KiB page alignment for Android 15+ devices;
+without it installation fails with "16kb load segment alignment".  Build one ABI
+for faster iteration with `gradlew.bat assembleDebug -PjillAbis=arm64-v8a`.
+
+The APK contains only configuration (`jill.ini`, `games\`, `profiles\`); copy
+your own `jillt\` and `ONESIM\` folders onto the device after installing:
+
+```
+adb push jillt  /sdcard/JillEX/
+adb push ONESIM /sdcard/JillEX/
+```
+
+The app uses `/sdcard/JillEX` directly, so it requests "All files access"
+(`MANAGE_EXTERNAL_STORAGE`) on Android 11+; the legacy storage permission is
+used on Android 10 and older.
+
+`port\android\local.properties` (git-ignored) points at the SDK and SDL2:
+
+```properties
+sdk.dir=D\:\\Apps\\AndroidSDK
+sdl2.dir=D\:\\Apps\\AndroidSDK\\SDL2\\SDL2-2.32.10
+```
+
+See `port/android/README.md` for the project layout, data root, touch controls
+and the remaining on-device work.
+
+### Xbox build (NXDK + SDL2)
+
+The Xbox target is a separate CMake project in `port\xbox` and does not touch
+`port\build`, `port\build32`, `port\ps4` or `port\vita`.  Requirements (see
+`TOOL_LOCATIONS.md`):
+
+* NXDK at `D:\Apps\NXDK` (or set `NXDK_DIR`), including `lib\sdl\SDL2`,
+  `lib\libcxx` and the prebuilt `tools\cxbe\cxbe.exe`.
+* CMake 3.20+ and Ninja.
+
+```
+cmd /c build_xbox.cmd          :: compile + link + default.xbe + data zip
+cmd /c build_xbox.cmd clean    :: remove port\xbox\build
+```
+
+Outputs:
+
+* `port\xbox\build\default.xbe` (the game executable)
+* `port\xbox\build\data\` (`default.xbe`, `jill.ini`, `games\`, `profiles\`,
+  `external\`)
+* `JillEX-Xbox.zip` in the repository root (the complete install bundle)
+
+NXDK's prebuilt `libc++.lib`/`libSDL2.lib` are not required: both libraries are
+compiled from the SDK's checked-out sources by the project.  The first build
+takes ~1-2 minutes; later builds are incremental.
+
+Deploy by extracting `JillEX-Xbox.zip` into one folder on the console (for
+example `E:\Apps\Jill-EX\`), adding your own `jillt\` / `ONESIM\` folders, and
+running `default.xbe`; burning the same layout as an XISO works too.  The data
+root is the folder the XBE was launched from; if it has no `jill.ini`, the
+first of these that does is used:
+
+```
+D:\  E:\JillEX  E:\Apps\Jill-EX  E:\Apps\JillEX  E:\Games\Jill-EX  E:\Games\JillEX
+```
+
+`D:\` is the disc root; a writable root is needed for saves, high scores and
+`jill.log`.  See `port\xbox\README.md` for the port layout, the compile-time
+decisions (no C++ unwinder, `jill_fs` filesystem facade, excluded libc++
+units) and the runtime bring-up checklist.  **The target builds but has not
+yet run on hardware or in Cxbx.**
+
+
 
 
 

@@ -1,6 +1,7 @@
 #include "engine.h"
 
 #include "palette.inc"
+#include "platform_fs.h"
 #include "platform_paths.h"
 
 #include <algorithm>
@@ -189,6 +190,30 @@ std::vector<TextPage::Line> page_body(const TextPage& page) {
     return out;
 }
 
+// Names the files actually present when a required asset cannot be opened.
+// Android/Fire OS logcat and jill.log then show whether the folder is empty,
+// nested one level too deep, or uses different capitalisation.
+void trace_directory(const std::string& dir) {
+    std::error_code ec;
+    if (!jill_fs::is_directory(dir, ec)) {
+        jill_paths::trace("engine: %s is not a directory", dir.c_str());
+        return;
+    }
+    jill_paths::trace("engine: contents of %s", dir.c_str());
+    int shown = 0;
+    for (const auto& entry : jill_fs::directory_iterator(dir, ec)) {
+        jill_paths::trace("engine:   %s",
+                          entry.path().filename().string().c_str());
+        if (++shown >= 40) {
+            jill_paths::trace("engine:   ...");
+            break;
+        }
+    }
+    if (shown == 0) {
+        jill_paths::trace("engine:   (empty)");
+    }
+}
+
 }  // namespace
 
 bool Engine::init(const GameDef& game, std::string& err) {
@@ -199,10 +224,20 @@ bool Engine::init(const GameDef& game, std::string& err) {
     game_ = game;
     profile_ = game.profile;
     data_dir_ = game.data_dir;
-    if (!tiles_.load(join(data_dir_, game_.tile_defs), err)) {
+    const std::string tile_path =
+        jill_paths::resolve_file(join(data_dir_, game_.tile_defs));
+    jill_paths::trace("engine: loading tiles %s", tile_path.c_str());
+    if (!tiles_.load(tile_path, err)) {
+        jill_paths::trace("engine: tiles failed: %s", err.c_str());
+        trace_directory(data_dir_);
         return false;
     }
-    if (!shapes_.load(join(data_dir_, game_.shape_file), err)) {
+    const std::string shape_path =
+        jill_paths::resolve_file(join(data_dir_, game_.shape_file));
+    jill_paths::trace("engine: loading shapes %s", shape_path.c_str());
+    if (!shapes_.load(shape_path, err)) {
+        jill_paths::trace("engine: shapes failed: %s", err.c_str());
+        trace_directory(data_dir_);
         return false;
     }
     // Player colour table (entry 8).  Each episode ships the same art with a
@@ -224,10 +259,11 @@ bool Engine::init(const GameDef& game, std::string& err) {
     if (!game_.pages_file.empty()) {
         std::string perr;
         if (!pages_.load(join(data_dir_, game_.pages_file), perr)) {
-            std::fprintf(stderr, "text pages: %s\n", perr.c_str());
+            jill_paths::trace("text pages: %s", perr.c_str());
         }
     }
     refresh_save_labels();
+    jill_paths::trace("engine: init ready");
     return true;
 }
 
@@ -411,6 +447,12 @@ void Engine::set_input(int h, int v, bool btn1_down, bool btn2_down) {
 }
 
 void Engine::tick() {
+    // The 0xC000 marks on map cells and objects belong to one logic frame:
+    // the update pass raises them and the original's draw pass
+    // (FUN_26f4_0d52) clears them.  Clearing at the start of the next tick
+    // keeps them available for the render that happens in between, and makes
+    // headless runs (which skip render) behave exactly like the game.
+    clear_frame_marks();
     if (page_open_) {
         return;  // the original blocks in the text viewer
     }
@@ -735,26 +777,16 @@ void Engine::update_pass() {
                 }
                 const BoardObject& aa = objects_[static_cast<size_t>(i)];
                 const BoardObject& bb = objects_[static_cast<size_t>(j)];
-                // Recorded ending macros were made in the original with a
-                // slightly different sprite alignment; give token pickups a
-                // few pixels of slack so the recorded path still collects
-                // them (e.g. the ending's JILL icon).
-                const int slack =
-                    (macro_playing_ &&
-                     ((aa.kind == 28 && aa.p13 == 0) ||
-                      (bb.kind == 28 && bb.p13 == 0)))
-                        ? 10
-                        : 0;
-                if (aa.x - slack < bb.x + bb.w && bb.x < aa.x + aa.w + slack &&
-                    aa.y - slack < bb.y + bb.h && bb.y < aa.y + aa.h + slack) {
-                    bool ra = on_hit(i, j);
-                    bool rb = on_hit(j, i);
-                    if (ra) {
-                        objects_[static_cast<size_t>(i)].flags |= 0xC000;
-                    }
-                    if (rb) {
-                        objects_[static_cast<size_t>(j)].flags |= 0xC000;
-                    }
+                // Plain AABB, no macro-playback slack: the recorded paths now
+                // line up with the real boxes (jn1's feather/blade and the
+                // ending's JILL icon are touched on their true ticks).  Extra
+                // slack made jn2dem2 grab the third spinning-blade star two
+                // pixels early, so all three vanished on the first jump
+                // instead of leaving one for the second pass.
+                if (aa.x < bb.x + bb.w && bb.x < aa.x + aa.w &&
+                    aa.y < bb.y + bb.h && bb.y < aa.y + aa.h) {
+                    on_hit(i, j);
+                    on_hit(j, i);
                 }
             }
         }
@@ -1066,8 +1098,11 @@ bool Engine::update_object(int i) {
                 return o.p13 > 0x10;
             }
             ++o.dy;
-            if (o.dy > 10) {
-                o.dy = 10;
+            // 1644:36EE: gravity allows dy up to 0x0C; only a value past
+            // that drops back to 0x0A.  Capping at 10 makes the hop/flight
+            // arc finish a pixel or two late.
+            if (o.dy > 0x0C) {
+                o.dy = 0x0A;
             }
             int nx = o.x + o.dx;
             int ny = o.y + o.dy;
@@ -2072,13 +2107,10 @@ bool Engine::on_hit(int a, int b) {
             }
             return false;
 
-        case 28: {  // TOKEN (1a41:000f): inventory pickup, p13 = item id
+        case 28: {  // TOKEN (1a41:000f): p13 = item id
             // p13 1/2/3/8/9/10 add a key/knife/gem/spinblade/feather/shield
             // (the first pickup of each type also shows a hint in the original;
-            // the port has no message line).  p13 0 and 4..7 additionally run
-            // 1FAE:2E61, which morphs Jill back / into the fish, spider, bird
-            // and frog forms - those forms are not ported yet, so the inventory
-            // entry is still granted.
+            // the port has no message line).
             if (b != 0) {
                 return false;
             }
@@ -2102,7 +2134,16 @@ bool Engine::on_hit(int a, int b) {
                 item_hint_[o.p13] = true;
             }
             if (o.p13 == 0 || (o.p13 >= 4 && o.p13 <= 7)) {
-                morph_player(o.p13);  // 1FAE:2E61
+                // 1A41:0099 -> 1FAE:2E61: transformation tokens morph Jill
+                // back / into the fish, spider, bird or frog form, then jump
+                // straight to the handler tail.  The original does **not**
+                // add the item to the inventory and does **not** remove the
+                // token, so it stays on the board and can be touched again
+                // to re-activate the form.  (A repeat touch is a no-op while
+                // Jill is already in that form - 1FAE:005E returns early.)
+                morph_player(o.p13);
+                o.flags |= 0xC000;
+                return true;
             }
             add_item(o.p13);
             sound(3, 0x19);
@@ -2571,9 +2612,9 @@ void Engine::explode1(int x, int y, int n) {
 
 int Engine::rnd(int mod) {
     // 2CA6:0015: Turbo C rand() - 32-bit seed, seed = seed * 0x015A4E35 + 1,
-    // result = (seed >> 16) & 0x7FFF.  Recorded macros reset the seed to
-    // 0x3039 (1415:05B2), so using the real generator is what keeps enemy and
-    // caption randomness in step with the recording.
+    // result = (seed >> 16) & 0x7FFF.  Recorded macros reseed to 12345
+    // (0x3039, 1415:05B2), so using the real generator is what keeps enemy
+    // and caption randomness in step with the recording.
     rng_ = rng_ * 0x015A4E35u + 1u;
     const uint32_t value = (rng_ >> 16) & 0x7FFFu;
     if (mod <= 0) {
@@ -2810,8 +2851,6 @@ void Engine::render(Framebuffer& fb, bool with_hud, float alpha) {
     draw_caption(fb);
     draw_message_box(fb);
     draw_text_page(fb);
-
-    clear_frame_marks();
 
     if (blend) {
         for (size_t i = 0; i < objects_.size() && i < saved.size(); ++i) {
@@ -5564,18 +5603,39 @@ void Engine::morph_player(int item) {
         default: kind = 0; break;  // FOOF! / anything else
     }
     BoardObject& p = objects_[0];
+    if (p.kind == kind) {
+        // 1FAE:005E: already in the requested form -> return without touching
+        // the player.  Needed because transformation tokens stay on the board,
+        // so a standing touch keeps calling this every frame.
+        return;
+    }
     const int old_h = p.h;
-    p.kind = kind;
+    const int old_w = p.w;
+    const uint16_t old_kind = p.kind;
+    p.kind = static_cast<uint16_t>(kind);
     if (kind == 0) {
         p.w = 0x10;
         p.h = 0x20;
     } else {
         set_obj_size(0);
     }
-    // 1FAE:2E61 keeps the feet planted: the new top is old_bottom - new_h.
-    // Without this the 10-px frog or 16-px fish appears floating after a morph.
-    p.y += old_h - p.h;
-    p.x &= ~7;
+    // 1FAE:2E61 probes the new body before moving the origin: first at the
+    // feet-planted y (old_bottom - new_h), then at the unchanged y.  A morph
+    // into a tight spot (e.g. the frog beside the 2.dem return token) is
+    // skipped and retried on a later touch.  Both probes use x &= ~7.
+    const int nx = p.x & ~7;
+    int ny = p.y + old_h - p.h;
+    if (cando(0, nx, ny, 1) != 1) {
+        ny = p.y;
+        if (cando(0, nx, ny, 1) != 1) {
+            p.kind = old_kind;
+            p.w = old_w;
+            p.h = old_h;
+            return;
+        }
+    }
+    p.x = nx;
+    p.y = ny;
     p.state = 0;
     p.dx = 0;
     p.dy = 0;
@@ -5613,7 +5673,13 @@ void Engine::player_kill(int amount, int dir) {
     int hp = health() - damage;
     header_[2] = static_cast<uint8_t>(hp < 0 ? 0 : (hp & 0xFF));
     header_[3] = 0;
-    p.flags |= 0xC000;
+    // 26F4:05E7 raises the HUD damage flash (DGROUP:0x83D0, header+0x2A) and
+    // the draw pass clears it.  It must NOT touch the player object's flags:
+    // 0x4000/0x8000 mark an object as off-screen/blocked, and the update pass
+    // then stamps its cells into the tile map as walls.  Marking the player
+    // blocked froze Jill in place and made every adjacent enemy look
+    // "blocked" too (jn2dem2: the demon then spammed fireballs into her).
+    // The flash itself is not rendered yet, so the flag is not raised here.
     if (hp >= 1) {
         sound(4, 0x13);
         return;
@@ -5745,7 +5811,8 @@ bool Engine::set_macro_records(std::vector<MacroRecord> records) {
     macro_held1_ = false;
     macro_held2_ = false;
     macro_key_ = 0;
-    // 1415:05B2 reseeds the C rand() LCG when a recorded macro starts.
+    // 1415:05B2 reseeds the C rand() LCG when a recorded macro starts
+    // (seed 12345 = 0x3039).
     rng_ = 0x3039;
     // Do not let menu/pause inputs bleed into the first macro records.
     in_ = InputState{};
@@ -5773,18 +5840,18 @@ void Engine::stop_macro() {
     macro_held1_ = false;
     macro_held2_ = false;
     macro_key_ = 0;
-    rng_ = 0x3039;
+    rng_ = 0x3039;  // 1415:05B2 also reseeds to 12345 on stop
     in_ = InputState{};
 }
 
 void Engine::apply_macro_input() {
-    // 1415:093B tests the next record after be3a has been incremented and
-    // consumes at most one record per frame.  The port's tick 0 is the first
-    // update (the original's elapsed 1), so a record at time T is due on
-    // update T-1 - one update earlier than the old `time <= tick` loop, which
-    // made every recorded action one physics frame late.
+    // 1415:093B: 3C72 is set to be3a at the first read and the loop increments
+    // be3a before calling the reader, so a record's elapsed time since the
+    // first frame is exactly be3a-3c72.  A record at time T is therefore due on
+    // the update whose counter already equals T; the port's macro_tick_ is that
+    // counter (0 on the first update), so compare directly.
     if (macro_pos_ < macro_.size() &&
-        macro_[macro_pos_].time <= macro_tick_ + 1) {
+        macro_[macro_pos_].time <= macro_tick_) {
         const MacroRecord& r = macro_[macro_pos_++];
         // A record only updates the fields named by its mask; the original
         // leaves the rest of the input state alone between records.
@@ -5804,15 +5871,13 @@ void Engine::apply_macro_input() {
             macro_key_ = r.key;
         }
     }
-    // The input poller's edge latches behave as if these were real buttons.
-    if (!macro_held1_) {
-        latch1_ = false;
-    }
-    if (!macro_held2_) {
-        latch2_ = false;
-    }
-    in_.btn1 = macro_held1_ && !latch1_;
-    in_.btn2 = macro_held2_ && !latch2_;
+    // The macro player (1415:093B) feeds 3C7A/3C7E directly and never runs the
+    // normal input poll, so the 3D9E/3DA0 edge latches do not gate recorded
+    // buttons: a hold in the file stays held (the frog's long leaps depend on
+    // this).  The latches are still tracked for the normal poller once the
+    // macro ends.
+    in_.btn1 = macro_held1_;
+    in_.btn2 = macro_held2_;
     ++macro_tick_;
     if (macro_pos_ >= macro_.size() && macro_tick_ > macro_last_) {
         macro_playing_ = false;

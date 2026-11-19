@@ -846,6 +846,13 @@ duration of playback: off-screen objects are only updated when they enter that
 rect (the port's modern HUD otherwise expands it to 320x200), so a larger view
 changes when hazards/enemies start moving and the recording drifts.
 
+The macro player bypasses the normal input poll, so its recorded buttons are
+**not** edge-latched: a `b1`/`b2` hold in the file stays held (the frog form's
+long leaps and the bird's flap holds depend on this).  One record is consumed
+per frame, after the frame counter increment, so record T takes effect on the
+same physics update as the original.  `rand()` is the Turbo C LCG reseeded to
+**12345 (`0x3039`)** at macro start/stop.
+
 ## 14. Menus, HUD, save/restore
 
 * **HUD** (`FUN_22ab_05dd`, linear `0x23A05`): **[verified]** the panel is
@@ -944,8 +951,13 @@ confirms the object layout independently of the runtime.
 4. **Shape `+5` (4bpp) size word** deviates from the frame math in 16/63 entries
    (#9.3), and the purpose of the trailing shape record is unconfirmed (it is never
    decoded by the runtime).
-5. **Exact tick rate**: code divides deltas by 18 (BIOS 18.2 Hz) but the speaker driver
-   reprograms PIT channel 0; confirm the divisor on real hardware.
+5. **Exact tick rate [resolved]**: `FUN_1530_0440` installs the custom int 1Ch
+   handler.  Without the SB FM driver it programmes PIT channel 0 with divisor
+   `65536/64 = 1024` and only bumps `DGROUP:0x3E28` every 64th interrupt; with
+   the FM driver present it is called with frequency 0, which it turns into
+   divisor 65536 and divider 1.  Both are exactly one 8253 reload:
+   `1,193,182 / 65,536 = 18.206510... Hz`.  The `/0x12` divisions elsewhere
+   are tick-count-to-seconds display math, not the update rate.
 
 ## 17. Porting notes
 

@@ -5,7 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(JILL_XBOX)
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -15,7 +15,7 @@
 
 namespace {
 
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(JILL_XBOX)
 std::string wide_to_utf8(const wchar_t* s) {
     if (!s) {
         return std::string();
@@ -165,7 +165,7 @@ void build_gm_program_map(const CmfSong& song, uint8_t out[128]) {
 
 std::vector<std::string> MidiOut::devices() {
     std::vector<std::string> out;
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(JILL_XBOX)
     const UINT n = midiOutGetNumDevs();
     for (UINT i = 0; i < n; ++i) {
         MIDIOUTCAPSW caps;
@@ -181,7 +181,7 @@ std::vector<std::string> MidiOut::devices() {
 
 bool MidiOut::open(int index, std::string& err) {
     close();
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(JILL_XBOX)
     const UINT count = midiOutGetNumDevs();
     if (index < 0 || static_cast<UINT>(index) >= count) {
         err = "MIDI device index out of range";
@@ -214,7 +214,7 @@ bool MidiOut::open(int index, std::string& err) {
 }
 
 void MidiOut::close() {
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(JILL_XBOX)
     if (handle_) {
         HMIDIOUT handle = static_cast<HMIDIOUT>(handle_);
         midiOutReset(handle);
@@ -226,7 +226,7 @@ void MidiOut::close() {
 }
 
 void MidiOut::send(uint32_t message) const {
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(JILL_XBOX)
     if (handle_) {
         midiOutShortMsg(static_cast<HMIDIOUT>(handle_), message);
     }

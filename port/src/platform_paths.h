@@ -40,6 +40,7 @@ bool ensure_data_root(std::string& err);
 void trace(const char* fmt, ...);
 
 // Open/truncate the PS4 diagnostic log.  Independent of stdio redirection.
-void log_open(const std::string& path);
+// Returns false when the file could not be created (read-only volume).
+bool log_open(const std::string& path);
 
 }  // namespace jill_paths

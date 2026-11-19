@@ -1,11 +1,13 @@
 #include "tiles.h"
 
+#include <cerrno>
 #include <cstdio>
+#include <cstring>
 
 bool TileDefs::load(const std::string& path, std::string& err) {
     FILE* f = std::fopen(path.c_str(), "rb");
     if (!f) {
-        err = "cannot open " + path;
+        err = "cannot open " + path + ": " + std::strerror(errno);
         return false;
     }
     std::fseek(f, 0, SEEK_END);

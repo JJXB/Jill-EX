@@ -3,6 +3,8 @@
 # release builds to the repository.
 /IV0000-BREW00199_00-JILLEXPS40000000.pkg
 /JillEX-data.zip
+/JillEX-Xbox.zip
+/port/xbox/build/
 #PC Builds
 /Jill-EX-release-x86.zip
 /Jill-EX-release-x64.zip
@@ -29,3 +31,13 @@
 
 # Screenshot/render of the game with the original artwork.
 /hiscores_panel.png
+
+# Android build output, machine-specific SDK paths, staged assets and the APK
+# copied to the repository root for quick sideloading (see build_android.cmd).
+/port/android/.gradle/
+/port/android/build/
+/port/android/app/build/
+/port/android/app/.cxx/
+/port/android/local.properties
+/port/android/app/src/main/assets/
+/JillEX-android.apk

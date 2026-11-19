@@ -173,8 +173,9 @@ are written in stable tick order.
 
 ## Interpolation (`F5`)
 
-The world tick is always 18.2065 Hz; interpolation only changes how the 60 Hz
-presentation smooths between ticks.  `F5` cycles:
+The world tick is always 18.2065 Hz (1,193,182 / 65,536, the original 8253
+timer reload); interpolation only changes how the 60 Hz presentation smooths
+between ticks.  `F5` cycles:
 
 1. **SMOOTH (60 HZ, ALPHA BLEND)** - the engine's default high-framerate mode:
    sprites and the camera blend from the previous tick to the current one.
@@ -267,6 +268,11 @@ REM input, camera) and the live 128x64 tile map at the final tick
 tools\demo_studio\build\jill_demo_studio.exe --headless --mac jn1demo.mac ^
     --ticks 900 --trace run.csv --dump-map map.txt
 
+REM every live board object at the final tick (idx kind x y dx dy w h state
+REM p0f p11 p13 flags ttl)
+tools\demo_studio\build\jill_demo_studio.exe --headless --mac jn1demo.mac ^
+    --ticks 3574 --dump-objects objects.txt
+
 REM parse -> edit -> serialise -> parse, report record/byte counts
 tools\demo_studio\build\jill_demo_studio.exe --selftest --mac jn1demo.mac
 
@@ -277,6 +283,10 @@ tools\demo_studio\build\jill_demo_studio.exe --selftest --mac jn1demo.mac ^
 
 `--trace` and `--dump-map` are for comparing a playback against the original:
 they expose the exact per-tick state the engine used, not just the picture.
+`--dump-objects` does the same for the object array (tokens, enemies, exits)
+at the final tick, which is how the jn1 morph desync was traced: the 2.dem
+return token sits at `(208,928)` and only becomes touchable once the frog's
+new body fits at an aligned x.
 Macro playback always uses the original edge-triggered camera (the same one as
 the game's `--classic-camera`), because that camera also decides which
 off-screen objects update.  `--classic-camera` still selects it for a run with

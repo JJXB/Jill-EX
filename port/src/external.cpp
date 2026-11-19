@@ -5,17 +5,23 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <filesystem>
 #include <fstream>
 #include <map>
 #include <unordered_set>
 
+#if defined(JILL_XBOX)
+// Images are only decoded through stbi_load_from_memory() and NXDK's C library
+// has no fopen_s(), which stb_image selects under _MSC_VER.
+#define STBI_NO_STDIO
+#endif
 #define STB_IMAGE_IMPLEMENTATION
 #include "third_party/stb_image.h"
 
+#include "platform_fs.h"
+#include "platform_paths.h"
 #include "third_party/miniz.h"
 
-namespace fs = std::filesystem;
+namespace fs = jill_fs;
 
 namespace {
 
@@ -236,8 +242,16 @@ bool ExternalAssets::scan(const std::string& base, std::string& err) {
     std::error_code ec;
     fs::create_directories(base, ec);
     if (ec) {
-        err = "cannot create " + base + ": " + ec.message();
-        return false;
+        // A console root can be read-only (a burned disc).  Running without
+        // external packs is better than refusing to start.
+        std::error_code dir_ec;
+        if (!fs::is_directory(base, dir_ec)) {
+            jill_paths::trace("external: %s (no packs)", base.c_str());
+            autoload_root_.clear();
+            autoload_ = false;
+            manifest_ = IniFile{};
+            return true;
+        }
     }
     // `autoload` is never a selectable pack: its files are always mounted
     // underneath whichever pack is active.
@@ -450,7 +464,7 @@ bool ExternalAssets::read_folder(const std::string& rel,
     if (!p) {
         return false;
     }
-    std::ifstream in(fs::path(p->path) / rel, std::ios::binary);
+    std::ifstream in((fs::path(p->path) / rel).string(), std::ios::binary);
     if (!in) {
         return false;
     }
@@ -465,7 +479,7 @@ bool ExternalAssets::read_autoload(const std::string& rel,
     if (!autoload_) {
         return false;
     }
-    std::ifstream in(fs::path(autoload_root_) / rel, std::ios::binary);
+    std::ifstream in((fs::path(autoload_root_) / rel).string(), std::ios::binary);
     if (!in) {
         return false;
     }

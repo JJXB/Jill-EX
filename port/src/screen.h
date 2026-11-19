@@ -27,6 +27,19 @@ public:
 
     virtual void set_title(const char* title) = 0;
     virtual void shutdown() = 0;
+
+    // Map a normalized touch position (0..1 of the window) to the 320x200 game
+    // frame, honouring letterboxing and integer scaling.  Returns false when
+    // the touch is outside the frame or the backend has no window mapping.
+    // Used by the optional on-screen controls (Android); other targets keep the
+    // default no-op.
+    virtual bool touch_to_frame(float nx, float ny, int& x, int& y) {
+        (void)nx;
+        (void)ny;
+        (void)x;
+        (void)y;
+        return false;
+    }
 };
 
 // Implemented by screen_sdl.cpp (desktop / emulator fallback) and

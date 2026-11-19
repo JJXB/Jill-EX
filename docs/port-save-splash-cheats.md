@@ -204,8 +204,11 @@ to frames `0x5410..0x5413`, four ticks each.  Headless `--watch-tile 166` on
   (`[gameplay] center_fish_shot`, `--center-fish-shot`) spawns the bullet at
   `y + (fish_h - bullet_h)/2` instead of the fish's top edge.
 * **Morph alignment:** `1FAE:2E61` keeps the feet planted; the port now adds
-  `old_h - new_h` to `y` on every morph.  The 10-px frog and 16-px fish no
-  longer float after transforming from 32-px Jill.
+  `old_h - new_h` to `y` on every morph.  It also runs the original's fit test:
+  two `_cando(x & ~7, y, 1)` probes (feet-planted y first, then the unchanged
+  y); if both fail the morph is skipped for that touch.  The 10-px frog and
+  16-px fish no longer float after transforming from 32-px Jill, and the jn1
+  demo's frog/Jill swaps happen on the same tick as the original.
 * **Frog:** only update `p1b` when moving, set `state = 1` while airborne so the
   hop frames are actually used, and set `state = 0` on landing.  `_trymove` now
   returns blocked (0) when no horizontal movement was requested, which lets the
