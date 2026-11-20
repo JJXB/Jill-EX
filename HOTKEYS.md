@@ -20,25 +20,21 @@ Movement is held; jump and throw are edge-triggered.  Bindings are stored in
 
 ## Front-end menus
 
-`OPTIONS > MENUS` has six rows:
+Menus always use the classic frame and shape-7 window style.  `OPTIONS > MENUS`
+has these rows:
 
 | Row | Meaning |
 | --- | --- |
-| STYLE | MODERN or CLASSIC; CLASSIC uses the original frame and shape-7 window |
 | BORDER | THEME, CURRENT, an installed game's shape entry 7 window, or an external border |
-| THEME | Backdrop artwork: port, a game intro board, or a pack/autoload theme. In the CLASSIC menu a game theme also fills the 240x160 viewport with the intro-board section at tiles (113,54)..(127,63) |
-| BACKGROUND | THEME, or LIVE GAME to show the paused game behind a modern menu |
+| THEME | Backdrop artwork: port, a game intro board, or a pack/autoload theme. A game theme also fills the 240x160 viewport with the intro-board section at tiles (113,54)..(127,63) |
 | SPLASH | AUTO, OFF, or a specific game's start-up splash |
 | FONT | ORIGINAL, or any named external `fonts/<name>` set |
 
-The style is stored as `[menus] classic = 0/1`, the border source as
-`[menus] frame = -1/0/1/2...` (`-1` = THEME), the font as `[menus] font`, and
-the live background as `[menus] live_background = 0/1`.  They can be started
-with `--classic-menu` / `--modern-menu` / `--menu-frame N` / `--menu-font NAME`
-/ `--live-menu` / `--theme-menu`.  THEME selects the classic backdrop's shape 3
-frame; BORDER selects the shape 7 window independently unless it is set to
-THEME.  Border values above the installed-game count select named
-`borders/<name>` assets.
+The border source is stored as `[menus] frame = -1/0/1/2...` (`-1` = THEME) and
+the font as `[menus] font`.  They can be started with `--menu-frame N` /
+`--menu-font NAME`.  THEME selects the classic backdrop's shape 3 frame; BORDER
+selects the shape 7 window independently of it.  Border values above the
+installed-game count select named `borders/<name>` assets.
 
 `OPTIONS > HUD > PANEL` selects an external HUD panel matching the current
 CLASSIC/MODERN style (ORIGINAL, or any `hud/classic_<name>` /
@@ -59,13 +55,13 @@ the board.  Pack-supplied modern panels keep their own shadow/artwork.
 
 `OPTIONS > SOUND > MIDI OUT` selects a system MIDI output device (such as
 Microsoft GS Wavetable Synth or VirtualMIDISynth) for the CMF/MIDI tracks;
-`OFF (OPL2)` keeps the built-in OPL2 emulation.  The selection is stored as
+`OFF (OPL2)` keeps the software OPL2 emulation.  The selection is stored as
 `[audio] midi_device` (the device index from `--list-midi`; `-1` = OPL2) and
 can be started with `--midi N`.  MIDI music and sampled SFX can play together.
 
-`OPTIONS > SOUND > OPL CORE` selects the software synthesiser: `BUILTIN OPL2`
-is the original hand-written core, `NUKED OPL3` is the LGPL-2.1 Nuked core
-(optional, register-exact OPL3 in OPL2 mode).  It is stored as
+`OPTIONS > SOUND > OPL CORE` selects the software synthesiser: `NUKED OPL3`
+is the default cycle-accurate LGPL-2.1 core, and `FMOPL` is the older
+AdPlug YM3812 emulator kept for comparison.  It is stored as
 `[audio] opl_core` (`0`/`1`) and can be started with `--opl-core N`.  The
 choice does not affect SFX or MIDI output.
 The port maps each CMF/AdLib instrument to a General MIDI program using the
@@ -83,24 +79,37 @@ can be started with `--turtle`.
 whether the water moves.  It defaults to ON, is stored as
 `[gameplay] animated_water = 1`, and can be frozen with `--no-animated-water`.
 
-`OPTIONS > VIDEO > MESSAGE BOX` cycles three styles:
+`OPTIONS > GAMEPLAY > RESPAWN` chooses what death resets: `RESET TO CHECKPOINT`
+(the default, matching the base game's registered level status such as elevator
+and platform positions), `RESET TO LEVEL START`, or `NO RESET` (keep the live
+board).  It is stored as `[gameplay] respawn_mode` (`0`/`1`/`2`) and can be set
+with `--respawn N`.
 
-| Style | Behaviour |
-| --- | --- |
-| OFF | Plain text hints; the level-title card keeps its port frame |
-| MODERN | Port frame behind the bottom hint and the level-title box; full text pages become a centred translucent card |
-| CLASSIC | Original shape-7 windows: the 64x70 Jill portrait caption, the titled `Reminder` card, and the news-bulletin/text pages (patterned frame + blue plate) |
+`OPTIONS > GAMEPLAY > PHOENIX WATER DEATH` (default ON) makes the phoenix form
+die when it touches a waterfall / water body tile, as in the base game.  Turn
+it off to keep the old splash-only behaviour.  It is stored as
+`[gameplay] phoenix_water_death = 1` and `--no-phoenix-water-death` disables it.
 
-CLASSIC is stored as `[gameplay] message_box = 2` (`1` = MODERN, `0` = OFF) and
-can be selected with `--classic-message-box`.  The original portrait is shape
-entry 24, also exported as `portrait.png` by the extractor.  A fresh game shows
-the `Reminder` card after the first level-title caption.
+`OPTIONS > GAMEPLAY > THROW FROM VINES` (default OFF) lets Jill throw a knife or
+blade while climbing a vine/ladder.  The original only allows throws in states
+0 and 2.  It is stored as `[gameplay] throw_from_vines = 1` and can be enabled
+with `--throw-from-vines`.
 
-The front-end main menu is `START GAME`, `DEMO`, `RESTORE GAME`, `HIGH SCORES`,
-`OPTIONS`, `NOISEMAKER`, `QUIT`.  It always has `RESTORE GAME` and `HIGH
-SCORES`.  On `RESTORE GAME`, Left/Right changes the episode and the slots then
-show that game's saves.  `HIGH SCORES` also uses Left/Right to switch episodes.
-Each game/mod keeps its own table in `hiscore_<game id>.txt`.
+Message boxes always use the original classic style: the 64x70 Jill portrait
+caption, the titled `Reminder` card, and the news-bulletin/text pages
+(patterned shape-7 frame + blue plate).  The original portrait is shape entry
+24, also exported as `portrait.png` by the extractor.  A fresh game shows the
+`Reminder` card after the first level-title caption.
+
+The front-end main menu is `START GAME`, `DEMO`, `RESTORE GAME`, `STORY`,
+`HIGH SCORES`, `OPTIONS`, `NOISEMAKER`, `QUIT`.  It always has `RESTORE GAME`
+and `HIGH SCORES`.  On `RESTORE GAME`, Left/Right changes the episode and the
+slots then show that game's saves.  `HIGH SCORES` also uses Left/Right to switch
+episodes.  Each game/mod keeps its own table in `hiscore_<game id>.txt`.
+
+`STORY` opens the installed-game selector and then shows that game's
+intro-board story page at full screen, exactly like the original front-end
+page (`CHECKPT` page 0).  Esc/Enter closes it and returns to the selector.
 
 While a game is running the main menu also shows `QUIT TO MAIN MENU`, which
 returns to the front end and records the current score if it makes the table.
@@ -194,10 +203,10 @@ Cards also advance automatically after seven seconds.
 | --- | --- |
 | Up / Down | Scroll one line |
 | Page Up / Page Down | Scroll eight lines |
-| Left / Right | Previous / next text page |
 | Esc, Enter, F1 | Close the viewer |
 
-Gamepad: D-pad/stick scrolls, left/right changes pages, A/B/Start/Back close.
+Gamepad: D-pad/stick scrolls, A/B/Start/Back close.  The page itself cannot be
+switched: the original shows one page per help screen.
 
 ## Front-end SOUND TEST
 

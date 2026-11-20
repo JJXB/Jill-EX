@@ -115,14 +115,14 @@ copy /y "%ROOT%profiles\*.profile" "%DATADIR%\profiles\" >nul
 copy /y "%ROOT%profiles\*.pal" "%DATADIR%\profiles\" >nul
 copy /y "%PORT%\ps4\PS4-DATA-README.txt" "%DATADIR%\README.txt" >nul
 copy /y "%ROOT%DISCLAIMER.txt" "%DATADIR%\" >nul
-echo [data] JillEX-data.zip
-if exist "%OUT%\JillEX-data.zip" del /q "%OUT%\JillEX-data.zip"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -Path '%DATADIR%\*' -DestinationPath '%OUT%\JillEX-data.zip' -Force"
+echo [data] JillEX-PS4-Data.zip
+if exist "%OUT%\JillEX-PS4-Data.zip" del /q "%OUT%\JillEX-PS4-Data.zip"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -Path '%DATADIR%\*' -DestinationPath '%OUT%\JillEX-PS4-Data.zip' -Force"
 if errorlevel 1 goto :fail
 rmdir /s /q "%DATADIR%"
-copy /y "%OUT%\JillEX-data.zip" "%ROOT%" >nul
+copy /y "%OUT%\JillEX-PS4-Data.zip" "%ROOT%" >nul
 if errorlevel 1 goto :fail
-echo Built %OUT%\JillEX-data.zip (copy at %ROOT%JillEX-data.zip)
+echo Built %OUT%\JillEX-PS4-Data.zip (copy at %ROOT%JillEX-PS4-Data.zip)
 
 rem --- package (fake-signed .pkg) -------------------------------------------
 if "%BUILD_PKG%"=="0" (

@@ -308,7 +308,7 @@ Severity: H = blocks boot/play, M = breaks a feature, L = cosmetic/polish.
 | 28 | M | Occasional music slowdown. | SDL2's PS4 audio driver calls `sceAudioOutOutput(handle, NULL)` to wait for the previous buffer *before* mixing the next one, so mixing time is added to every playback period (worse on the slower console CPU). | PS4 uses a native `sceAudioOut` thread (`MusicPlayer::ps4_open`) that keeps two buffers: one plays while the other is mixed. `audio: mix ... ms / 42.7 ms budget` reports the loader. |
 | 29 | H | **Frame rate capped at 30 Hz on hardware.** Perf overlay: present ~25 ms, frame ~33 ms. | SDL2's PS4 video driver waits for the previous flip to finish before building the next frame (one frame per ~1.5 vblanks). | Native sceVideoOut backend with 3 buffers and two flips in flight (screen_videoout.cpp); enderer = auto prefers ideoout, then gl, then sdl. |
 | 30 | H | **CE-34878-0 when quitting.** Log reached startup: main loop exited, so the fault was in CRT/SDL teardown. | PS4 devices are already closed at that point and texit(SDL_Quit)/static destructors run afterwards. | PS4 main calls _exit(rc) after un_app(); videoout shutdown drains flip events before unregistering buffers. |
-| 31 | L | Companion data had to be collected by hand. | The pkg deliberately contains no game data. | build_ps4.cmd builds JillEX-data.zip (jill.ini, games/, profiles/, README). |
+| 31 | L | Companion data had to be collected by hand. | The pkg deliberately contains no game data. | build_ps4.cmd builds JillEX-PS4-Data.zip (jill.ini, games/, profiles/, README). |
 
 ## 9. Phases
 

@@ -62,7 +62,6 @@ add_library(main SHARED
     ${JILL_SRC}/screen_sdl.cpp
     ${JILL_SRC}/touch.cpp
     ${JILL_SRC}/cmf.cpp
-    ${JILL_SRC}/opl2.cpp
     ${JILL_SRC}/nuked_opl.cpp
     ${JILL_SRC}/fmopl_opl.cpp
     ${JILL_SRC}/music.cpp

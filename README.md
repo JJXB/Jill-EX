@@ -25,7 +25,8 @@ No game data or artwork is shipped on PC (PS4 Icon uses Jill portrait, see DISCL
 * Original Xbox (NXDK - tested on hardware at 480i/480p/720p)
 
 ### Modernization
-* Modern/Classic HUD and Menu Options with Customization
+* Modern/Classic HUD, Classic Menu with Customization
+* Front-end STORY viewer for every installed game/mod (original intro-board pages)
 * High framerate support - 60/90/120/144 Hz - Interpolation as a separate option - Logic still at 18.2065hz
 * Expanded Limits (Board Obj Cap = 384, KIND Limit = 138, Visible/Active Obj Cap = 384)
 * Windowed, exclusive fullscreen and borderless modes; resolution presets and 1x-6x window scaling.
@@ -42,7 +43,6 @@ No game data or artwork is shipped on PC (PS4 Icon uses Jill portrait, see DISCL
 * Keyboard and gamepad input with rebindable movement, jump and throw.
 * SDL Sound Output
 * Multiple Music Output options
-  * OPL2 FM 
   * Midi out (CMF to Midi)
   * Nuked OPL3
   * MAME fmopl
@@ -101,7 +101,7 @@ with, endorsed by or licensed by Epic Games.
   the original game.  It stays the property of its owner, is used only to
   identify this fan port, and is not covered by this project's licence.
 * `DISCLAIMER.txt` repeats the notice for binary/data distributions; the build
-  copies it next to the `.pkg` and into `JillEX-data.zip`.
+  copies it next to the `.pkg` and into `JillEX-PS4-Data.zip`.
 * Reverse-engineering scratch output (extracted executables, Ghidra projects,
   decompiled code, disassembly listings, string dumps and rendered game art)
   is excluded from the repository by `.gitignore` and must not be

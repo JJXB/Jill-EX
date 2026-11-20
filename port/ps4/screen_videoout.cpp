@@ -19,6 +19,11 @@
 namespace {
 
 constexpr int kBufferCount = 3;
+// One extra registered buffer that is never drawn into.  Flipping to it puts
+// the display on a buffer that is not part of the presentation group, which is
+// what lets the live group be unregistered on quit.
+constexpr int kBlankIndex = kBufferCount;
+constexpr int kTotalBuffers = kBufferCount + 1;
 
 class ScreenVideoOut final : public Screen {
 public:
@@ -60,7 +65,7 @@ public:
         buffer_size_ = pixel_count * 4;
         const size_t align = 1024 * 1024;
         const size_t aligned = (buffer_size_ + align - 1) & ~(align - 1);
-        total_size_ = aligned * kBufferCount;
+        total_size_ = aligned * kTotalBuffers;
         const size_t total = total_size_;
 
         int32_t rc = sceKernelAllocateDirectMemory(
@@ -85,13 +90,25 @@ public:
             buffers_[i] = map_ + aligned * static_cast<size_t>(i);
             ptrs[i] = buffers_[i];
         }
+        buffers_[kBlankIndex] =
+            map_ + aligned * static_cast<size_t>(kBlankIndex);
+        std::memset(buffers_[kBlankIndex], 0, buffer_size_);
 
         rc = sceVideoOutRegisterBuffers(handle_, 0, ptrs, kBufferCount,
                                         &attr_);
-        if (rc != 0) {
+        if (rc < 0) {
             jill_paths::trace("videoout: register failed 0x%x", rc);
             err = "sceVideoOutRegisterBuffers failed";
             return false;
+        }
+        group_ = rc;
+        void* blank = buffers_[kBlankIndex];
+        rc = sceVideoOutRegisterBuffers(handle_, kBlankIndex, &blank, 1, &attr_);
+        if (rc < 0) {
+            jill_paths::trace("videoout: blank register failed 0x%x", rc);
+            blank_group_ = -1;
+        } else {
+            blank_group_ = rc;
         }
 
         rc = sceKernelCreateEqueue(&flip_queue_, "jillFlip");
@@ -110,6 +127,9 @@ public:
         jill_paths::trace("videoout: ready (buffers=%d, %.1f MB each)",
                           kBufferCount,
                           static_cast<double>(buffer_size_) / (1024.0 * 1024.0));
+        // Lets a log tell this build from releases that unregistered the group
+        // while it was still being scanned out (the source of CE-34878-0).
+        jill_paths::trace("videoout: quit returns the display to the system");
         return true;
     }
 
@@ -190,14 +210,13 @@ public:
             return;
         }
         shut_down_ = true;
-        if (handle_ > 0) {
-            // Wait for every outstanding flip event (there can be at most
-            // kBufferCount queued).  Unregistering buffers still referenced by
-            // the display crashes the console on exit.
+        if (handle_ <= 0) {
+            return;
+        }
+        // Consume the flip events that are still queued so the display has
+        // finished everything submitted by present().
+        if (flip_queue_ != 0) {
             for (int i = 0; i < kBufferCount; ++i) {
-                if (flip_queue_ == 0) {
-                    break;
-                }
                 OrbisKernelEvent ev{};
                 int out = 0;
                 OrbisKernelUseconds timeout = 50000;  // 50 ms
@@ -206,31 +225,103 @@ public:
                     break;
                 }
             }
-            jill_paths::trace("videoout: flips drained (pending=%d)",
-                              sceVideoOutIsFlipPending(handle_));
-            // Attribute index 0 is the one used at register time.  A busy
-            // result (0x80290009) means the display still owns a buffer; it is
-            // not fatal as long as the port is closed before the memory goes.
-            const int32_t urc = sceVideoOutUnregisterBuffers(handle_, 0);
-            if (urc != 0) {
-                jill_paths::trace("videoout: unregister failed 0x%x", urc);
-            } else {
-                jill_paths::trace("videoout: buffers unregistered");
-            }
-            // Close the port *before* unmapping.  While it is open the display
-            // keeps scanning the buffers, and freeing their memory underneath
-            // it faults on retail hardware (CE-34878-0 on quit).
-            const int32_t crc = sceVideoOutClose(handle_);
-            handle_ = 0;
-            if (crc != 0) {
-                // The port is still live: unmapping now would leave the display
-                // reading freed memory, so hand the memory to process exit.
-                jill_paths::trace("videoout: close failed 0x%x", crc);
-                jill_paths::trace("videoout: leaving display memory mapped");
-                return;
-            }
-            jill_paths::trace("videoout: port closed");
         }
+        jill_paths::trace("videoout: flips drained (pending=%d)",
+                          sceVideoOutIsFlipPending(handle_));
+
+        int32_t urc = 0;
+        if (frame_id_ > 0) {
+            // Swap the display away from our buffers in two steps.  First the
+            // spare blank buffer, which lets the presentation group be
+            // unregistered; then the system's own blank frame (buffer index
+            // -1), so no memory of ours is being scanned when the process
+            // exits.  Skipping the second step is what leaves group 1 busy.
+            const auto flip_and_wait = [&](int index, int64_t arg,
+                                           const char* what) {
+                const int32_t rc = sceVideoOutSubmitFlip(
+                    handle_, index, ORBIS_VIDEO_OUT_FLIP_VSYNC, arg);
+                jill_paths::trace("videoout: %s flip rc=0x%x", what, rc);
+                if (rc != 0) {
+                    return false;
+                }
+                for (int i = 0; i < 20; ++i) {
+                    OrbisVideoOutFlipStatus st{};
+                    if (sceVideoOutGetFlipStatus(handle_, &st) == 0 &&
+                        st.flipArg == arg && st.numFlipPending == 0) {
+                        jill_paths::trace("videoout: %s frame presented", what);
+                        return true;
+                    }
+                    if (flip_queue_ == 0) {
+                        break;
+                    }
+                    OrbisKernelEvent ev{};
+                    int out = 0;
+                    OrbisKernelUseconds timeout = 50000;  // 50 ms
+                    if (sceKernelWaitEqueue(flip_queue_, &ev, 1, &out,
+                                            &timeout) != 0) {
+                        break;
+                    }
+                }
+                return false;
+            };
+
+            int64_t flip_arg = frame_id_ + 1;
+            const bool have_spare = blank_group_ >= 0;
+            if (have_spare) {
+                flip_and_wait(kBlankIndex, flip_arg, "spare");
+                ++flip_arg;
+            }
+            // Release the presentation group; it is no longer on screen.
+            if (group_ >= 0) {
+                urc = sceVideoOutUnregisterBuffers(handle_, group_);
+                jill_paths::trace("videoout: unregister group %d rc=0x%x",
+                                  group_, urc);
+            }
+            if (have_spare) {
+                // Hand the display back to the system before dropping the
+                // spare group, otherwise group 1 is still being scanned.
+                flip_and_wait(-1, flip_arg, "system blank");
+                const int32_t brc =
+                    sceVideoOutUnregisterBuffers(handle_, blank_group_);
+                jill_paths::trace("videoout: unregister group %d rc=0x%x",
+                                  blank_group_, brc);
+                if (urc == 0) {
+                    urc = brc;
+                }
+            } else {
+                flip_and_wait(-1, flip_arg, "system blank");
+            }
+        } else if (group_ >= 0) {
+            // No frame was ever presented, but the groups may still exist.
+            urc = sceVideoOutUnregisterBuffers(handle_, group_);
+            jill_paths::trace("videoout: unregister group %d rc=0x%x", group_,
+                              urc);
+            if (blank_group_ >= 0 && blank_group_ != group_) {
+                const int32_t brc =
+                    sceVideoOutUnregisterBuffers(handle_, blank_group_);
+                jill_paths::trace("videoout: unregister group %d rc=0x%x",
+                                  blank_group_, brc);
+                if (urc == 0) {
+                    urc = brc;
+                }
+            }
+        }
+
+        const int32_t crc = sceVideoOutClose(handle_);
+        handle_ = 0;
+        jill_paths::trace("videoout: close rc=0x%x", crc);
+
+        if (urc != 0 || crc != 0) {
+            // The display may still reference the buffers and the port may
+            // still be live.  Leaving the memory mapped and letting process
+            // exit reclaim it is the only safe option.
+            jill_paths::trace("videoout: leaving display memory to process exit");
+            return;
+        }
+        // Give the display pipeline a moment to drop references to the last
+        // scanned buffer before the memory goes back to the allocator.
+        sceKernelUsleep(100000);
+
         if (flip_queue_ != 0) {
             sceKernelDeleteEqueue(flip_queue_);
             flip_queue_ = 0;
@@ -244,7 +335,7 @@ public:
             phys_ = 0;
         }
         jill_paths::trace("videoout: shut down");
-        for (int i = 0; i < kBufferCount; ++i) {
+        for (int i = 0; i < kTotalBuffers; ++i) {
             buffers_[i] = nullptr;
         }
     }
@@ -258,7 +349,9 @@ private:
     OrbisVideoOutBufferAttribute attr_{};
     uint8_t* map_ = nullptr;
     off_t phys_ = 0;
-    uint8_t* buffers_[kBufferCount] = {};
+    uint8_t* buffers_[kTotalBuffers] = {};
+    int group_ = -1;
+    int blank_group_ = -1;
     OrbisKernelEqueue flip_queue_ = 0;
     int write_ = 0;
     int64_t frame_id_ = 0;

@@ -5,7 +5,6 @@
 #include "cmf.h"
 #include "fmopl_opl.h"
 #include "nuked_opl.h"
-#include "opl2.h"
 
 // CMF sequencer feeding an OPL2-compatible core.  Mirrors the original
 // `_sbfm_*` (SBFMDRV) driver: MIDI note on/off and program changes are
@@ -14,7 +13,7 @@
 // rhythm voices, and controller 0x67 switches between melody and rhythm mode.
 class Music {
 public:
-    enum class OplCore { Builtin, Nuked, Fmopl };
+    enum class OplCore { Nuked, Fmopl };
 
     explicit Music(int sample_rate = 48000);
 
@@ -64,10 +63,9 @@ private:
     int allocate_voice(int chan);
     void start_note(int chan, int note, int velocity);
 
-    Opl2 opl_;
     NukedOpl nuked_;
     FmOpl fmopl_;
-    OplCore core_ = OplCore::Builtin;
+    OplCore core_ = OplCore::Nuked;
 
     void reset_cores();
     void write_reg(uint8_t reg, uint8_t value);

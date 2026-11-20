@@ -3,7 +3,8 @@
 `jill_import.py` converts pictures and audio back into Jill/Onesimus data,
 and installs extractor output as an external asset pack.  It is a command-line
 tool; the extractor's **Convert** menu still covers the four original
-converters (shape frame, shape folder, VCL slot, VCL folder).
+converters (shape frame, shape folder, VCL slot, VCL folder).  For a GUI that
+edits sprites, tiles, levels, text and SFX, see `EDITOR_README.md`.
 
 ## Requirements
 
@@ -16,6 +17,7 @@ converters (shape frame, shape folder, VCL slot, VCL folder).
 ```
 py -3 jill_import.py sha-frame  jill1.sha 8 16 frame.png -o jill1_new.sha
 py -3 jill_import.py sha-folder jill1.sha sprites -o jill1_new.sha
+py -3 jill_import.py sha-entry-folder jill1.sha 8 frames -o jill1_new.sha
 py -3 jill_import.py sha-font   jill1.sha fonts/main.png -o jill1_new.sha
 py -3 jill_import.py sha-tile   jill1.sha jill.dma 0x9E tiles/158.png -o jill1_new.sha
 py -3 jill_import.py board-image 1.jn1 jill1.sha jill.dma board_previews/1.png -o 1_new.jn1
@@ -27,13 +29,28 @@ py -3 jill_import.py pack       extracted external/MyPack --game jill1 --name "M
 Without `-o`, the input file is overwritten.  Keep a backup or always write a
 new output while testing.
 
+Every input is validated before an output is written.  Missing files, bad
+archives/images/audio, malformed metadata, out-of-range indexes and data that
+would overflow a Jill archive all produce a short `error: ...` message and a
+non-zero exit code (1), not a traceback.  Set `JILL_IMPORT_DEBUG=1` to get the
+full traceback.  `sha-folder`/`vcl-folder` still allow a *missing* reference
+path to build a fresh archive; an existing path must be a readable archive.
+
 ## Commands
 
-### `sha-frame <sha> <entry> <frame> <image> [-o out.sha]`
+### `sha-frame <sha> <entry> <frame> <image> [-o out.sha] [--adapt-palette]`
 
 Replaces one frame of an existing shape entry.  The image is resized to the
 old frame size with nearest-neighbour sampling, quantised to the entry's
 palette, and stored as opcode 0.  Transparent pixels become index 0.
+
+`--dither` uses Floyd-Steinberg dithering against the existing palette instead
+of nearest-colour mapping.  `--adapt-palette` builds a new per-entry palette from the image instead of
+snapping to the old colours.  New colours are mapped to the nearest entry in
+the game's global VGA palette, and **every frame of that entry changes** (all
+tiles sharing a shape entry are recoloured).  It only applies to entries with
+fewer than 8 bits per pixel.  For tiles, use `tile-clone` below instead: it
+gives the tile its own palette without touching the other frames.
 
 ### `sha-folder <sha> <folder> [-o out.sha]`
 
@@ -51,6 +68,15 @@ folder are copied from the reference `.sha`.  The font entry (`2`) is skipped
 in the flat layout because its exported glyphs are white masks; use
 `sha-font` instead.
 
+### `sha-entry-folder <sha> <entry> <frames> [-o out.sha] [--adapt-palette]`
+
+Replaces **all frames of one shape entry** with a folder of images
+(`frame_0.png`, `frame_1.png`, ...; PNG/BMP/GIF/JPEG/TGA).  Files are sorted
+naturally by name, all scaled to the first image's size, and quantised to the
+entry palette.  The entry's bpp, flags, palette and trailing frame are kept,
+and other entries are copied from the reference `.sha`.  This is the CLI used
+by the editor's **Replace Animation from Folder** button.
+
 ### `sha-font <sha> <fonts/main.png> [-o out.sha] [--entry 2] [--fg 1]`
 
 Replaces the font entry from the extractor's 128-cell strip.  `font.json` in
@@ -58,12 +84,25 @@ the same directory supplies the cell and glyph sizes.  Opaque pixels become
 `--fg` (default index 1); transparent pixels become 0.  Indices 0 and 3 are
 the original font's transparent entries, so do not use 3 as the foreground.
 
-### `sha-tile <sha> <dma> <tile-id> <image> [-o out.sha]`
+### `sha-tile <sha> <dma> <tile-id> <image> [-o out.sha] [--dither]`
 
 Looks up the DMA record for `tile-id` (decimal or `0x` hex), finds the shape
 entry/frame it references, and replaces that frame.  The image is resized to
 the old tile frame (normally 16x16) and quantised to the entry palette.  Only
-the `.sha` is written; the `.dma` is unchanged.
+the `.sha` is written; the `.dma` is unchanged.  `--dither` approximates new
+colours with the existing palette (safe in the original game); the tile palette
+itself is never changed.
+
+### `tile-clone <sha> <dma> <tile-id> <image> [--out-sha out.sha] [--out-dma out.dma]`
+
+Like `sha-tile`, but for art with colours the tile's palette does not have.
+A shape entry's palette is shared by all its frames, so recolouring it in place
+changes every other tile using that entry.  This command copies the entry into
+a free shape slot, adapts the palette there and repoints the tile's DMA record
+at the copy.  **Both `.sha` and `.dma` are written**; install both beside the
+game data.  DMA shape references only allow entries 0..63, so the command fails
+if no free slot remains there.  Note: the original DOS game still renders the
+cloned layout incorrectly; use this only for ports/packs that support it.
 
 ### `board-image <board> <sha> <dma> <render.png> [-o out.jn1]`
 
@@ -172,6 +211,11 @@ Then mount it with `--pack MyPack` or **OPTIONS > ASSETS**.
 | Colours look wrong | The image may use colours outside the entry palette; check `palette.pal` |
 | `pack` prints size warnings | Fix the named file to the expected dimensions |
 | Imported font is blank | Use `sha-font` (not the flat sprite dump) and `--fg 1` |
+| `error: ... entry N points outside the file` | The reference archive is truncated or not a Jill archive |
+| `error: ... not a readable image` | The PNG/WAV is corrupt or in an unsupported format |
+
+`py -3 test_jill_import.py` runs self-contained import checks using synthetic
+archives (no game files required).
 
 See also `COMMANDLINE.md` for the extractor and port options, and
 `EXTRACTOR_README.md` for the viewer and export workflows.

@@ -610,6 +610,7 @@ bool ExternalAssets::load_image(const std::string& rel, ExternalImage& out,
 
 void ExternalVisuals::clear() {
     shapes_.clear();
+    player_.clear();
     boards_.clear();
     themes_.clear();
     theme_names_.clear();
@@ -630,6 +631,11 @@ void ExternalVisuals::clear() {
 const ShapeFrame* ExternalVisuals::shape(int id) const {
     auto it = shapes_.find(id);
     return it == shapes_.end() ? nullptr : &it->second;
+}
+
+const ShapeFrame* ExternalVisuals::player_shape(int index) const {
+    auto it = player_.find((8 << 8) | (index & 0xFF));
+    return it == player_.end() ? nullptr : &it->second;
 }
 
 const std::vector<uint8_t>* ExternalVisuals::board(
@@ -692,12 +698,10 @@ const HudLayout* ExternalVisuals::layout(const std::string& name) const {
 
 namespace {
 
-void add_kind_sheet(ExternalAssets& ext, ShapeBank& shapes,
-                    const ProfileDef& profile, const uint8_t palette[768],
-                    PaletteMap& pm, int kind, const std::string& rel,
-                    std::unordered_map<int, ShapeFrame>& out) {
-    const int tileset = profile.kind(kind).tileset;
-    const ShapeEntry* e = shapes.entry(tileset);
+void add_entry_sheet(ExternalAssets& ext, ShapeBank& shapes, int entry,
+                     const std::string& rel, const uint8_t palette[768],
+                     PaletteMap& pm, std::unordered_map<int, ShapeFrame>& out) {
+    const ShapeEntry* e = shapes.entry(entry);
     if (!e || e->frames.empty()) {
         return;
     }
@@ -711,7 +715,7 @@ void add_kind_sheet(ExternalAssets& ext, ShapeBank& shapes,
     if (n == 1) {
         ShapeFrame f;
         if (make_frame(img, e->frames[0].w, e->frames[0].h, palette, pm, f)) {
-            out[(tileset << 8) | 0] = std::move(f);
+            out[(entry << 8) | 0] = std::move(f);
         }
         return;
     }
@@ -734,9 +738,17 @@ void add_kind_sheet(ExternalAssets& ext, ShapeBank& shapes,
         ShapeFrame f;
         if (make_frame(sub, e->frames[static_cast<size_t>(i)].w,
                        e->frames[static_cast<size_t>(i)].h, palette, pm, f)) {
-            out[(tileset << 8) | (i & 0xFF)] = std::move(f);
+            out[(entry << 8) | (i & 0xFF)] = std::move(f);
         }
     }
+}
+
+void add_kind_sheet(ExternalAssets& ext, ShapeBank& shapes,
+                    const ProfileDef& profile, const uint8_t palette[768],
+                    PaletteMap& pm, int kind, const std::string& rel,
+                    std::unordered_map<int, ShapeFrame>& out) {
+    add_entry_sheet(ext, shapes, profile.kind(kind).tileset, rel, palette, pm,
+                    out);
 }
 
 void add_shape(ExternalAssets& ext, ShapeBank& shapes,
@@ -1302,7 +1314,9 @@ bool ExternalVisuals::build(const ExternalAssets& ext, ShapeBank& shapes,
         }
         const std::string stem = stem_of(rel);
         long a = 0, b = 0;
-        if (stem.rfind("kind", 0) == 0) {
+        if (stem == "player") {
+            add_entry_sheet(mutable_ext, shapes, 8, rel, palette, pm, player_);
+        } else if (stem.rfind("kind", 0) == 0) {
             const std::string num = stem.substr(4);
             const size_t us = num.find('_');
             if (parse_int(us == std::string::npos ? num : num.substr(0, us), a)) {
@@ -1328,7 +1342,9 @@ bool ExternalVisuals::build(const ExternalAssets& ext, ShapeBank& shapes,
         const std::string& key = kv.first;
         const std::string& rel = kv.second;
         long a = 0, b = 0;
-        if (key.rfind("shape", 0) == 0) {
+        if (key == "player") {
+            add_entry_sheet(mutable_ext, shapes, 8, rel, palette, pm, player_);
+        } else if (key.rfind("shape", 0) == 0) {
             const size_t first = key.find('_', 5);
             const size_t second =
                 first == std::string::npos ? std::string::npos
@@ -1547,7 +1563,7 @@ bool ExternalVisuals::build(const ExternalAssets& ext, ShapeBank& shapes,
 
     // Menu borders: a `borders/<name>.<ext>` 3x3 sheet, or individual
     // `borders/<name>/<1..9>.<ext>` frames.  They replace shape entry 7's
-    // nine-slice, so they work with the classic and modern menu styles.
+    // nine-slice used by the classic menu windows.
     for (const std::string& rel : ext.files("borders/")) {
         if (std::find(ExternalAssets::image_exts().begin(),
                       ExternalAssets::image_exts().end(),

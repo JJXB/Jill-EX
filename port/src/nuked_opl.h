@@ -3,10 +3,10 @@
 
 #include "third_party/opl3.h"
 
-// Wrapper around Nuked OPL3 (LGPL-2.1, see third_party/opl3.h) that exposes the
-// same small surface as the built-in Opl2 emulator.  Nuked runs in OPL2 mode
-// because the CMF driver only writes the low register bank; the stereo output
-// is averaged to the port's mono music bus.
+// Wrapper around Nuked OPL3 (LGPL-2.1, see third_party/opl3.h) that exposes a
+// small reset/write/generate surface for the CMF sequencer.  Nuked runs in
+// OPL2 mode because the CMF driver only writes the low register bank; the
+// stereo output is averaged to the port's mono music bus.
 class NukedOpl {
 public:
     explicit NukedOpl(int sample_rate = 48000);

@@ -90,7 +90,8 @@ void ps4_pad_poll(Ps4PadState& out) {
 
 void ps4_pad_shutdown() {
     if (g_handle > 0) {
-        scePadClose(g_handle);
+        const int32_t rc = scePadClose(g_handle);
         g_handle = -1;
+        jill_paths::trace("pad: close rc=0x%x", rc);
     }
 }

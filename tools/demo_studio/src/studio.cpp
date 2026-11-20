@@ -206,8 +206,6 @@ bool Studio::init(const StudioOptions& opt, std::string& err) {
         }
         opt_.fast_dialogs =
             ini.get_bool("gameplay", "fast_dialogs", opt_.fast_dialogs);
-        opt_.message_box =
-            ini.get_int("gameplay", "message_box", opt_.message_box);
         opt_.animated_water =
             ini.get_bool("gameplay", "animated_water", opt_.animated_water);
         opt_.retain_items =
@@ -412,7 +410,6 @@ bool Studio::select_game(int index, std::string& err) {
         }
     }
     fresh->set_fast_dialogs(opt_.fast_dialogs);
-    fresh->set_message_box(opt_.message_box);
     fresh->set_animated_water(opt_.animated_water);
     fresh->set_retain_items(opt_.retain_items);
     fresh->set_air_jump_buffer(opt_.air_jump_buffer);

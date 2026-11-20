@@ -176,10 +176,14 @@ public:
         return shapes_.empty() && boards_.empty() && !has_hud_classic_ &&
                !has_hud_modern_ && huds_.empty() && borders_.empty() &&
                fonts_.empty() && pages_.empty() && !has_portrait_ &&
-               layouts_.empty();
+               layouts_.empty() && player_.empty();
     }
 
     const ShapeFrame* shape(int id) const;
+    // Optional pack player sheet (`sprites/player.<ext>`), used by the
+    // "EXTERNAL PACK" Jill look.  Keyed by shape entry 8's frame index.
+    const ShapeFrame* player_shape(int index) const;
+    bool has_player() const { return !player_.empty(); }
     const std::vector<uint8_t>* board(const std::string& name) const;
     const std::vector<std::vector<uint8_t>>& themes() const { return themes_; }
     const std::vector<std::string>& theme_names() const { return theme_names_; }
@@ -215,6 +219,7 @@ public:
 
 private:
     std::unordered_map<int, ShapeFrame> shapes_;
+    std::unordered_map<int, ShapeFrame> player_;
     std::unordered_map<std::string, std::vector<uint8_t>> boards_;
     std::vector<std::vector<uint8_t>> themes_;
     std::vector<std::string> theme_names_;

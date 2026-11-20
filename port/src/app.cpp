@@ -882,7 +882,6 @@ bool apply_selection(Engine& engine, const std::vector<GameDef>& games,
     const int knives = engine.max_knives();
     const bool retain_items = engine.retain_items();
     const bool fast_dialogs = engine.fast_dialogs();
-    const int message_box = engine.message_box();
     const bool air_jump = engine.air_jump_buffer();
     const bool minimap = engine.minimap();
     const bool animated_water = engine.animated_water();
@@ -894,6 +893,9 @@ bool apply_selection(Engine& engine, const std::vector<GameDef>& games,
     const std::string font_name = engine.font_name();
     const int menu_border_ext = engine.menu_border_ext();
     const bool turtle = engine.turtle();
+    const int respawn_mode = engine.respawn_mode();
+    const bool phoenix_water = engine.phoenix_water_death();
+    const bool throw_vines = engine.throw_from_vines();
     std::string err;
     if (engine.game().id != g.id) {
         std::unique_ptr<Engine> fresh_storage(new Engine());
@@ -911,7 +913,6 @@ bool apply_selection(Engine& engine, const std::vector<GameDef>& games,
     engine.set_menu_border_ext(menu_border_ext);
     engine.set_turtle(turtle);
     engine.set_fast_dialogs(fast_dialogs);
-    engine.set_message_box(message_box);
     engine.set_hud_classic(hud);  // camera centre depends on the HUD style
     if (!engine.load_board(g.board(sel.board), err)) {
         std::fprintf(stderr, "load %s: %s\n", g.board(sel.board).c_str(),
@@ -931,10 +932,12 @@ bool apply_selection(Engine& engine, const std::vector<GameDef>& games,
     engine.set_max_knives(knives);
     engine.set_retain_items(retain_items);
     engine.set_fast_dialogs(fast_dialogs);
-    engine.set_message_box(message_box);
     engine.set_air_jump_buffer(air_jump);
     engine.set_minimap(minimap);
     engine.set_animated_water(animated_water);
+    engine.set_respawn_mode(respawn_mode);
+    engine.set_phoenix_water_death(phoenix_water);
+    engine.set_throw_from_vines(throw_vines);
     engine.set_center_fish_shot(center_fish);
     apply_player_look(engine, games, player_look, player_suit);
     apply_hud_frame(engine, games, hud_frame);
@@ -1169,6 +1172,8 @@ enum class MenuScreen {
     Episodes,
     DemoSelect,   // choose an installed game that ships attract demos
     DemoChoice,   // choose which recorded demo of that game to play
+    StorySelect,  // choose which installed game's story to read
+    Story,        // full-screen intro-board story page
     Options,
     Hud,
     Video,
@@ -1188,8 +1193,6 @@ enum class MenuScreen {
 
 struct Menu {
     MenuScreen screen = MenuScreen::Main;
-    bool classic = false;  // draw menus with the original frame/window art
-    bool live_background = false;  // modern menu over the live game screen
     int hud_frame = 0;     // classic HUD art source (0 = current game)
     std::string hud_panel;  // external HUD panel name ("" = default)
     std::string hud_layout;  // .hudlayout name ("" = original classic HUD)
@@ -1201,6 +1204,10 @@ struct Menu {
     int demo_game = -1;   // chosen game index (into `games`)
     int demo_game_sel = 0;  // row on the game selector
     int demo_sel = 0;     // which recorded demo of that game
+    int story_game = -1;  // chosen game index for the STORY viewer
+    int story_page = 0;   // current story page
+    int story_pages = 0;  // page count for the current story
+    int story_sel = 0;    // row on the story game selector
     int opt_sel = 0;
     int hud_sel = 0;
     int video_sel = 0;
@@ -1273,6 +1280,10 @@ int& menu_sel(Menu& m) {
             return m.demo_game_sel;
         case MenuScreen::DemoChoice:
             return m.demo_sel;
+        case MenuScreen::StorySelect:
+            return m.story_sel;
+        case MenuScreen::Story:
+            return m.story_page;
         case MenuScreen::Options:
             return m.opt_sel;
         case MenuScreen::Hud:
@@ -1472,14 +1483,6 @@ const char* filter_name(int filter) {
         case 1: return "SMOOTH";
         case 2: return "CRT";
         default: return "NONE";
-    }
-}
-
-const char* message_box_name(int style) {
-    switch (style) {
-        case 1: return "MODERN";
-        case 2: return "CLASSIC";
-        default: return "OFF";
     }
 }
 
@@ -1837,6 +1840,7 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                 v.push_back("START GAME");
                 v.push_back("DEMO");
                 v.push_back("RESTORE GAME");
+                v.push_back("STORY");
                 v.push_back("HIGH SCORES");
                 v.push_back("OPTIONS");
                 v.push_back("NOISEMAKER");
@@ -1883,6 +1887,16 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
             v.push_back("BACK");
             return v;
         }
+        case MenuScreen::StorySelect: {
+            std::vector<std::string> v;
+            for (const GameDef& g : games) {
+                v.push_back(upper_ascii(g.title.c_str()));
+            }
+            v.push_back("BACK");
+            return v;
+        }
+        case MenuScreen::Story:
+            return {};
         case MenuScreen::Options:
             return {"HUD", "VIDEO", "SOUND", "CHEATS", "CONTROLS", "MENUS",
                     "GAMEPLAY", "ASSETS", "BACK"};
@@ -1907,8 +1921,6 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                         (video.high_fps <= 0
                              ? "N/A (HIGH FRAMERATE OFF)"
                              : (video.interpolate ? "ON" : "OFF")),
-                    std::string("MESSAGE BOX: ") +
-                        message_box_name(engine.message_box()),
                     std::string("FILTER: ") + filter_name(video.filter),
                     std::string("FPS COUNTER: ") +
                         (video.fps_counter ? "ON" : "OFF"),
@@ -1925,10 +1937,7 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                         (m.pc_speaker ? "ON" : "OFF"),
                     std::string("MIDI OUT: ") + midi_device_label(audio),
                     std::string("OPL CORE: ") +
-                        (audio.opl_core() == 2
-                             ? "FMOPL"
-                             : audio.opl_core() == 1 ? "NUKED OPL3"
-                                                     : "BUILTIN OPL2"),
+                        (audio.opl_core() == 1 ? "FMOPL" : "NUKED OPL3"),
                     "SOUND TEST",
                     "BACK"};
         case MenuScreen::Hud:
@@ -1952,16 +1961,12 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                         ui_scale_name(engine.hud_font_scale()),
                     "BACK"};
         case MenuScreen::Menus:
-            return {std::string("STYLE: ") +
-                        (m.classic ? "CLASSIC" : "MODERN"),
-                    std::string("BORDER: ") +
+            return {std::string("BORDER: ") +
                         menu_border_name(m.menu_frame, games,
                                          engine.external_visuals()),
                     std::string("THEME: ") +
                         menu_theme_name(engine.menu_theme(), games,
                                         engine.external_visuals()),
-                    std::string("BACKGROUND: ") +
-                        (m.live_background ? "LIVE GAME" : "THEME"),
                     std::string("SPLASH: ") + splash_name(video.splash, games),
                     std::string("FONT: ") + font_name(m.menu_font),
                     std::string("SCALE: ") + ui_scale_name(m.menu_scale),
@@ -1988,7 +1993,7 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                         super_jump_name(engine.super_jump()),
                     "ADD KNIFE", "ADD KEY", "ADD GEM", "ADD BLADE",
                     "REFILL HEALTH",
-                    "BECOME JILL", "BECOME FROG", "BECOME BIRD",
+                    "BECOME JILL", "BECOME FROG", "BECOME PHOENIX",
                     "BECOME SPIDER", "BECOME FISH", "LEVEL SELECT", "BACK"};
         case MenuScreen::SaveGame: {
             std::vector<std::string> v;
@@ -2072,6 +2077,15 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                         (engine.animated_water() ? "ON" : "OFF"),
                     std::string("TURTLE MODE: ") +
                         (engine.turtle() ? "ON" : "OFF"),
+                    std::string("RESPAWN: ") +
+                        (engine.respawn_mode() == 1
+                             ? "RESET TO LEVEL START"
+                             : (engine.respawn_mode() == 2 ? "NO RESET"
+                                                           : "RESET TO CHECKPOINT")),
+                    std::string("PHOENIX WATER DEATH: ") +
+                        (engine.phoenix_water_death() ? "ON" : "OFF"),
+                    std::string("THROW FROM VINES: ") +
+                        (engine.throw_from_vines() ? "ON" : "OFF"),
                     "BACK"};
         case MenuScreen::SoundTest: {
             std::string set = "SET: ";
@@ -2144,6 +2158,16 @@ struct ThemeBackdrop {
     ThemeTile fill;
 };
 
+// Front-end STORY: board-page screens from a game's intro board.  Each page is
+// a full 320x200 render anchored on a CHECKPT whose p13 is the page number and
+// whose p1b links to the next page (0 = end).
+struct StoryViewer {
+    int built = -1;
+    std::vector<std::vector<uint8_t>> pages;
+    uint8_t palette[768] = {};
+    bool palette_ready = false;
+};
+
 // Start-up publisher/loading and Onesimus title cards.  The Jill loading card
 // uses each episode's own shape-7 window; the Onesimus cards rebuild the ARK
 // and title pages from the original strings with the game font.
@@ -2153,22 +2177,6 @@ struct SplashImage {
     uint8_t palette[768] = {};
     bool palette_ready = false;
 };
-
-std::string lower_ascii(std::string s) {
-    for (char& c : s) {
-        if (c >= 'A' && c <= 'Z') {
-            c = static_cast<char>(c - 'A' + 'a');
-        }
-    }
-    return s;
-}
-
-bool text_has_word(const std::string& text, const std::string& word) {
-    if (word.empty()) {
-        return false;
-    }
-    return lower_ascii(text).find(lower_ascii(word)) != std::string::npos;
-}
 
 void splash_text_6(Framebuffer& fb, Engine& engine, int y, uint8_t colour,
                    const char* s) {
@@ -2427,6 +2435,77 @@ void ensure_theme_backdrop(ThemeBackdrop& tb, int theme,
     }
 }
 
+// Build/cached the STORY pages for one installed game.  The original front end
+// scrolls the intro board to each CHECKPT page (p13) and follows p1b to the
+// next page; we render those exact 320x200 board regions with their text.
+bool ensure_story_pages(StoryViewer& sv, int game_index,
+                        const std::vector<GameDef>& games) {
+    if (game_index < 0 || game_index >= static_cast<int>(games.size())) {
+        return false;
+    }
+    if (sv.built == game_index) {
+        return !sv.pages.empty();
+    }
+    sv.built = game_index;
+    sv.pages.clear();
+    sv.palette_ready = false;
+    const GameDef& g = games[static_cast<size_t>(game_index)];
+    sv.palette_ready = load_palette(g.palette, sv.palette);
+    std::unique_ptr<Engine> tmp_storage(new Engine());
+    Engine& tmp = *tmp_storage;
+    std::string err;
+    if (!tmp.init(g, err)) {
+        std::fprintf(stderr, "story %s: %s\n", g.id.c_str(), err.c_str());
+        return false;
+    }
+    if (!tmp.load_board(g.intro_board, err)) {
+        std::fprintf(stderr, "story %s: %s\n", g.id.c_str(), err.c_str());
+        return false;
+    }
+    tmp.finish_dialogs();
+
+    int page_no = 0;
+    std::vector<int> seen;
+    for (int guard = 0; guard < 16; ++guard) {
+        const BoardObject* page = nullptr;
+        for (const BoardObject& o : tmp.objects()) {
+            if (o.kind == 12 && o.p13 == page_no) {
+                page = &o;
+                break;
+            }
+        }
+        if (!page) {
+            break;
+        }
+        Framebuffer fb;
+        tmp.render_at(fb, page->x, page->y, false);
+        sv.pages.push_back(std::move(fb.px));
+        const int next = page->p1b;
+        if (next <= 0 || next == 0xFFFF || next == page_no ||
+            std::find(seen.begin(), seen.end(), next) != seen.end()) {
+            break;
+        }
+        seen.push_back(page_no);
+        page_no = next;
+    }
+    if (sv.pages.empty()) {
+        // Mods without a p13=0 anchor: use the intro-board front-end panel
+        // directly.  Retail Jill 1/2/3 and Onesimus all have the anchor above.
+        Framebuffer fb;
+        tmp.render_at(fb, 576, 12, false);
+        sv.pages.push_back(std::move(fb.px));
+    }
+    return !sv.pages.empty();
+}
+
+void draw_story_page(Framebuffer& fb, const StoryViewer& sv, int page) {
+    if (page >= 0 && page < static_cast<int>(sv.pages.size())) {
+        fb.px = sv.pages[static_cast<size_t>(page)];
+    } else {
+        fb.fill_rect(0, 0, Framebuffer::W, Framebuffer::H, 0);
+    }
+}
+
 // Centred menu title with a percent-scaled cell, shrunk to fit the frame.
 void menu_title_pct(Framebuffer& fb, Engine& engine, int y, const char* s,
                     int pct) {
@@ -2562,7 +2641,7 @@ void draw_classic_menu(Framebuffer& fb, Engine& engine, const Menu& m,
     boxw = ((boxw + 7) / 8) * 8;
     int boxh = 20 * S / 100 + static_cast<int>(items.size()) * line_h +
                8 * S / 100;
-    if (boxh > 152 && S != 100 && !items.empty()) {
+    if (boxh > 152 && !items.empty()) {
         const int room = (152 - 28 * S / 100) /
                          static_cast<int>(items.size());
         line_h = std::max(4, std::min(line_h, room));
@@ -2624,10 +2703,9 @@ void draw_menu(Framebuffer& fb, Engine& engine, Menu& m, bool started,
     if (m.screen != MenuScreen::HighScores && current_game >= 0) {
         ensure_hiscores(m, games, current_game);
     }
-    // Keep the live game screen behind an in-game menu when requested (or when
-    // using the classic menu, which is an overlay).  A front-end menu still
-    // uses its theme backdrop.
-    const bool keep_game = started && (m.live_background || m.classic);
+    // The classic menu is an overlay: keep the live game screen behind an
+    // in-game menu.  A front-end menu still uses its theme backdrop.
+    const bool keep_game = started;
     if (!keep_game) {
         ensure_theme_backdrop(backdrop, engine.menu_theme(), games,
                               engine.external_visuals());
@@ -2653,6 +2731,8 @@ void draw_menu(Framebuffer& fb, Engine& engine, Menu& m, bool started,
         case MenuScreen::Episodes: sub = "SELECT EPISODE"; break;
         case MenuScreen::DemoSelect: sub = "SELECT EPISODE"; break;
         case MenuScreen::DemoChoice: sub = "SELECT DEMO"; break;
+        case MenuScreen::StorySelect: sub = "SELECT STORY"; break;
+        case MenuScreen::Story: sub = "STORY"; break;
         case MenuScreen::Options: sub = "OPTIONS"; break;
         case MenuScreen::Hud: sub = "HUD"; break;
         case MenuScreen::Video: sub = "VIDEO"; break;
@@ -2676,158 +2756,17 @@ void draw_menu(Framebuffer& fb, Engine& engine, Menu& m, bool started,
     if (sel < 0 || sel >= static_cast<int>(items.size())) {
         sel = 0;
     }
-    if (m.classic) {
-        draw_classic_menu(fb, engine, m, sub, items, sel, started,
-                          backdrop.classic_px);
-        return;
-    }
-    const int S = m.menu_scale;
-    int T = std::max(50, std::min(300, S * m.menu_font_scale / 100));
-    // Keep both titles above the panel even when the zoom moves the box down
-    // the screen as far as the fonts allow.
-    const int sub_y = std::min(28 * S / 100, 34);
-    const int title_y = std::max(0, std::min(16 * S / 100, sub_y - 12));
-    menu_title_pct(fb, engine, title_y,
-                   upper_ascii(engine.game().title.c_str()).c_str(), T);
-    menu_title_pct(fb, engine, sub_y, sub, T);
-    int maxlen = 0;
-    for (const std::string& item : items) {
-        maxlen = std::max(maxlen, static_cast<int>(item.size()));
-    }
-    const int padx = 34 * S / 100;
-    const int avail = Framebuffer::W - 12;
-    const int max_adv =
-        std::max(1, (avail - padx) / std::max(1, maxlen + 2));
-    T = std::max(50, T);
-    if (T > 100) {
-        T = std::min(T, std::max(100, max_adv * 100 / 6));
-    }
-    const int adv = Engine::text_advance_pct(6, T);
-    int cell_h = std::max(8, (8 * T + 99) / 100);
-    const int base_lh = items.size() > 12 ? 9 : 10;
-    // Whole-menu zoom: row spacing and panel padding grow with SCALE, and the
-    // text with SCALE x TEXT SIZE.  Everything shrinks back to fit 320x200 so
-    // the 14-row CHEATS screen still fits at 200%.
-    int line_h = std::max(cell_h, base_lh * S / 100);
-    int boxw = std::max(200 * S / 100, padx + (maxlen + 2) * adv);
-    boxw = std::min(boxw, avail);
-    constexpr int kMenuMaxH = 144;
-    int boxh = 8 * S / 100 + static_cast<int>(items.size()) * line_h +
-               6 * S / 100;
-    if (boxh > kMenuMaxH && !items.empty()) {
-        const int room = (kMenuMaxH - 14 * S / 100) /
-                         static_cast<int>(items.size());
-        if (cell_h > room) {
-            T = std::max(50, room * 100 / 8);
-            cell_h = std::max(4, (8 * T + 99) / 100);
-        }
-        line_h = std::max(cell_h, std::min(line_h, room));
-        boxh = 8 * S / 100 + static_cast<int>(items.size()) * line_h +
-               6 * S / 100;
-    }
-    // BORDER = THEME (-1) keeps the existing theme-tile border.  Any explicit
-    // game source uses that game's shape-7 nine-slice, independently of THEME.
-    const bool shape_border = m.menu_frame >= 0;
-    if (shape_border) {
-        boxw = ((boxw + 7) / 8) * 8;
-        boxh = ((boxh + 7) / 8) * 8;
-    }
-    int bx = (Framebuffer::W - boxw) / 2;
-    int by = 42;
-
-    // Themed menu frame: a ring of the theme board's blocking tile around the
-    // panel and its walkable tile inside, both dimmed 50% so the text reads.
-    const bool tiled = !shape_border && !keep_game &&
-                       engine.menu_theme() > 0 && backdrop.frame.ok;
-    const int ring = 8;
-    if (shape_border) {
-        engine.draw_menu_window(fb, bx, by, boxw, boxh);
-    } else if (tiled) {
-        auto blit_tile = [&](const ThemeTile& t, int x0, int y0, int x1,
-                             int y1, bool dim) {
-            if (!t.ok || t.w <= 0 || t.h <= 0) {
-                return;
-            }
-            for (int y = y0; y < y1; ++y) {
-                for (int x = x0; x < x1; ++x) {
-                    if (dim && ((x + y) & 1) == 0) {
-                        continue;
-                    }
-                    uint8_t c = t.px[static_cast<size_t>((y - y0) % t.h) * t.w +
-                                   (x - x0) % t.w];
-                    fb.put(x, y, c);
-                }
-            }
-        };
-        // Interior first, then the ring around the outside of the panel.
-        blit_tile(backdrop.fill, bx, by, bx + boxw, by + boxh, true);
-        blit_tile(backdrop.frame, bx - ring, by - ring, bx + boxw + ring,
-                  by, false);
-        blit_tile(backdrop.frame, bx - ring, by + boxh, bx + boxw + ring,
-                  by + boxh + ring, false);
-        blit_tile(backdrop.frame, bx - ring, by, bx, by + boxh, false);
-        blit_tile(backdrop.frame, bx + boxw, by, bx + boxw + ring, by + boxh,
-                  false);
-        fb.fill_rect(bx, by, boxw, 1, 0);
-        fb.fill_rect(bx, by + boxh - 1, boxw, 1, 0);
-    } else {
-        fb.fill_rect(bx, by, boxw, boxh, 8);
-        fb.fill_rect(bx + 1, by + 1, boxw - 2, boxh - 2, 0);
-    }
-    // The nine-slice window has an 8 px top border, unlike the 1 px plain
-    // frame / open tiled panel.  Start text below that border so it does not
-    // clip into the frame on themed or game borders.
-    const int text_top = shape_border ? by + 10 * S / 100 : by + 5 * S / 100;
-    for (int i = 0; i < static_cast<int>(items.size()); ++i) {
-        char line[96];
-        std::snprintf(line, sizeof(line), "%c %s", i == sel ? '>' : ' ',
-                      items[static_cast<size_t>(i)].c_str());
-        uint8_t colour = (i == sel && m.rebind_action >= 0) ? 6
-                          : (i == sel ? 7 : 5);
-        engine.draw_text_pct(fb, bx + 14 * S / 100, text_top + i * line_h,
-                             colour, line, T);
-    }
-    if (m.screen == MenuScreen::Hud) {
-        // Live background preview: the bar uses the chosen palette index.
-        int py = 150;
-        fb.fill_rect(10, py, Framebuffer::W - 20, 12,
-                     static_cast<uint8_t>(engine.hud_bg_colour()));
-        engine.draw_text(fb, 14, py + 3,
-                         static_cast<uint8_t>(engine.hud_text()),
-                         "LEVEL 1  [2] 3  HEALTH  SCORE 0");
-        // Health colour swatch: the label itself is drawn in that colour, or
-        // in the text colour while the original pip art is selected.
-        const int hc = engine.hud_health() < 0 ? engine.hud_text()
-                                               : engine.hud_health();
-        engine.draw_text(fb, 14, py + 16, static_cast<uint8_t>(hc),
-                         "HEALTH COLOUR");
-    }
-    const int footer_y = std::min(Framebuffer::H - 12, by + boxh + 2);
-    if (m.rebind_action >= 0) {
-        menu_title_pct(fb, engine, footer_y, "PRESS A KEY OR PAD BUTTON", T);
-        menu_title_pct(fb, engine,
-                       footer_y + std::max(9, (8 * T + 99) / 100 + 2),
-                       "ESC CANCELS", T);
-    } else if (m.screen == MenuScreen::SoundTest) {
-        menu_title_pct(fb, engine, footer_y,
-                       "LEFT/RIGHT CHANGE   ENTER PLAY   ESC BACK", T);
-    } else if (m.screen == MenuScreen::LoadGame ||
-               m.screen == MenuScreen::HighScores) {
-        menu_title_pct(fb, engine, footer_y,
-                       "LEFT/RIGHT EPISODE   UP/DOWN MOVE   ESC BACK", T);
-    } else if (m.screen == MenuScreen::Assets) {
-        menu_title_pct(fb, engine, footer_y,
-                       "UP/DOWN MOVE   ENTER MOUNT   ESC BACK", T);
-    } else {
-        menu_title_pct(fb, engine, footer_y,
-                       "UP/DOWN MOVE   ENTER SELECT   ESC BACK", T);
-    }
+    draw_classic_menu(fb, engine, m, sub, items, sel, started,
+                      backdrop.classic_px);
 }
 
 // Jill Select: find the chosen game's player colour table.  Look 0 keeps the
 // running episode; 1..N indexes the installed game list.
 std::string player_look_name(const std::vector<GameDef>& games, int look) {
-    if (look <= 0 || look > static_cast<int>(games.size())) {
+    if (look < 0) {
+        return "EXTERNAL PACK";
+    }
+    if (look == 0 || look > static_cast<int>(games.size())) {
         return "GAME DEFAULT";
     }
     return upper_ascii(games[static_cast<size_t>(look - 1)].title.c_str());
@@ -3119,7 +3058,6 @@ bool start_game(Engine& engine, const std::vector<GameDef>& games, int index,
     const int knives = engine.max_knives();
     const bool retain = engine.retain_items();
     const bool fast_dialogs = engine.fast_dialogs();
-    const int message_box = engine.message_box();
     const bool air_jump = engine.air_jump_buffer();
     const bool minimap = engine.minimap();
     const bool animated_water = engine.animated_water();
@@ -3131,6 +3069,9 @@ bool start_game(Engine& engine, const std::vector<GameDef>& games, int index,
     const std::string font_name = engine.font_name();
     const int menu_border_ext = engine.menu_border_ext();
     const bool turtle = engine.turtle();
+    const int respawn_mode = engine.respawn_mode();
+    const bool phoenix_water = engine.phoenix_water_death();
+    const bool throw_vines = engine.throw_from_vines();
     std::string err;
     if (engine.game().id != g.id) {
         std::unique_ptr<Engine> fresh_storage(new Engine());
@@ -3148,8 +3089,8 @@ bool start_game(Engine& engine, const std::vector<GameDef>& games, int index,
     engine.set_menu_border_ext(menu_border_ext);
     engine.set_turtle(turtle);
     engine.set_fast_dialogs(fast_dialogs);
-    engine.set_message_box(message_box);
     engine.set_hud_classic(hud);  // camera centre depends on the HUD style
+    engine.reset_gems();          // a new game starts with no gems
     const std::string& start_board = board.empty() ? g.first_board : board;
     if (!engine.load_board(start_board, err, level)) {
         std::fprintf(stderr, "load %s: %s\n", start_board.c_str(),
@@ -3180,10 +3121,12 @@ bool start_game(Engine& engine, const std::vector<GameDef>& games, int index,
     engine.set_max_knives(knives);
     engine.set_retain_items(retain);
     engine.set_fast_dialogs(fast_dialogs);
-    engine.set_message_box(message_box);
     engine.set_air_jump_buffer(air_jump);
     engine.set_minimap(minimap);
     engine.set_animated_water(animated_water);
+    engine.set_respawn_mode(respawn_mode);
+    engine.set_phoenix_water_death(phoenix_water);
+    engine.set_throw_from_vines(throw_vines);
     engine.set_center_fish_shot(center_fish);
     apply_player_look(engine, games, player_look, player_suit);
     apply_hud_frame(engine, games, hud_frame);
@@ -3409,6 +3352,7 @@ int run_sdl(const Options& opt, Engine& engine,
     Framebuffer stereo_left;
     Framebuffer stereo_right;
     ThemeBackdrop theme_backdrop;
+    StoryViewer story;
     SplashImage splash_image;
     LevelSelect select;
     EndingViewer ending;
@@ -3417,8 +3361,6 @@ int run_sdl(const Options& opt, Engine& engine,
     int noisemaker_cam_x = 0;
     int noisemaker_cam_y = 0;
     Menu menu;
-    menu.classic = opt.classic_menu;
-    menu.live_background = opt.live_menu_bg;
     menu.hud_frame = opt.hud_frame;
     menu.hud_panel = opt.hud_panel;
     menu.hud_layout = opt.hud_layout;
@@ -3550,8 +3492,7 @@ int run_sdl(const Options& opt, Engine& engine,
         play_music(engine.game().title_music);
     };
     bool running = true;
-    int page_axis_x = 0;  // text-page stick edge latches
-    int page_axis_y = 0;
+    int page_axis_y = 0;  // text-page stick edge latch
 #ifdef JILL_ANDROID
     touch::State touch_prev;
 #endif
@@ -3962,14 +3903,12 @@ int run_sdl(const Options& opt, Engine& engine,
                     menu.hud_frame, 1, static_cast<int>(games.size()));
                 apply_hud_frame(engine, games, menu.hud_frame);
             } else if (menu.screen == MenuScreen::Menus && sel == 0) {
-                menu.classic = !menu.classic;
-            } else if (menu.screen == MenuScreen::Menus && sel == 1) {
                 menu.menu_frame = menu_border_next(
                     menu.menu_frame, 1, static_cast<int>(games.size()),
                     external_border_count(engine));
                 apply_menu_frame(engine, games, menu.menu_frame,
                                  engine.menu_theme());
-            } else if (menu.screen == MenuScreen::Menus && sel == 2) {
+            } else if (menu.screen == MenuScreen::Menus && sel == 1) {
                 engine.set_menu_theme(menu_theme_next(
                     engine.menu_theme(), 1, games,
                     external_theme_count(engine)));
@@ -3978,11 +3917,9 @@ int run_sdl(const Options& opt, Engine& engine,
                     apply_menu_frame(engine, games, menu.menu_frame,
                                      engine.menu_theme());
                 }
-            } else if (menu.screen == MenuScreen::Menus && sel == 3) {
-                menu.live_background = !menu.live_background;
-            } else if (menu.screen == MenuScreen::Menus && sel == 4) {
+            } else if (menu.screen == MenuScreen::Menus && sel == 2) {
                 video.splash = splash_next(video.splash, 1, games);
-            } else if (menu.screen == MenuScreen::Menus && sel == 5) {
+            } else if (menu.screen == MenuScreen::Menus && sel == 3) {
                 menu.menu_font = font_name_next(
                     engine.font_name(), engine.external_visuals());
                 engine.set_font_name(menu.menu_font);
@@ -4001,9 +3938,13 @@ int run_sdl(const Options& opt, Engine& engine,
             } else if (menu.screen == MenuScreen::Enhancements && sel == 6) {
                 engine.set_center_fish_shot(!engine.center_fish_shot());
             } else if (menu.screen == MenuScreen::Enhancements && sel == 7) {
-                int look = engine.player_look() + 1;
-                if (look > static_cast<int>(games.size())) {
+                int look = engine.player_look();
+                if (look < 0) {
                     look = 0;
+                } else if (look >= static_cast<int>(games.size())) {
+                    look = -1;  // external pack
+                } else {
+                    ++look;
                 }
                 apply_player_look(engine, games, look, engine.player_suit());
             } else if (menu.screen == MenuScreen::Enhancements && sel == 8) {
@@ -4016,6 +3957,12 @@ int run_sdl(const Options& opt, Engine& engine,
                 engine.set_animated_water(!engine.animated_water());
             } else if (menu.screen == MenuScreen::Enhancements && sel == 10) {
                 engine.set_turtle(!engine.turtle());
+            } else if (menu.screen == MenuScreen::Enhancements && sel == 11) {
+                engine.set_respawn_mode((engine.respawn_mode() + 1) % 3);
+            } else if (menu.screen == MenuScreen::Enhancements && sel == 12) {
+                engine.set_phoenix_water_death(!engine.phoenix_water_death());
+            } else if (menu.screen == MenuScreen::Enhancements && sel == 13) {
+                engine.set_throw_from_vines(!engine.throw_from_vines());
             }
         };
         auto video_step = [&](int delta) {
@@ -4071,11 +4018,34 @@ int run_sdl(const Options& opt, Engine& engine,
                 restore_game_sfx();
                 noisemaker_engine.reset();
                 menu.screen = MenuScreen::Main;
-                menu.main_sel = game_started ? 6 : 5;
+                menu.main_sel = 6;
+            } else if (menu.screen == MenuScreen::Story) {
+                menu.screen = MenuScreen::StorySelect;
+                menu.story_page = 0;
+            } else if (menu.screen == MenuScreen::StorySelect) {
+                menu.screen = MenuScreen::Main;
+                menu.main_sel = 3;
             } else if (menu.screen == MenuScreen::DemoChoice) {
                 menu.screen = MenuScreen::DemoSelect;
             } else {
                 menu.screen = MenuScreen::Main;
+            }
+            return;
+        }
+        if (menu.screen == MenuScreen::Story) {
+            if (nav == 3) {
+                if (menu.story_page > 0) {
+                    --menu.story_page;
+                } else {
+                    menu.screen = MenuScreen::StorySelect;
+                }
+            } else if (nav == 4 || nav == 5) {
+                if (menu.story_page + 1 < menu.story_pages) {
+                    ++menu.story_page;
+                } else {
+                    menu.screen = MenuScreen::StorySelect;
+                    menu.story_page = 0;
+                }
             }
             return;
         }
@@ -4194,6 +4164,17 @@ int run_sdl(const Options& opt, Engine& engine,
                             break;
                         }
                         case 3: {
+                            menu.story_sel = 0;
+                            const int idx =
+                                game_index_for_id(games, engine.game().id);
+                            if (idx >= 0 &&
+                                idx < static_cast<int>(games.size())) {
+                                menu.story_sel = idx;
+                            }
+                            menu.screen = MenuScreen::StorySelect;
+                            break;
+                        }
+                        case 4: {
                             int idx = game_index_for_id(games, engine.game().id);
                             if (idx < 0) idx = 0;
                             ensure_hiscores(menu, games, idx);
@@ -4201,8 +4182,8 @@ int run_sdl(const Options& opt, Engine& engine,
                             menu.screen = MenuScreen::HighScores;
                             break;
                         }
-                        case 4: menu.screen = MenuScreen::Options; break;
-                        case 5: {
+                        case 5: menu.screen = MenuScreen::Options; break;
+                        case 6: {
                             int idx = game_index_for_id(games, engine.game().id);
                             if (idx < 0) idx = 0;
                             menu.nm_sel = idx;
@@ -4224,11 +4205,9 @@ int run_sdl(const Options& opt, Engine& engine,
                                    menu.menu_frame)) {
                         game_started = true;
                         menu.screen = MenuScreen::Closed;
-                        if (engine.message_box_classic()) {
-                            engine.show_message_box(
-                                "Reminder",
-                                "YOU CAN PRESS F1 AT ANY TIME TO GET HELP.");
-                        }
+                        engine.show_message_box(
+                            "Reminder",
+                            "YOU CAN PRESS F1 AT ANY TIME TO GET HELP.");
                     }
                 } else {
                     menu.screen = MenuScreen::Main;
@@ -4284,6 +4263,27 @@ int run_sdl(const Options& opt, Engine& engine,
                 }
                 break;
             }
+            case MenuScreen::StorySelect: {
+                const int count = static_cast<int>(games.size());
+                if (count <= 0) {
+                    menu.screen = MenuScreen::Main;
+                    break;
+                }
+                if (nav == 3 || nav == 4) {
+                    menu.story_sel =
+                        (menu.story_sel + (nav == 3 ? count - 1 : 1)) % count;
+                } else if (nav == 5 && sel < count) {
+                    menu.story_game = sel;
+                    menu.story_page = 0;
+                    menu.screen = MenuScreen::Story;
+                } else if (nav == 5) {
+                    menu.screen = MenuScreen::Main;
+                    menu.main_sel = 3;
+                }
+                break;
+            }
+            case MenuScreen::Story:
+                break;  // handled before list navigation
             case MenuScreen::NoisemakerSelect: {
                 const int count = static_cast<int>(games.size());
                 if (count <= 0) {
@@ -4341,7 +4341,7 @@ int run_sdl(const Options& opt, Engine& engine,
                 } else if (nav == 5 && sel == 8) {
                     menu.screen = MenuScreen::Options;
                 } else if (sel == 6 && (nav == 5 || nav == 3 || nav == 4)) {
-                    const int next = (music_player.opl_core() + 1) % 3;
+                    const int next = (music_player.opl_core() + 1) % 2;
                     music_player.set_opl_core(next);
                 } else if (sel == 5 && (nav == 3 || nav == 4 || nav == 5)) {
                     const int count =
@@ -4426,7 +4426,7 @@ int run_sdl(const Options& opt, Engine& engine,
                 break;
             }
             case MenuScreen::Video:
-                if (nav == 5 && sel == 8) {
+                if (nav == 5 && sel == 7) {
                     menu.screen = MenuScreen::Options;
                 } else if (sel == 4) {
                     if (nav == 5 || nav == 3 || nav == 4) {
@@ -4434,14 +4434,9 @@ int run_sdl(const Options& opt, Engine& engine,
                     }
                 } else if (sel == 5) {
                     if (nav == 5 || nav == 3 || nav == 4) {
-                        const int step = (nav == 3) ? 2 : 1;
-                        engine.set_message_box((engine.message_box() + step) % 3);
-                    }
-                } else if (sel == 6) {
-                    if (nav == 5 || nav == 3 || nav == 4) {
                         video.filter = filter_next(video.filter);
                     }
-                } else if (sel == 7) {
+                } else if (sel == 6) {
                     if (nav == 5 || nav == 3 || nav == 4) {
                         video.fps_counter = !video.fps_counter;
                     }
@@ -4471,18 +4466,16 @@ int run_sdl(const Options& opt, Engine& engine,
                 }
                 break;
             case MenuScreen::Menus:
-                if (nav == 5 && sel == 8) {
+                if (nav == 5 && sel == 6) {
                     menu.screen = MenuScreen::Options;
-                } else if (sel == 0 && (nav == 5 || nav == 3 || nav == 4)) {
-                    menu.classic = !menu.classic;
-                } else if (sel == 1 && (nav == 3 || nav == 4)) {
+                } else if (sel == 0 && (nav == 3 || nav == 4)) {
                     menu.menu_frame = menu_border_next(
                         menu.menu_frame, nav == 3 ? -1 : 1,
                         static_cast<int>(games.size()),
                         external_border_count(engine));
                     apply_menu_frame(engine, games, menu.menu_frame,
                                      engine.menu_theme());
-                } else if (sel == 2 && (nav == 3 || nav == 4)) {
+                } else if (sel == 1 && (nav == 3 || nav == 4)) {
                     engine.set_menu_theme(
                         menu_theme_next(engine.menu_theme(),
                                         nav == 3 ? -1 : 1, games,
@@ -4492,19 +4485,17 @@ int run_sdl(const Options& opt, Engine& engine,
                         apply_menu_frame(engine, games, menu.menu_frame,
                                          engine.menu_theme());
                     }
-                } else if (sel == 3 && (nav == 5 || nav == 3 || nav == 4)) {
-                    menu.live_background = !menu.live_background;
-                } else if (sel == 4 && (nav == 5 || nav == 3 || nav == 4)) {
+                } else if (sel == 2 && (nav == 5 || nav == 3 || nav == 4)) {
                     video.splash = splash_next(video.splash,
                                                nav == 3 ? -1 : 1, games);
-                } else if (sel == 5 && (nav == 3 || nav == 4)) {
+                } else if (sel == 3 && (nav == 3 || nav == 4)) {
                     menu.menu_font = font_name_next(
                         engine.font_name(), engine.external_visuals());
                     engine.set_font_name(menu.menu_font);
-                } else if (sel == 6 && (nav == 3 || nav == 4 || nav == 5)) {
+                } else if (sel == 4 && (nav == 3 || nav == 4 || nav == 5)) {
                     menu.menu_scale =
                         ui_scale_step(menu.menu_scale, nav == 3 ? -1 : 1);
-                } else if (sel == 7 && (nav == 3 || nav == 4 || nav == 5)) {
+                } else if (sel == 5 && (nav == 3 || nav == 4 || nav == 5)) {
                     menu.menu_font_scale = ui_scale_step(
                         menu.menu_font_scale, nav == 3 ? -1 : 1);
                 }
@@ -4826,13 +4817,6 @@ int run_sdl(const Options& opt, Engine& engine,
                             engine.scroll_text_page(dir * 2);
                         }
                     }
-                } else if (ev.caxis.axis == SDL_CONTROLLER_AXIS_LEFTX) {
-                    if (dir != page_axis_x) {
-                        page_axis_x = dir;
-                        if (dir != 0) {
-                            engine.cycle_text_page(dir);
-                        }
-                    }
                 }
             } else if (ev.type == SDL_JOYHATMOTION &&
                        engine.text_page_open()) {
@@ -4841,11 +4825,6 @@ int run_sdl(const Options& opt, Engine& engine,
                     engine.scroll_text_page(-1);
                 } else if (h & SDL_HAT_DOWN) {
                     engine.scroll_text_page(1);
-                }
-                if (h & SDL_HAT_LEFT) {
-                    engine.cycle_text_page(-1);
-                } else if (h & SDL_HAT_RIGHT) {
-                    engine.cycle_text_page(1);
                 }
             } else if (ev.type == SDL_CONTROLLERBUTTONDOWN) {
                 const int b = ev.cbutton.button;
@@ -4866,7 +4845,7 @@ int run_sdl(const Options& opt, Engine& engine,
                         restore_game_sfx();
                         noisemaker_engine.reset();
                         menu.screen = MenuScreen::Main;
-                        menu.main_sel = game_started ? 6 : 5;
+                        menu.main_sel = 6;
                     }
                     continue;
                 }
@@ -4877,12 +4856,6 @@ int run_sdl(const Options& opt, Engine& engine,
                             break;
                         case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
                             engine.scroll_text_page(1);
-                            break;
-                        case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
-                            engine.cycle_text_page(-1);
-                            break;
-                        case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
-                            engine.cycle_text_page(1);
                             break;
                         case SDL_CONTROLLER_BUTTON_A:
                         case SDL_CONTROLLER_BUTTON_B:
@@ -4944,8 +4917,6 @@ int run_sdl(const Options& opt, Engine& engine,
                         case SDL_SCANCODE_PAGEDOWN:
                             engine.scroll_text_page(8);
                             break;
-                        case SDL_SCANCODE_LEFT: engine.cycle_text_page(-1); break;
-                        case SDL_SCANCODE_RIGHT: engine.cycle_text_page(1); break;
                         case SDL_SCANCODE_ESCAPE:
                         case SDL_SCANCODE_RETURN:
                         case SDL_SCANCODE_KP_ENTER:
@@ -4971,7 +4942,7 @@ int run_sdl(const Options& opt, Engine& engine,
                         restore_game_sfx();
                         noisemaker_engine.reset();
                         menu.screen = MenuScreen::Main;
-                        menu.main_sel = game_started ? 6 : 5;
+                        menu.main_sel = 6;
                     } else {
                         const int slot = noisemaker_slot(sc);
                         if (slot > 0) {
@@ -5060,12 +5031,10 @@ int run_sdl(const Options& opt, Engine& engine,
                         // Heck to Play" (the original's PRESS F1 FOR HELP).
                         if (engine.text_pages_available()) {
                             engine.show_text_page(1);
-                        } else if (engine.message_box_classic()) {
+                        } else {
                             engine.show_message_box(
                                 "Reminder",
                                 "YOU CAN PRESS F1 AT ANY TIME TO GET HELP.");
-                        } else {
-                            std::printf("%s\n", engine.status().c_str());
                         }
                         break;
                     case SDL_SCANCODE_F2:
@@ -5130,7 +5099,6 @@ int run_sdl(const Options& opt, Engine& engine,
             keys = kNoKeys;  // PS4 has no keyboard subsystem
         }
         if (!engine.text_page_open()) {
-            page_axis_x = 0;
             page_axis_y = 0;
         }
         const bool paused = splash_active || select.open || menu_open(menu) ||
@@ -5317,7 +5285,14 @@ int run_sdl(const Options& opt, Engine& engine,
             if (select.open) {
                 draw_select(fb, engine, games, select);
             }
-            if (menu.screen == MenuScreen::Noisemaker && noisemaker_engine) {
+            if (menu.screen == MenuScreen::Story) {
+                ensure_story_pages(story, menu.story_game, games);
+                menu.story_pages = static_cast<int>(story.pages.size());
+                if (menu.story_page >= menu.story_pages) {
+                    menu.story_page = 0;
+                }
+                draw_story_page(fb, story, menu.story_page);
+            } else if (menu.screen == MenuScreen::Noisemaker && noisemaker_engine) {
                 noisemaker_engine->render_at(fb, noisemaker_cam_x,
                                              noisemaker_cam_y, false);
             } else if (menu_open(menu)) {
@@ -5338,9 +5313,12 @@ int run_sdl(const Options& opt, Engine& engine,
         }
         const uint64_t perf_after_draw = SDL_GetPerformanceCounter();
 #endif
-        const uint8_t* out_pal =
-            (splash_active && splash_image.palette_ready) ? splash_image.palette
-                                                          : palette;
+        const uint8_t* out_pal = palette;
+        if (menu.screen == MenuScreen::Story && story.palette_ready) {
+            out_pal = story.palette;
+        } else if (splash_active && splash_image.palette_ready) {
+            out_pal = splash_image.palette;
+        }
         for (size_t i = 0; i < fb.px.size(); ++i) {
             const uint8_t c = fb.px[i];
             const uint32_t r = out_pal[c * 3 + 0];
@@ -5578,17 +5556,18 @@ int run_sdl(const Options& opt, Engine& engine,
         ini.set_int("gameplay", "max_knives", engine.max_knives());
         ini.set_bool("gameplay", "retain_items", engine.retain_items());
         ini.set_bool("gameplay", "fast_dialogs", engine.fast_dialogs());
-        ini.set_int("gameplay", "message_box", engine.message_box());
         ini.set_bool("gameplay", "air_jump_buffer", engine.air_jump_buffer());
         ini.set_bool("gameplay", "minimap", engine.minimap());
         ini.set_bool("gameplay", "animated_water", engine.animated_water());
         ini.set_bool("gameplay", "center_fish_shot", engine.center_fish_shot());
+        ini.set_int("gameplay", "respawn_mode", engine.respawn_mode());
+        ini.set_bool("gameplay", "phoenix_water_death",
+                     engine.phoenix_water_death());
+        ini.set_bool("gameplay", "throw_from_vines", engine.throw_from_vines());
         ini.set_bool("gameplay", "turtle", engine.turtle());
         ini.set_int("gameplay", "player_look", engine.player_look());
         ini.set_int("gameplay", "player_suit", engine.player_suit());
         ini.set_int("gameplay", "menu_theme", engine.menu_theme());
-        ini.set_bool("menus", "classic", menu.classic);
-        ini.set_bool("menus", "live_background", menu.live_background);
         ini.set_int("menus", "frame", menu.menu_frame);
         ini.set("menus", "font", engine.font_name());
         ini.set_int("menus", "scale", menu.menu_scale);
@@ -5803,12 +5782,14 @@ int run_app(const Options& opt) {
     engine.set_max_knives(opt.max_knives);
     engine.set_retain_items(opt.retain_items);
     engine.set_fast_dialogs(opt.fast_dialogs);
-    engine.set_message_box(opt.message_box);
     engine.set_air_jump_buffer(opt.air_jump_buffer);
     engine.set_minimap(opt.minimap);
     engine.set_classic_camera(opt.classic_camera);
     engine.set_animated_water(opt.animated_water);
     engine.set_center_fish_shot(opt.center_fish_shot);
+    engine.set_respawn_mode(opt.respawn_mode);
+    engine.set_phoenix_water_death(opt.phoenix_water_death);
+    engine.set_throw_from_vines(opt.throw_from_vines);
     apply_player_look(engine, games, opt.player_look, opt.player_suit);
     engine.set_hud_bg(opt.hud_bg);
     engine.set_hud_text(opt.hud_text);

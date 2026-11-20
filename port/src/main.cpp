@@ -23,6 +23,9 @@
 #endif
 
 #ifdef JILL_PS4
+#include <fcntl.h>
+#include <signal.h>
+#include <ucontext.h>
 #include <unistd.h>
 #endif
 
@@ -104,6 +107,53 @@ void android_show_startup_error(int rc) {
 #endif
 
 namespace {
+
+#ifdef JILL_PS4
+// A fault after "startup: exiting" otherwise only reaches the console as
+// CE-34878-0 with no detail.  The handlers append the signal, fault address and
+// instruction/stack pointers to fatal.log through a raw descriptor, so the
+// crash can be attributed even though jill.log's FILE* may be mid-teardown.
+int g_fault_log_fd = -1;
+
+void ps4_fault_handler(int sig, siginfo_t* info, void* context) {
+    unsigned long long rip = 0;
+    unsigned long long rsp = 0;
+    ucontext_t* uc = static_cast<ucontext_t*>(context);
+    if (uc != nullptr) {
+        // x86_64: gregs[15] = rsp, gregs[16] = rip.
+        rip = static_cast<unsigned long long>(uc->uc_mcontext.gregs[16]);
+        rsp = static_cast<unsigned long long>(uc->uc_mcontext.gregs[15]);
+    }
+    char line[256];
+    const int len = std::snprintf(
+        line, sizeof(line), "fatal: signal %d addr=%p rip=0x%llx rsp=0x%llx\n",
+        sig, info != nullptr ? info->si_addr : nullptr, rip, rsp);
+    if (len > 0 && g_fault_log_fd >= 0) {
+        const ssize_t ignored =
+            ::write(g_fault_log_fd, line, static_cast<size_t>(len));
+        (void)ignored;
+    }
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+void install_ps4_fault_handlers() {
+    if (g_fault_log_fd < 0) {
+        const std::string path = jill_paths::resolve("fatal.log");
+        g_fault_log_fd =
+            ::open(path.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+    }
+    struct sigaction sa {};
+    sa.__sa_handler.__sa_sigaction = ps4_fault_handler;
+    sa.sa_flags = SA_SIGINFO | SA_RESETHAND;
+    sigemptyset(&sa.sa_mask);
+    const int signals[] = {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT,
+                           SIGSYS, SIGTRAP};
+    for (int sig : signals) {
+        sigaction(sig, &sa, nullptr);
+    }
+}
+#endif
 
 // Directory holding jill.ini (and therefore the relative games/, profiles/ and
 // asset folders).  Search the working directory first, then the executable's
@@ -248,9 +298,6 @@ void usage() {
         "  --invincible   debug: the player takes no damage (F5 toggles)\n"
         "  --super-jump N cheat: treat N feathers (item 9) as carried, 0..15\n"
         "  --menu-theme N front-end theme: 0 port, N = N-th game's intro board\n"
-        "  --classic-menu draw menus with the original frame/window art\n"
-        "  --live-menu    keep the live game visible behind the modern menu\n"
-        "  --theme-menu   use the theme backdrop for the modern menu (default)\n"
         "  --hud-frame N  classic HUD art: 0 current, N = N-th game's shapes\n"
         "  --hud-panel NAME  select an external HUD panel (empty = default)\n"
         "  --hud-layout NAME select a .hudlayout from a pack/autoload\n"
@@ -264,15 +311,15 @@ void usage() {
         "  --fire-crouched  enhancement default: fire while crouched\n"
         "  --retain-items   enhancement default: keep keys/weapons between levels\n"
         "  --fast-dialogs   enhancement default: 4 chars/tick for captions/pages\n"
-        "  --no-message-box plain messages, no frames\n"
-        "  --modern-message-box  modern framed message boxes (default)\n"
-        "  --classic-message-box original shape-7 caption/reminder windows\n"
         "  --air-jump-buffer keep the original hold-jump-through-a-fall buffer\n"
         "  --minimap      draw a small board overview in the lower-right corner\n"
         "  --no-animated-water  freeze the 4-frame water tiles\n"
         "  --center-fish-shot  centre the fish form's shot vertically\n"
+        "  --respawn N     death reset: 0 checkpoint (default), 1 level start, 2 none\n"
+        "  --no-phoenix-water-death  let the phoenix pass waterfalls (splash only)\n"
+        "  --throw-from-vines  allow throwing weapons while climbing vines\n"
         "  --turtle       Jill 3 TURTLE mode: run the game at half speed\n"
-        "  --jill-look N   0 = game default, N = installed game N (Jill Select)\n"
+        "  --jill-look N   player look: 0 default, N = game N, -1 = external pack\n"
         "  --jill-colour N 0 = look's colours, 1..8 = custom suit presets\n"
         "  --items N      debug: start with N knives in the inventory\n"
         "  --gems N       debug: start with N gems in the inventory\n"
@@ -292,8 +339,7 @@ void usage() {
         "  --sfx-volume N  effect volume 0-100 (default 80)\n"
         "  --pc-speaker   play effects as 1-bit PC-speaker square waves\n"
         "  --midi N       play music through system MIDI device N (-1 = OPL2)\n"
-        "  --opl-core N   music core: 0 = built-in OPL2, 1 = Nuked OPL3,\n"
-        "                 2 = fmopl (LGPL YM3812)\n"
+        "  --opl-core N   music core: 0 = Nuked OPL3 (default), 1 = fmopl\n"
         "  --list-midi    print the system MIDI output devices and exit\n"
         "  --music-file NAME track for --dump-music (default: the game title track)\n"
         "  --music-seconds N seconds to render with --dump-music (default 10)\n"
@@ -362,6 +408,11 @@ int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IOLBF, 0);
     std::setvbuf(stderr, nullptr, _IONBF, 0);
     jill_paths::trace("startup: log ready");
+#if defined(JILL_PS4)
+    // Turns a post-exit CE-34878-0 into a fatal.log line with the fault PC.
+    install_ps4_fault_handlers();
+    jill_paths::trace("startup: quit diag 4 (system blank before exit)");
+#endif
     // std::set_terminate lives in NXDK's libxboxrt EH support, which pulls in
     // the MSVC exception machinery the Xbox build does not link (-fno-exceptions).
     std::set_terminate([] {
@@ -447,8 +498,6 @@ int main(int argc, char** argv) {
                                         opt.retain_items);
         opt.fast_dialogs = ini.get_bool("gameplay", "fast_dialogs",
                                         opt.fast_dialogs);
-        opt.message_box = ini.get_int("gameplay", "message_box",
-                                      opt.message_box);
         opt.air_jump_buffer = ini.get_bool("gameplay", "air_jump_buffer",
                                            opt.air_jump_buffer);
         opt.minimap = ini.get_bool("gameplay", "minimap", opt.minimap);
@@ -456,14 +505,17 @@ int main(int argc, char** argv) {
                                           opt.animated_water);
         opt.center_fish_shot = ini.get_bool("gameplay", "center_fish_shot",
                                             opt.center_fish_shot);
+        opt.respawn_mode =
+            ini.get_int("gameplay", "respawn_mode", opt.respawn_mode);
+        opt.phoenix_water_death = ini.get_bool(
+            "gameplay", "phoenix_water_death", opt.phoenix_water_death);
+        opt.throw_from_vines = ini.get_bool("gameplay", "throw_from_vines",
+                                            opt.throw_from_vines);
         opt.turtle = ini.get_bool("gameplay", "turtle", opt.turtle);
         opt.player_look = ini.get_int("gameplay", "player_look", opt.player_look);
         opt.player_suit = ini.get_int("gameplay", "player_suit", opt.player_suit);
         opt.data_paths = ini.section("paths");
         opt.menu_theme = ini.get_int("gameplay", "menu_theme", opt.menu_theme);
-        opt.classic_menu = ini.get_bool("menus", "classic", opt.classic_menu);
-        opt.live_menu_bg =
-            ini.get_bool("menus", "live_background", opt.live_menu_bg);
     }
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -590,14 +642,6 @@ int main(int argc, char** argv) {
         } else if (a == "--menu-theme") {
             int n = std::atoi(value("--menu-theme"));
             opt.menu_theme = (n < 0) ? 0 : (n > 3 ? 3 : n);
-        } else if (a == "--classic-menu") {
-            opt.classic_menu = true;
-        } else if (a == "--modern-menu") {
-            opt.classic_menu = false;
-        } else if (a == "--live-menu") {
-            opt.live_menu_bg = true;
-        } else if (a == "--theme-menu") {
-            opt.live_menu_bg = false;
         } else if (a == "--hud-frame") {
             int n = std::atoi(value("--hud-frame"));
             opt.hud_frame = (n < 0) ? 0 : (n > 16 ? 16 : n);
@@ -625,12 +669,6 @@ int main(int argc, char** argv) {
             opt.retain_items = true;
         } else if (a == "--fast-dialogs") {
             opt.fast_dialogs = true;
-        } else if (a == "--no-message-box") {
-            opt.message_box = 0;
-        } else if (a == "--modern-message-box") {
-            opt.message_box = 1;
-        } else if (a == "--classic-message-box") {
-            opt.message_box = 2;
         } else if (a == "--air-jump-buffer") {
             opt.air_jump_buffer = true;
         } else if (a == "--minimap") {
@@ -639,6 +677,12 @@ int main(int argc, char** argv) {
             opt.animated_water = false;
         } else if (a == "--center-fish-shot") {
             opt.center_fish_shot = true;
+        } else if (a == "--respawn") {
+            opt.respawn_mode = std::atoi(value("--respawn"));
+        } else if (a == "--no-phoenix-water-death") {
+            opt.phoenix_water_death = false;
+        } else if (a == "--throw-from-vines") {
+            opt.throw_from_vines = true;
         } else if (a == "--turtle") {
             opt.turtle = true;
         } else if (a == "--jill-look") {
@@ -700,8 +744,8 @@ int main(int argc, char** argv) {
             opt.opl_core = std::atoi(value("--opl-core"));
             if (opt.opl_core < 0) {
                 opt.opl_core = 0;
-            } else if (opt.opl_core > 2) {
-                opt.opl_core = 2;
+            } else if (opt.opl_core > 1) {
+                opt.opl_core = 1;
             }
         } else if (a == "--list-midi") {
             opt.list_midi = true;
@@ -790,6 +834,10 @@ int main(int argc, char** argv) {
     // (CE-34878-0).  Terminate the process directly instead.
     jill_paths::trace("startup: exiting (rc=%d)", rc);
     _exit(rc);
+    // _exit must not return.  If it does, the loader's exit binding is broken;
+    // log it through the signal handler instead of falling into the CRT.
+    jill_paths::trace("startup: _exit returned rc=%d (unexpected)", rc);
+    std::abort();
 #elif defined(JILL_ANDROID)
     jill_paths::trace("startup: SDL_main returning rc=%d", rc);
     if (rc != 0) {

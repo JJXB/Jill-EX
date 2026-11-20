@@ -179,7 +179,7 @@ ES/EGL) and `libScePrecompiledShaders.sprx` (the `texmap` shaders) from the
 console firmware at runtime.  No Sony code is stored in this repository.
 
 FluidSynth is **not** used by this project.  It is LGPL-2.1-or-later and depends
-on GLib; the PS4 plan keeps the built-in OPL2/CMF synthesiser instead.  If a
+on GLib; the PS4 plan keeps the OPL2/CMF synthesiser instead.  If a
 General MIDI option is added later it should use an MIT-licensed synth
 (TinySoundFont) with a user-supplied SoundFont.
 
@@ -195,13 +195,13 @@ are not covered by its licence.  Distributing a built `.pkg` therefore also
 distributes those modules.  Build from source, or use the loose `eboot.bin`
 with a loader, if that is not acceptable.
 
-### Nuked OPL3 (optional music core)
+### Nuked OPL3 (default music core)
 
 `port/src/third_party/opl3.c` and `opl3.h` are Nuked OPL3 1.8 by Nuke.YKT,
 licensed under the **GNU Lesser General Public License 2.1** (or later).  The
 source headers carry the full notice; the copy is unmodified except for being
-compiled into this project.  The built-in OPL2 core remains the default; the
-Nuked core is selected with `OPTIONS > SOUND > OPL CORE` or `--opl-core 1`.
+compiled into this project.  Nuked is the default core; fmopl remains
+selectable with `OPTIONS > SOUND > OPL CORE` or `--opl-core 1`.
 Because the LGPL component is statically linked, the component's source and
 this project's source are both shipped so the library can be modified and the
 application relinked.  The PolyForm Noncommercial license continues to cover

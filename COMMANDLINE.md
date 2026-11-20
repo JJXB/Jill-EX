@@ -56,19 +56,12 @@ run.cmd [options]
 | `--hud` | Start with the CLASSIC HUD (F2 toggles) |
 | `--no-portrait` | Hide the character portrait beside level-title dialogs |
 | `--portrait` | Show the portrait (default) |
-| `--classic-menu` | Draw menus with the original frame/window art |
-| `--modern-menu` | Use the default modern menu layout |
-| `--live-menu` | Keep the live game screen behind the modern menu |
-| `--theme-menu` | Use the theme backdrop behind the modern menu (default) |
 | `--menu-frame N` | Menu border source: -1 = THEME, 0 = current game, N = installed game N, above the game list = external border |
 | `--hud-frame N` | Classic HUD frame source: 0 = current game, N = installed game N |
 | `--hud-bg N` | HUD background palette index, `suit` or `vibrant` |
 | `--hud-text N` | HUD label colour palette index (default 7) |
 | `--hud-health N` | Health colour 0..15, or `original` |
 | `--minimap` | Draw the board overview in the lower-right corner |
-| `--no-message-box` | Plain messages, no frames (`[gameplay] message_box = 0`) |
-| `--modern-message-box` | Modern framed message boxes (default, `= 1`) |
-| `--classic-message-box` | Original shape-7 caption/portrait and `Reminder` windows (`= 2`) |
 
 ### Gameplay and enhancements
 
@@ -79,10 +72,13 @@ run.cmd [options]
 | `--fast-dialogs` | Four characters per tick for captions/pages |
 | `--air-jump-buffer` | Keep the original hold-jump-through-a-fall buffer |
 | `--center-fish-shot` | Centre the fish form's shot vertically |
+| `--respawn N` | Death reset: `0` checkpoint (default), `1` level start, `2` none |
+| `--no-phoenix-water-death` | Phoenix passes waterfalls (splash only) instead of dying |
+| `--throw-from-vines` | Allow throwing weapons while climbing vines/ladders |
 | `--no-animated-water` | Freeze the four-frame water tiles (`[gameplay] animated_water = 0`) |
 | `--turtle` | Jill 3-style TURTLE mode: half-speed game logic |
 | `--max-knives N` | Knife cap: 3 or 5 |
-| `--jill-look N` | `0` = game default, `N` = installed game N (Jill Select) |
+| `--jill-look N` | `0` = game default, `N` = installed game N (Jill Select), `-1` = external pack player sheet |
 | `--jill-colour N` | `0` = look colours, 1..8 = custom suit presets |
 
 ### Audio
@@ -95,7 +91,7 @@ run.cmd [options]
 | `--sfx-volume N` | Effect volume 0..100 (default 80) |
 | `--pc-speaker` | Play effects as 1-bit PC-speaker square waves |
 | `--midi N` | Play CMF music through system MIDI output device N (`-1` = OPL2) |
-| `--opl-core N` | Music core: `0` = built-in OPL2, `1` = Nuked OPL3 |
+| `--opl-core N` | Music core: `0` = Nuked OPL3 (default), `1` = fmopl |
 | `--list-midi` | Print the system MIDI output devices and exit |
 | `--audio-check` | Open the device, play 1.5 s and report format/levels |
 

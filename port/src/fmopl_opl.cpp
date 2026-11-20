@@ -18,7 +18,7 @@ void FmOplDeleter::operator()(fm_opl_f* chip) const {
 // identical to the original `_sbfm_*` driver.
 namespace {
 constexpr int kOplClock = 3579545;
-constexpr float kGain = 0.70f / 32768.0f;  // match the built-in OPL2 level
+constexpr float kGain = 0.70f / 32768.0f;  // match the Nuked OPL3 level
 }  // namespace
 
 FmOpl::FmOpl(int sample_rate) : rate_(sample_rate > 0 ? sample_rate : 48000) {

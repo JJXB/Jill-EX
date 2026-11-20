@@ -9,7 +9,8 @@ mixed as unsigned 8-bit PCM.
 
 Files:
 
-* `port/src/opl2.h`, `port/src/opl2.cpp` - YM3812 core
+* `port/src/nuked_opl.h`, `port/src/nuked_opl.cpp` - default Nuked OPL3 core
+* `port/src/fmopl_opl.h`, `port/src/fmopl_opl.cpp` - optional fmopl core
 * `port/src/cmf.h`, `port/src/cmf.cpp` - CMF parser
 * `port/src/music.h`, `port/src/music.cpp` - sequencer (MIDI to OPL)
 * `port/src/midi.h`, `port/src/midi.cpp` - system MIDI output (WinMM)
@@ -112,53 +113,45 @@ operator, its carrier scaling byte (`instrument[3]`) for velocity, and the
 `0xBD` key bits, exactly like the chip; the connection register is forced
 additive (`instrument[10] | 1`).
 
-F-numbers are derived from the chip's native 49,716 Hz for Nuked/fmopl and from
-the output rate for the built-in core, so all three cores play at the same
-pitch.  The original loader divides 1,193,180 by the CMF header's ticks/sec
-(`+0x0C`) and passes the result to `_sbfm_song_speed`, so the header tempo is
-authoritative.
+F-numbers are derived from the chip's native 49,716 Hz, so both cores play at
+the same pitch.  The original loader divides 1,193,180 by the CMF header's
+ticks/sec (`+0x0C`) and passes the result to `_sbfm_song_speed`, so the header
+tempo is authoritative.
 
-## OPL2 core
+## OPL2 register model
 
-The core accepts the normal chip register map (`0x20` am/vib/eg/ksr/mult,
+Both cores accept the normal chip register map (`0x20` am/vib/eg/ksr/mult,
 `0x40` ksl/tl, `0x60` attack/decay, `0x80` sustain/release, `0xA0`/`0xB0`
 frequency and key, `0xC0` feedback/connection, `0xE0` waveform, `0xBD` rhythm
-and depth) and renders 9 two-operator channels:
+and depth) and render 9 two-operator channels:
 
 * 4 waveforms (sine, half sine, absolute sine, pulse sine)
 * ADSR envelopes with key scaling, sustain level and the sustaining-tone bit
-  (EG-type 1 holds at the sustain level; EG-type 0 keeps falling at the
-  release rate)
 * feedback and FM / additive connection
-* vibrato (7 or 14 cents) and tremolo (1 or 4.8 dB)
+* vibrato and tremolo
 * rhythm mode with bass drum, snare, tom, top cymbal and hi-hat
 
-The numeric model is tuned by ear against the shipped tracks; it is not
-cycle-exact and does not emulate the chip's log-sine quantisation.  Envelope
-times follow the OPL rate halving rule (rate 15 about 0.2 ms, rate 0 about
-6 s), which is close enough for the original instrument banks. **[inferred]**
+Nuked OPL3 is the default because it is cycle-accurate and cheaper than the
+old in-tree model.  fmopl remains selectable for comparison. **[inferred]**
 
 ## Selectable synthesis cores
 
-`Music` can drive three register-compatible cores; the CMF sequencer and the
-MIDI-to-OPL translation are identical for all of them:
+`Music` can drive two register-compatible cores; the CMF sequencer and the
+MIDI-to-OPL translation are identical for both:
 
 | `opl_core` | Core | Source | Licence |
 | --- | --- | --- | --- |
-| 0 | `BUILTIN OPL2` | `src/opl2.cpp` | project licence |
-| 1 | `NUKED OPL3` | `src/third_party/opl3.c` (OPL2 mode) | LGPL-2.1 |
-| 2 | `FMOPL` | `src/third_party/fmopl.c` | LGPL-2.1 |
+| 0 (default) | `NUKED OPL3` | `src/third_party/opl3.c` (OPL2 mode) | LGPL-2.1 |
+| 1 | `FMOPL` | `src/third_party/fmopl.c` | LGPL-2.1 |
 
-Select with **OPTIONS > SOUND > OPL CORE** (cycles through the three),
-`[audio] opl_core = 0|1|2` in `jill.ini`, or `--opl-core 0|1|2`.
-`--dump-music` uses the same switch for offline A/B comparison.  All three are
-gain-matched to the built-in core, so switching does not jump in volume.
-Changing the core restarts the current track so the new core rebuilds its
-register state.  The selection survives both exits and restarts: the audio
-device rebuilds its sequencer at the negotiated rate
-(`MusicPlayer::rebuild_at()`), which keeps the chosen core instead of falling
-back to the built-in one.  See `THIRD_PARTY_NOTICES.md` for the LGPL
-obligations.
+Select with **OPTIONS > SOUND > OPL CORE** (cycles through the two),
+`[audio] opl_core = 0|1` in `jill.ini`, or `--opl-core 0|1`.
+`--dump-music` uses the same switch for offline A/B comparison.  Both are
+gain-matched, so switching does not jump in volume.  Changing the core
+restarts the current track so the new core rebuilds its register state.  The
+selection survives both exits and restarts: the audio device rebuilds its
+sequencer at the negotiated rate (`MusicPlayer::rebuild_at()`), which keeps
+the chosen core.  See `THIRD_PARTY_NOTICES.md` for the LGPL obligations.
 
 ## Sampled effects
 

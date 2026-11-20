@@ -7,6 +7,7 @@ brand new archives. Two levels of operation:
 
   * Replace content inside an existing archive
         replace_sha_frame(sha, entry, frame, png)   -> new .sha
+        sha_entry_from_folder(sha, entry, folder)   -> new .sha (whole animation)
         replace_vcl_sfx(vcl, slot, wav)             -> new .vcl
   * Package new archives from a folder tree
         sha_from_folder(sha, folder)                -> new .sha
@@ -16,8 +17,10 @@ The module also has a small CLI:
 
     python jill_import.py sha-frame  <sha> <entry> <frame> <image.png> [-o out.sha]
     python jill_import.py sha-folder <sha> <folder> [-o out.sha]
+    python jill_import.py sha-entry-folder <sha> <entry> <frames> [-o out.sha]
     python jill_import.py sha-font   <sha> <fonts/main.png> [-o out.sha]
     python jill_import.py sha-tile   <sha> <dma> <tile-id> <image.png> [-o out.sha]
+    python jill_import.py tile-clone <sha> <dma> <tile-id> <image.png> [--out-sha out.sha] [--out-dma out.dma]
     python jill_import.py board-image <board> <sha> <dma> <board_render.png> [-o out.jn1]
     python jill_import.py vcl-sfx    <vcl> <slot> <audio.wav> [-o out.vcl]
     python jill_import.py vcl-folder <vcl> <folder> [-o out.vcl]
@@ -29,9 +32,12 @@ from __future__ import annotations
 import io
 import json
 import math
+import os
+import re
 import shutil
 import struct
 import sys
+import traceback
 import wave
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -44,6 +50,197 @@ import jill_extractor as jx  # noqa: E402
 
 # VGA colour-table shift/mask (mode 4) used to resolve entry palettes.
 _VGA_SHIFT, _VGA_MASK = 16, 255
+
+
+class ImportFailure(ValueError):
+    """An input file could not be imported; message is safe to show to users."""
+
+
+# ---------------------------------------------------------------------------
+# Input validation helpers
+# ---------------------------------------------------------------------------
+
+def _file(value, what: str) -> Path:
+    """Return a regular, existing input file or fail with a useful message."""
+    p = Path(value)
+    if not p.exists():
+        raise ImportFailure(f"{what} not found: {p}")
+    if not p.is_file():
+        raise ImportFailure(f"{what} is not a file: {p}")
+    return p
+
+
+def _dir(value, what: str) -> Path:
+    p = Path(value)
+    if not p.exists():
+        raise ImportFailure(f"{what} not found: {p}")
+    if not p.is_dir():
+        raise ImportFailure(f"{what} is not a directory: {p}")
+    return p
+
+
+def _out(value, default, what: str) -> Path:
+    """Validate an output path; None means overwrite the input archive."""
+    p = Path(default if value is None else value)
+    if p.exists() and p.is_dir():
+        raise ImportFailure(f"{what} is a directory: {p}")
+    if not p.parent.is_dir():
+        raise ImportFailure(f"output folder does not exist: {p.parent}")
+    return p
+
+
+def _index(value: int, limit: int, what: str) -> int:
+    if not isinstance(value, int) or not 0 <= value < limit:
+        raise ImportFailure(f"{what} must be 0..{limit - 1} (got {value})")
+    return value
+
+
+def _load_sha(value, what: str = "shape archive") -> "jx.SHAFile":
+    p = _file(value, what)
+    try:
+        sha = jx.SHAFile.load(str(p))
+    except Exception as e:
+        raise ImportFailure(f"{what} {p.name}: {e}") from e
+    data_len = len(sha.file_data)
+    for i, (off, size) in enumerate(zip(sha.offsets, sha.sizes)):
+        if size and (off < 0x300 or off + size > data_len):
+            raise ImportFailure(
+                f"{what} {p.name}: entry {i} points outside the file "
+                f"(offset {off}, size {size})")
+    return sha
+
+
+def _load_dma(value, what: str = "tile archive") -> "jx.DMAFile":
+    p = _file(value, what)
+    try:
+        return jx.DMAFile.load(str(p))
+    except Exception as e:
+        raise ImportFailure(f"{what} {p.name}: {e}") from e
+
+
+def _load_vcl(value, what: str = "sound archive") -> "jx.VCLFile":
+    p = _file(value, what)
+    try:
+        vcl = jx.VCLFile.load(str(p))
+    except Exception as e:
+        raise ImportFailure(f"{what} {p.name}: {e}") from e
+    data_len = len(vcl.file_data)
+    for name, offs, sizes in (('sfx', vcl.sfx_offsets, vcl.sfx_sizes),
+                              ('music', vcl.music_offsets, vcl.music_sizes)):
+        for i, (off, size) in enumerate(zip(offs, sizes)):
+            if size and (off < _VCL_HEADER or off + size > data_len):
+                raise ImportFailure(
+                    f"{what} {p.name}: {name} entry {i} points outside "
+                    f"the file (offset {off}, size {size})")
+    return vcl
+
+
+def build_dma_bytes(records: Sequence) -> bytes:
+    """Serialise DMA records (tile id, shape ref, attrs, name) to a .dma."""
+    if len(records) > 320:
+        raise ImportFailure(f"too many DMA records ({len(records)} > 320)")
+    out = bytearray()
+    for rec in records:
+        name = str(getattr(rec, 'name', '')).encode('ascii', 'replace')[:255]
+        out += struct.pack('<HHHB', int(rec.tile_id) & 0xFFFF,
+                           int(rec.shape_id) & 0xFFFF,
+                           int(rec.attr) & 0xFFFF, len(name))
+        out += name
+    return bytes(out)
+
+
+def save_dma(dma: "jx.DMAFile", path, out_path=None) -> Path:
+    """Write an in-memory DMA archive back to disk."""
+    out = _out(out_path, path, "output .dma")
+    try:
+        out.write_bytes(build_dma_bytes(dma.records))
+    except Exception as e:
+        raise ImportFailure(f"cannot write tile archive {out}: {e}") from e
+    return out
+
+
+def clone_tile_to_entry(sha_path, dma_path, tile_id: int, image_path,
+                        out_sha=None, out_dma=None,
+                        resize: bool = True) -> Tuple[Path, Path, int, int]:
+    """Import tile art with a new palette without changing other tiles.
+
+    A 4/8bpp shape entry shares one palette between all of its frames, so
+    recolouring it in place changes every tile that uses any frame of it.
+    Instead this copies the entry into a free shape slot, adapts the palette
+    there and repoints the DMA record at the copy.  Both .sha and .dma are
+    written.  DMA shape refs only have 6 bits for the entry, so the copy must
+    fit in entries 0..63.
+    """
+    sha = _load_sha(sha_path)
+    dma = _load_dma(dma_path)
+    _index(tile_id, 0x10000, "tile id")
+    rec = next((r for r in dma.records if r.tile_id == tile_id), None)
+    if rec is None:
+        raise ImportFailure(f"tile id 0x{tile_id:02X} not in "
+                            f"{Path(dma_path).name}")
+    entry_idx = (rec.shape_id >> 8) & 0x3F
+    frame_idx = rec.shape_id & 0xFF
+    entry = sha.entries[entry_idx]
+    if entry is None or frame_idx >= len(entry.frames):
+        raise ImportFailure(f"tile 0x{tile_id:02X} points at missing shape "
+                            f"{entry_idx}:{frame_idx}")
+    if entry.src_bpp >= 8:
+        raise ImportFailure("tile entry uses the global palette; "
+                            "palette adaptation needs a 4/8bpp entry")
+    free = next((i for i in range(64) if sha.entries[i] is None), None)
+    if free is None:
+        raise ImportFailure("no free shape entry 0..63 to clone the tile into")
+
+    img = _load_image(image_path)
+    old = entry.frames[frame_idx]
+    if resize and img.size != (old['width'], old['height']):
+        img = img.resize((old['width'], old['height']), Image.NEAREST)
+    colors, palette_ints = adapt_entry_palette(sha, entry_idx, img)
+    frames = _entry_frames(entry)
+    w, h, data = quantize(img, colors)
+    frames[frame_idx] = (w, h, 0, data)
+    blob = encode_entry(frames, entry.src_bpp, entry.flags & ~1, palette_ints,
+                        _entry_trailing(entry))
+    blobs = _all_entry_blobs(sha)
+    blobs[free] = blob
+
+    sha_out = _out(out_sha, sha_path, "output .sha")
+    dma_out = _out(out_dma, dma_path, "output .dma")
+    sha_out.write_bytes(build_sha_bytes(blobs))
+    rec.shape_id = (free << 8) | frame_idx
+    save_dma(dma, dma_path, dma_out)
+    return sha_out, dma_out, free, frame_idx
+
+
+def _load_board(value, what: str = "board file") -> "jx.BoardFile":
+    p = _file(value, what)
+    try:
+        return jx.BoardFile.load(str(p))
+    except Exception as e:
+        raise ImportFailure(f"{what} {p.name}: {e}") from e
+
+
+def _load_image(value, what: str = "image") -> Image.Image:
+    p = _file(value, what)
+    try:
+        with Image.open(p) as im:
+            img = im.convert('RGBA')
+    except Exception as e:
+        raise ImportFailure(f"{what} {p.name}: not a readable image ({e})") from e
+    if img.width < 1 or img.height < 1:
+        raise ImportFailure(f"{what} {p.name}: empty image")
+    return img
+
+
+def _read_json(value, what: str, optional: bool = False):
+    p = Path(value)
+    if optional and not p.is_file():
+        return None
+    p = _file(p, what)
+    try:
+        return json.loads(p.read_text(encoding='utf-8'))
+    except Exception as e:
+        raise ImportFailure(f"{what} {p.name}: invalid JSON ({e})") from e
 
 
 # ---------------------------------------------------------------------------
@@ -73,10 +270,26 @@ def resolved_palette(sha: "jx.SHAFile", entry_idx: int) -> List[Tuple[int, int, 
 
 
 def quantize(image: Image.Image, colors: Sequence[Tuple[int, int, int]],
-             transparent_index: int = 0, alpha_cutoff: int = 128) -> Tuple[int, int, bytes]:
+             transparent_index: int = 0, alpha_cutoff: int = 128,
+             dither: bool = False) -> Tuple[int, int, bytes]:
     """Map an RGBA image to palette indices (one byte per pixel)."""
     img = image.convert('RGBA')
     w, h = img.size
+    if w < 1 or h < 1:
+        raise ImportFailure("cannot quantise an empty image")
+    if dither:
+        palette = bytearray(768)
+        for i, (r, g, b) in enumerate(colors[:256]):
+            palette[i * 3:i * 3 + 3] = bytes(
+                (max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b))))
+        pal_img = Image.new('P', (1, 1))
+        pal_img.putpalette(bytes(palette))
+        indices = bytearray(img.convert('RGB').quantize(
+            palette=pal_img, dither=Image.FLOYDSTEINBERG).tobytes())
+        for i, a in enumerate(img.getchannel('A').tobytes()):
+            if a < alpha_cutoff:
+                indices[i] = transparent_index
+        return w, h, bytes(indices)
     px = img.load()
     # Small cache RGB -> nearest index.
     cache: Dict[Tuple[int, int, int], int] = {}
@@ -127,6 +340,61 @@ def _decoded_sizes(frames: Sequence[Tuple[int, int, int, bytes]]) -> Tuple[int, 
     return s2 & 0xFFFF, s4 & 0xFFFF, s8 & 0xFFFF
 
 
+def adapt_entry_palette(sha: "jx.SHAFile", entry_idx: int,
+                        image: Image.Image,
+                        count: Optional[int] = None) -> Tuple[List[Tuple[int, int, int]], List[int]]:
+    """Build a new per-entry palette from an image (for 4/8-entry recolouring).
+
+    Returns (RGB colours to quantise against, 32-bit palette words to store).
+    Each chosen colour is snapped to the nearest entry in the global VGA
+    palette, since a .sha entry stores palette indices, not RGB triplets.
+    """
+    entry = sha.entries[entry_idx] if 0 <= entry_idx < 128 else None
+    if entry is None:
+        raise ImportFailure(f"shape entry {entry_idx} is empty")
+    if count is None:
+        count = 1 << entry.src_bpp if 0 < entry.src_bpp < 8 else 0
+    if not 2 <= count <= 256:
+        raise ImportFailure(f"cannot adapt the palette of a {entry.src_bpp}bpp entry")
+    # Index 0 is the transparency slot for shapes, so leave it out of the
+    # colours sampled from the image (otherwise a solid-colour import would
+    # map every opaque pixel to 0 and render invisible).
+    slots = count - 1
+    try:
+        quantized = image.convert('RGB').quantize(colors=slots,
+                                                  method=Image.MEDIANCUT)
+        palette = list(quantized.getpalette() or [])
+        # Pillow returns only the colours actually used (a flat image may
+        # report just one) — pad with black so every sampled slot is valid.
+        palette += [0] * max(0, slots * 3 - len(palette))
+        targets = [tuple(palette[i * 3:i * 3 + 3]) for i in range(slots)]
+    except Exception as e:
+        raise ImportFailure(f"cannot build a palette from the image ({e})") from e
+
+    base = sha.vga_palette
+    # Keep the original low 16 bits of every palette word.  The port only uses
+    # bits 16..23 (VGA mode 4), but the original engine's EGA/CGA paths read
+    # the lower bytes at shifts 0/4/8/12; zeroing them changes those modes.
+    def word(slot: int, vga_index: int) -> int:
+        old = entry.palette[slot] if slot < len(entry.palette) else 0
+        return ((vga_index << _VGA_SHIFT) | (old & 0xFFFF)) & 0xFFFFFFFF
+
+    reserved = ((entry.palette[0] >> _VGA_SHIFT) & 0xFF) if entry.palette else 0
+    colors: List[Tuple[int, int, int]] = [
+        (base[reserved * 3], base[reserved * 3 + 1], base[reserved * 3 + 2])]
+    ints: List[int] = [word(0, reserved)]
+    for slot, (r, g, b) in enumerate(targets, start=1):
+        best, bestd = 1, 1 << 30
+        for i in range(1, 256):
+            dr, dg, db = r - base[i * 3], g - base[i * 3 + 1], b - base[i * 3 + 2]
+            d = dr * dr + dg * dg + db * db
+            if d < bestd:
+                best, bestd = i, d
+        colors.append((base[best * 3], base[best * 3 + 1], base[best * 3 + 2]))
+        ints.append(word(slot, best))
+    return colors, ints
+
+
 def encode_entry(frames: Sequence[Tuple[int, int, int, bytes]],
                  src_bpp: int = 8, flags: int = 1,
                  palette_ints: Optional[Sequence[int]] = None,
@@ -137,6 +405,8 @@ def encode_entry(frames: Sequence[Tuple[int, int, int, bytes]],
     should use opcode 0 with one payload byte per pixel.
     """
     n = len(frames)
+    if n > 255:
+        raise ImportFailure(f"too many frames in one shape entry ({n} > 255)")
     s2, s4, s8 = _decoded_sizes(frames)
     out = bytearray()
     out.append(n & 0xFF)
@@ -156,12 +426,18 @@ def encode_entry(frames: Sequence[Tuple[int, int, int, bytes]],
                 out += struct.pack('<I', (i << _VGA_SHIFT) & 0xFFFFFFFF)
 
     def emit(w: int, h: int, op: int, data: bytes):
-        out.append(w & 0xFF)
-        out.append(h & 0xFF)
-        out.append(op & 0xFF)
+        if not (0 <= w <= 255 and 0 <= h <= 255 and 0 <= op <= 255):
+            raise ImportFailure(f"frame dimensions/opcode out of range: "
+                                f"{w}x{h} op {op}")
+        out.append(w)
+        out.append(h)
+        out.append(op)
         if op == 0:
             need = w * h
-            out.extend(data[:need].ljust(need, b'\x00'))
+            if len(data) != need:
+                raise ImportFailure(f"raw {w}x{h} frame needs {need} pixels, "
+                                    f"got {len(data)}")
+            out.extend(data)
         elif op == 1:
             out.extend(data)
         # opcode >= 2 carries no payload
@@ -175,8 +451,9 @@ def encode_entry(frames: Sequence[Tuple[int, int, int, bytes]],
 
 def build_sha_bytes(entries: Sequence[Optional[bytes]]) -> bytes:
     """Assemble a .sha file from up to 128 raw entry blobs."""
-    entries = list(entries[:128])
-    entries += [None] * (128 - len(entries))
+    if len(entries) > 128:
+        raise ImportFailure(f"too many shape entries ({len(entries)} > 128)")
+    entries = list(entries) + [None] * (128 - len(entries))
     offsets: List[int] = []
     sizes: List[int] = []
     body = bytearray()
@@ -190,8 +467,9 @@ def build_sha_bytes(entries: Sequence[Optional[bytes]]) -> bytes:
         else:
             offsets.append(0)
             sizes.append(0)
+    if any(size > 0xFFFF for size in sizes):
+        raise ImportFailure("a shape entry is too large (>65535 bytes) for .sha")
     header = struct.pack('<128I', *offsets) + struct.pack('<128H', *sizes)
-    assert len(header) == 0x300
     return header + bytes(body)
 
 
@@ -219,38 +497,42 @@ def _all_entry_blobs(sha: "jx.SHAFile") -> List[Optional[bytes]]:
     return blobs
 
 
-def _load_image(path: Path) -> Image.Image:
-    return Image.open(path).convert('RGBA')
-
-
 def replace_sha_frame(sha_path: Path, entry_idx: int, frame_idx: int,
                       image_path: Path, out_path: Optional[Path] = None,
-                      resize: bool = True) -> Path:
+                      resize: bool = True, adapt_palette: bool = False,
+                      dither: bool = False) -> Path:
     """Replace one frame of an existing .sha entry with a PNG."""
-    sha = jx.SHAFile.load(str(sha_path))
+    sha = _load_sha(sha_path)
+    _index(entry_idx, 128, "shape entry")
     entry = sha.entries[entry_idx]
     if entry is None:
-        raise ValueError(f"shape entry {entry_idx} is empty")
+        raise ImportFailure(f"shape entry {entry_idx} is empty")
 
     img = _load_image(image_path)
-    colors = resolved_palette(sha, entry_idx)
 
     frames = _entry_frames(entry)
-    if frame_idx < 0 or frame_idx >= len(frames):
-        raise ValueError(f"frame {frame_idx} out of range (0..{len(frames)-1})")
+    if not isinstance(frame_idx, int) or not 0 <= frame_idx < len(frames):
+        raise ImportFailure(f"frame {frame_idx} out of range (0..{len(frames)-1})")
 
     old_w, old_h = frames[frame_idx][0], frames[frame_idx][1]
     if resize and img.size != (old_w, old_h):
         img = img.resize((old_w, old_h), Image.NEAREST)
-    w, h, data = quantize(img, colors)
+    flags, palette = entry.flags, entry.palette or None
+    if adapt_palette and entry.src_bpp < 8:
+        # Recolouring a shared per-entry palette affects every frame of it.
+        colors, palette = adapt_entry_palette(sha, entry_idx, img)
+        flags &= ~1
+    else:
+        colors = resolved_palette(sha, entry_idx)
+    w, h, data = quantize(img, colors, dither=dither)
     frames[frame_idx] = (w, h, 0, data)
 
-    new_blob = encode_entry(frames, entry.src_bpp, entry.flags,
-                            entry.palette or None, _entry_trailing(entry))
+    new_blob = encode_entry(frames, entry.src_bpp, flags, palette,
+                            _entry_trailing(entry))
     blobs = _all_entry_blobs(sha)
     blobs[entry_idx] = new_blob
 
-    out = Path(out_path) if out_path else Path(sha_path)
+    out = _out(out_path, sha_path, "output .sha")
     out.write_bytes(build_sha_bytes(blobs))
     return out
 
@@ -268,7 +550,10 @@ def sha_from_folder(sha_path: Path, folder: Path,
     are written as 8bpp identity-mapped sprites.  Entries not present in the
     folder are copied from the reference .sha when one is supplied.
     """
-    sha = jx.SHAFile.load(str(sha_path)) if Path(sha_path).is_file() else None
+    sha_path = Path(sha_path)
+    # A missing reference path is allowed (build a fresh archive); an existing
+    # path must be a readable .sha, never silently treated as "no reference".
+    sha = _load_sha(sha_path) if sha_path.exists() else None
     blobs: List[Optional[bytes]] = _all_entry_blobs(sha) if sha else [None] * 128
     if sha:
         base_palette = sha.vga_palette
@@ -277,7 +562,7 @@ def sha_from_folder(sha_path: Path, folder: Path,
     else:
         vga = [(i, i, i) for i in range(256)]
 
-    folder = Path(folder)
+    folder = _dir(folder, "source folder")
 
     def write_entry(entry_idx: int, images: Sequence[Image.Image],
                     trailing: Optional[Image.Image] = None) -> None:
@@ -344,7 +629,75 @@ def sha_from_folder(sha_path: Path, folder: Path,
             images = [_load_image(frame_map[k]) for k in sorted(frame_map)]
             write_entry(entry_idx, images)
 
-    out = Path(out_path) if out_path else Path(sha_path)
+    out = _out(out_path, sha_path, "output .sha")
+    out.write_bytes(build_sha_bytes(blobs))
+    return out
+
+
+_IMAGE_EXTS = {'.png', '.bmp', '.gif', '.jpg', '.jpeg', '.tga'}
+
+
+def _natural_key(path: Path):
+    """Sort frame_2.png before frame_10.png."""
+    return [int(part) if part.isdigit() else part.lower()
+            for part in re.split(r'(\d+)', path.name)]
+
+
+def _vga_colors(sha: Optional["jx.SHAFile"]) -> List[Tuple[int, int, int]]:
+    if sha is None:
+        return [(i, i, i) for i in range(256)]
+    base = sha.vga_palette
+    return [(base[i], base[i + 1], base[i + 2]) for i in range(0, 768, 3)]
+
+
+def sha_entry_from_folder(sha_path, entry_idx: int, folder,
+                          out_path=None, resize: bool = True,
+                          adapt_palette: bool = False) -> Path:
+    """Replace one shape entry's whole animation with images from a folder.
+
+    Images (PNG/BMP/GIF/JPEG/TGA) are sorted naturally by file name, all
+    scaled to the first image's size and quantised to the entry's palette.
+    The entry's source bpp, flags, palette and trailing frame are preserved;
+    other entries are copied from the reference archive.  A missing reference
+    path builds a fresh archive, as with sha_from_folder().
+    """
+    sha_path = Path(sha_path)
+    sha = _load_sha(sha_path) if sha_path.exists() else None
+    _index(entry_idx, 128, "shape entry")
+    folder = _dir(folder, "frame folder")
+    frames = sorted((p for p in folder.iterdir()
+                     if p.is_file() and p.suffix.lower() in _IMAGE_EXTS),
+                    key=_natural_key)
+    if not frames:
+        raise ImportFailure(f"no images found in {folder}")
+    images = [_load_image(p, "frame image") for p in frames]
+    w, h = images[0].size
+    if resize:
+        images = [im if im.size == (w, h) else im.resize((w, h), Image.NEAREST)
+                  for im in images]
+
+    if sha and sha.entries[entry_idx] is not None:
+        entry = sha.entries[entry_idx]
+        bpp, flags, palette = entry.src_bpp, entry.flags, entry.palette or None
+        colors = resolved_palette(sha, entry_idx)
+        trailing = _entry_trailing(entry)
+        blobs = _all_entry_blobs(sha)
+    else:
+        bpp, flags, palette = 8, 1, None
+        colors = _vga_colors(sha)
+        trailing = None
+        blobs = [None] * 128
+    if adapt_palette and bpp < 8 and sha is not None:
+        colors, palette = adapt_entry_palette(sha, entry_idx, images[0])
+        flags &= ~1
+
+    encoded: List[Tuple[int, int, int, bytes]] = []
+    for im in images:
+        fw, fh, data = quantize(im, colors)
+        encoded.append((fw, fh, 0, data))
+    blobs[entry_idx] = encode_entry(encoded, bpp, flags, palette, trailing)
+
+    out = _out(out_path, sha_path, "output .sha")
     out.write_bytes(build_sha_bytes(blobs))
     return out
 
@@ -361,30 +714,41 @@ def font_from_sheet(sha_path: Path, sheet_path: Path,
     Opaque pixels become `foreground`; transparent pixels become index 0.
     Reads `font.json` beside the sheet for the cell/glyph sizes when present.
     """
-    sha = jx.SHAFile.load(str(sha_path))
-    entry = sha.entries[entry_idx] if 0 <= entry_idx < 128 else None
+    sha = _load_sha(sha_path)
+    _index(entry_idx, 128, "shape entry")
+    _index(foreground, 256, "foreground colour")
+    entry = sha.entries[entry_idx]
     if entry is None:
-        raise ValueError(f"shape entry {entry_idx} is empty")
+        raise ImportFailure(f"shape entry {entry_idx} is empty")
 
-    sheet = Image.open(sheet_path).convert('RGBA')
-    meta: Dict = {}
-    meta_path = Path(sheet_path).parent / 'font.json'
-    if meta_path.is_file():
-        try:
-            meta = json.loads(meta_path.read_text(encoding='utf-8'))
-        except (OSError, ValueError):
-            meta = {}
-    cell_w = int(meta.get('cell_width') or max(1, sheet.width // 128))
-    cell_h = int(meta.get('cell_height') or sheet.height)
-    glyphs = {int(g['code']): g for g in meta.get('glyphs', [])
-              if 'code' in g}
+    sheet = _load_image(sheet_path, "font sheet")
+    meta = _read_json(Path(sheet_path).parent / 'font.json',
+                      "font metadata", optional=True) or {}
+    if not isinstance(meta, dict):
+        raise ImportFailure("font.json: expected an object")
+    try:
+        cell_w = int(meta.get('cell_width') or max(1, sheet.width // 128))
+        cell_h = int(meta.get('cell_height') or sheet.height)
+        glyphs = {int(g['code']): g for g in meta.get('glyphs', [])
+                  if 'code' in g}
+    except Exception as e:
+        raise ImportFailure(f"font.json: invalid metadata ({e})") from e
+    if cell_w < 1 or cell_h < 1 or cell_w * 128 > sheet.width or cell_h > sheet.height:
+        raise ImportFailure(
+            f"font sheet {sheet.width}x{sheet.height} is too small for "
+            f"128 cells of {cell_w}x{cell_h}")
     frames: List[Tuple[int, int, int, bytes]] = []
     for code in range(128):
         g = glyphs.get(code, {})
-        gw = int(g.get('width') or cell_w)
-        gh = int(g.get('height') or cell_h)
-        gw = max(1, min(gw, sheet.width - code * cell_w))
-        gh = max(1, min(gh, sheet.height))
+        try:
+            gw = int(g.get('width') or cell_w)
+            gh = int(g.get('height') or cell_h)
+        except Exception as e:
+            raise ImportFailure(f"font.json glyph {code}: invalid size ({e})") from e
+        if not (1 <= gw <= cell_w and 1 <= gh <= cell_h):
+            raise ImportFailure(
+                f"font.json glyph {code}: size {gw}x{gh} outside "
+                f"cell {cell_w}x{cell_h}")
         cell = sheet.crop((code * cell_w, 0, code * cell_w + gw, gh))
         px = cell.load()
         data = bytearray(gw * gh)
@@ -398,39 +762,41 @@ def font_from_sheet(sha_path: Path, sheet_path: Path,
                         entry.palette or None, _entry_trailing(entry))
     blobs = _all_entry_blobs(sha)
     blobs[entry_idx] = blob
-    out = Path(out_path) if out_path else Path(sha_path)
+    out = _out(out_path, sha_path, "output .sha")
     out.write_bytes(build_sha_bytes(blobs))
     return out
 
 
 def tile_from_png(sha_path: Path, dma_path: Path, tile_id: int,
                   image_path: Path, out_path: Optional[Path] = None,
-                  resize: bool = True) -> Tuple[Path, int, int]:
+                  resize: bool = True, dither: bool = False) -> Tuple[Path, int, int]:
     """Replace the SHA frame used by DMA `tile_id` with a PNG."""
-    sha = jx.SHAFile.load(str(sha_path))
-    dma = jx.DMAFile.load(str(dma_path))
+    sha = _load_sha(sha_path)
+    dma = _load_dma(dma_path)
+    _index(tile_id, 0x10000, "tile id")
     rec = next((r for r in dma.records if r.tile_id == tile_id), None)
     if rec is None:
-        raise ValueError(f"tile id 0x{tile_id:02X} not in {dma_path.name}")
+        raise ImportFailure(f"tile id 0x{tile_id:02X} not in "
+                            f"{Path(dma_path).name}")
     entry_idx = (rec.shape_id >> 8) & 0x3F
     frame_idx = rec.shape_id & 0xFF
     entry = sha.entries[entry_idx]
-    if entry is None or frame_idx >= entry.frame_count:
-        raise ValueError(f"tile 0x{tile_id:02X} points at missing shape "
-                         f"{entry_idx}:{frame_idx}")
+    if entry is None or frame_idx >= len(entry.frames):
+        raise ImportFailure(f"tile 0x{tile_id:02X} points at missing shape "
+                            f"{entry_idx}:{frame_idx}")
     img = _load_image(image_path)
     old = entry.frames[frame_idx]
     if resize and img.size != (old['width'], old['height']):
         img = img.resize((old['width'], old['height']), Image.NEAREST)
     colors = resolved_palette(sha, entry_idx)
-    w, h, data = quantize(img, colors)
+    w, h, data = quantize(img, colors, dither=dither)
     frames = _entry_frames(entry)
     frames[frame_idx] = (w, h, 0, data)
     blob = encode_entry(frames, entry.src_bpp, entry.flags,
                         entry.palette or None, _entry_trailing(entry))
     blobs = _all_entry_blobs(sha)
     blobs[entry_idx] = blob
-    out = Path(out_path) if out_path else Path(sha_path)
+    out = _out(out_path, sha_path, "output .sha")
     out.write_bytes(build_sha_bytes(blobs))
     return out, entry_idx, frame_idx
 
@@ -439,19 +805,22 @@ def board_from_image(board_path: Path, sha_path: Path, dma_path: Path,
                      image_path: Path,
                      out_path: Optional[Path] = None) -> Path:
     """Rebuild a board's tile map from a full 2048x1024 board render."""
-    board = jx.BoardFile.load(str(board_path))
-    sha = jx.SHAFile.load(str(sha_path))
-    dma = jx.DMAFile.load(str(dma_path))
-    img = Image.open(image_path).convert('RGB')
+    board = _load_board(board_path)
+    sha = _load_sha(sha_path)
+    dma = _load_dma(dma_path)
+    img = _load_image(image_path, "board render").convert('RGB')
     if img.size != (2048, 1024):
-        raise ValueError("board image must be the full 2048x1024 render "
-                         "(use board_previews/<name>.png, not boards/)")
+        raise ImportFailure("board image must be the full 2048x1024 render "
+                            "(use board_previews/<name>.png, not boards/)")
 
     cache: Dict[Tuple[int, int], Optional[Image.Image]] = {}
     exact: Dict[bytes, int] = {}
     sigs: List[Tuple[bytes, int]] = []
     for rec in dma.records:
-        tile = jx._tile_rgba(sha, rec, cache)
+        try:
+            tile = jx._tile_rgba(sha, rec, cache)
+        except Exception as e:
+            raise ImportFailure(f"cannot decode tile 0x{rec.tile_id:02X}: {e}") from e
         if tile is None:
             continue
         rgb = tile.convert('RGB')
@@ -484,8 +853,16 @@ def board_from_image(board_path: Path, sha_path: Path, dma_path: Path,
                 tid = board.get_tile_at(c, r)
             board.tile_map[c * 64 + r] = tid & 0x3FFF
 
-    out = Path(out_path) if out_path else Path(board_path)
-    board.save(str(out))
+    return save_board(board, out_path or board_path)
+
+
+def save_board(board: "jx.BoardFile", path, out_path=None) -> Path:
+    """Write an in-memory board (e.g. one edited by a GUI) back to .jn1."""
+    out = _out(out_path, path, "output board")
+    try:
+        board.save(str(out))
+    except Exception as e:
+        raise ImportFailure(f"cannot write board {out}: {e}") from e
     return out
 
 
@@ -493,9 +870,14 @@ def install_pack(src_dir: Path, pack_dir: Path,
                  game: Optional[str] = None,
                  name: Optional[str] = None) -> Dict[str, int]:
     """Copy an extractor/reference-pack tree into an external pack folder."""
-    src = Path(src_dir)
+    src = _dir(src_dir, "pack source")
     dst = Path(pack_dir)
-    dst.mkdir(parents=True, exist_ok=True)
+    if dst.resolve() == src.resolve():
+        raise ImportFailure("pack destination must differ from the source")
+    try:
+        dst.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise ImportFailure(f"cannot create pack folder {dst}: {e}") from e
     stats: Dict[str, int] = {}
     dirs = ['sprites', 'fonts', 'tiles', 'boards', 'themes', 'hud',
             'pages', 'sfx', 'music']
@@ -503,13 +885,19 @@ def install_pack(src_dir: Path, pack_dir: Path,
         s = src / sub
         if not s.is_dir():
             continue
-        shutil.copytree(s, dst / sub, dirs_exist_ok=True)
+        try:
+            shutil.copytree(s, dst / sub, dirs_exist_ok=True)
+        except OSError as e:
+            raise ImportFailure(f"cannot copy {s.name} into pack: {e}") from e
         stats[sub] = sum(1 for p in (dst / sub).rglob('*') if p.is_file())
     for fname in ['portrait.png', 'palette.pal', 'palette_6bit.bin',
                   'palette.json']:
         s = src / fname
         if s.is_file():
-            shutil.copy2(s, dst / fname)
+            try:
+                shutil.copy2(s, dst / fname)
+            except OSError as e:
+                raise ImportFailure(f"cannot copy {s.name} into pack: {e}") from e
             stats[fname] = 1
 
     warnings: List[str] = []
@@ -519,7 +907,7 @@ def install_pack(src_dir: Path, pack_dir: Path,
                 with Image.open(path) as im:
                     if im.size != size:
                         warnings.append(f"{path.name}: {im.size} (expected {size})")
-            except OSError:
+            except Exception:
                 warnings.append(f"{path.name}: not a readable image")
 
     check(dst / 'portrait.png', (64, 84))
@@ -534,11 +922,17 @@ def install_pack(src_dir: Path, pack_dir: Path,
 
     ini = dst / 'pack.ini'
     if not ini.exists():
-        label = name or dst.name
+        def ini_value(text: str) -> str:
+            return ' '.join(str(text).splitlines())
+
+        label = ini_value(name or dst.name)
         lines = ['[pack]', f'name = {label}']
         if game:
-            lines.append(f'game = {game}')
-        ini.write_text('\n'.join(lines) + '\n', encoding='ascii')
+            lines.append(f'game = {ini_value(game)}')
+        try:
+            ini.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+        except OSError as e:
+            raise ImportFailure(f"cannot write {ini}: {e}") from e
         stats['pack.ini'] = 1
     for w in warnings:
         print(f"warning: {w}")
@@ -554,11 +948,16 @@ _VCL_HEADER = 0xC8 + 0x64 + 0x64 + 0xA0 + 0x50  # 0x280
 
 def decode_wav(data: bytes) -> Tuple[List[float], int, int]:
     """Return (samples in -1..1, sample_rate, channels) for a WAV blob."""
-    with wave.open(io.BytesIO(data), 'rb') as w:
-        nch = w.getnchannels()
-        sw = w.getsampwidth()
-        rate = w.getframerate()
-        raw = w.readframes(w.getnframes())
+    try:
+        with wave.open(io.BytesIO(data), 'rb') as w:
+            nch = w.getnchannels()
+            sw = w.getsampwidth()
+            rate = w.getframerate()
+            raw = w.readframes(w.getnframes())
+    except Exception as e:
+        raise ImportFailure(f"invalid WAV data ({e})") from e
+    if nch < 1 or rate < 1:
+        raise ImportFailure(f"invalid WAV header: {nch} channels, {rate} Hz")
     samples: List[float] = []
     if sw == 1:
         for b in raw:
@@ -580,7 +979,7 @@ def decode_wav(data: bytes) -> Tuple[List[float], int, int]:
         ints = struct.unpack('<%di' % n, raw)
         samples = [v / 2147483648.0 for v in ints]
     else:
-        raise ValueError(f"unsupported WAV sample width: {sw}")
+        raise ImportFailure(f"unsupported WAV sample width: {sw}")
     if nch > 1:
         mono = []
         for i in range(0, len(samples), nch):
@@ -591,8 +990,10 @@ def decode_wav(data: bytes) -> Tuple[List[float], int, int]:
 
 
 def resample(samples: List[float], src_rate: int, dst_rate: int) -> List[float]:
-    if not samples or src_rate == dst_rate or dst_rate <= 0:
+    if not samples or src_rate == dst_rate:
         return samples
+    if src_rate <= 0 or dst_rate <= 0:
+        raise ImportFailure(f"invalid sample rate: {src_rate} -> {dst_rate} Hz")
     ratio = dst_rate / src_rate
     out_len = max(1, int(len(samples) * ratio))
     out: List[float] = []
@@ -625,8 +1026,13 @@ def wav_to_sample(data: bytes, target_rate: int = 6000) -> Tuple[bytes, int]:
 
 def build_vcl_bytes(sfx: Sequence[Optional[Tuple[bytes, int]]],
                     music: Sequence[Optional[bytes]]) -> bytes:
-    sfx = list(sfx[:50]) + [None] * (50 - len(sfx[:50]))
-    music = list(music[:40]) + [None] * (40 - len(music[:40]))
+    if len(sfx) > 50 or len(music) > 40:
+        raise ImportFailure("too many VCL sfx/music entries")
+    if (any(len(item[0]) > 0xFFFF or item[1] > 0xFFFF for item in sfx if item)
+            or any(len(data) > 0xFFFF for data in music if data)):
+        raise ImportFailure("a VCL entry is too large (>65535 bytes) for the bank")
+    sfx = list(sfx) + [None] * (50 - len(sfx))
+    music = list(music) + [None] * (40 - len(music))
     offs: List[int] = []
     sizes: List[int] = []
     rates: List[int] = []
@@ -655,7 +1061,6 @@ def build_vcl_bytes(sfx: Sequence[Optional[Tuple[bytes, int]]],
     out += struct.pack('<50H', *rates)
     out += struct.pack('<40I', *moffs)
     out += struct.pack('<40H', *msizes)
-    assert len(out) == _VCL_HEADER, len(out)
     out += body
     return bytes(out)
 
@@ -675,14 +1080,14 @@ def _vcl_parts(vcl: "jx.VCLFile"):
 def replace_vcl_sfx(vcl_path: Path, slot: int, wav_path: Path,
                     out_path: Optional[Path] = None) -> Path:
     """Replace one sampled-sound slot with audio from a WAV file."""
-    if not (0 <= slot < 50):
-        raise ValueError("slot must be 0..49")
-    vcl = jx.VCLFile.load(str(vcl_path))
+    _index(slot, 50, "SFX slot")
+    vcl = _load_vcl(vcl_path)
+    wav_file = _file(wav_path, "WAV file")
     sfx, music = _vcl_parts(vcl)
-    data, rate = wav_to_sample(Path(wav_path).read_bytes(),
+    data, rate = wav_to_sample(wav_file.read_bytes(),
                                target_rate=vcl.sfx_rates[slot] or 6000)
     sfx[slot] = (data, rate)
-    out = Path(out_path) if out_path else Path(vcl_path)
+    out = _out(out_path, vcl_path, "output .vcl")
     out.write_bytes(build_vcl_bytes(sfx, music))
     return out
 
@@ -690,13 +1095,16 @@ def replace_vcl_sfx(vcl_path: Path, slot: int, wav_path: Path,
 def vcl_from_folder(vcl_path: Path, folder: Path,
                     out_path: Optional[Path] = None) -> Path:
     """Build a .vcl from <folder>/sfx_NN.wav (+ optional music_NN.raw)."""
-    vcl = jx.VCLFile.load(str(vcl_path)) if Path(vcl_path).is_file() else None
+    vcl_path = Path(vcl_path)
+    # As with sha-folder: a missing reference starts a fresh bank; an existing
+    # path must be a readable .vcl.
+    vcl = _load_vcl(vcl_path) if vcl_path.exists() else None
     if vcl:
         sfx, music = _vcl_parts(vcl)
     else:
         sfx, music = [None] * 50, [None] * 40
 
-    folder = Path(folder)
+    folder = _dir(folder, "source folder")
     for wav_file in sorted(folder.glob('sfx_*.wav')):
         try:
             slot = int(wav_file.stem.split('_', 1)[1])
@@ -705,7 +1113,8 @@ def vcl_from_folder(vcl_path: Path, folder: Path,
         if not (0 <= slot < 50):
             continue
         rate = (vcl.sfx_rates[slot] if vcl else 0) or 6000
-        data, rate = wav_to_sample(wav_file.read_bytes(), target_rate=rate)
+        source = _file(wav_file, "WAV file")
+        data, rate = wav_to_sample(source.read_bytes(), target_rate=rate)
         sfx[slot] = (data, rate)
     for raw_file in sorted(folder.glob('music_*.raw')):
         try:
@@ -713,9 +1122,9 @@ def vcl_from_folder(vcl_path: Path, folder: Path,
         except (IndexError, ValueError):
             continue
         if 0 <= slot < 40:
-            music[slot] = raw_file.read_bytes()
+            music[slot] = _file(raw_file, "raw audio file").read_bytes()
 
-    out = Path(out_path) if out_path else Path(vcl_path)
+    out = _out(out_path, vcl_path, "output .vcl")
     out.write_bytes(build_vcl_bytes(sfx, music))
     return out
 
@@ -727,22 +1136,38 @@ def vcl_pages_from_folder(vcl_path: Path, folder: Path,
     Uses `pages.json` when present so the per-line colours are preserved;
     otherwise reads `page_NN.txt` with the default colour.
     """
-    vcl = jx.VCLFile.load(str(vcl_path))
+    vcl = _load_vcl(vcl_path)
     sfx, pages = _vcl_parts(vcl)
-    folder = Path(folder)
+    folder = _dir(folder, "source folder")
     meta_path = folder / 'pages.json'
     if meta_path.is_file():
-        entries = json.loads(meta_path.read_text(encoding='utf-8'))
+        entries = _read_json(meta_path, "page metadata")
+        if not isinstance(entries, list):
+            raise ImportFailure("pages.json: expected a list of pages")
         for entry in entries:
+            if not isinstance(entry, dict):
+                raise ImportFailure("pages.json: each page must be an object")
             try:
                 idx = int(entry['index'])
             except (KeyError, TypeError, ValueError):
                 continue
             if not (0 <= idx < 40):
                 continue
+            lines = entry.get('lines', [])
+            if not isinstance(lines, list):
+                raise ImportFailure(f"pages.json page {idx}: lines must be a list")
             data = bytearray()
-            for line in entry.get('lines', []):
-                colour = int(line.get('colour', 7))
+            for line in lines:
+                if not isinstance(line, dict):
+                    raise ImportFailure(f"pages.json page {idx}: line must be an object")
+                try:
+                    colour = int(line.get('colour', 7))
+                except (TypeError, ValueError) as e:
+                    raise ImportFailure(
+                        f"pages.json page {idx}: invalid colour ({e})") from e
+                if not 0 <= colour <= 7:
+                    raise ImportFailure(
+                        f"pages.json page {idx}: colour {colour} outside 0..7")
                 text = str(line.get('text', ''))
                 if colour != 7:
                     data.extend(str(colour).encode('ascii', 'replace'))
@@ -757,12 +1182,53 @@ def vcl_pages_from_folder(vcl_path: Path, folder: Path,
                 continue
             if not (0 <= idx < 40):
                 continue
-            lines = page_file.read_text(encoding='ascii',
-                                        errors='replace').splitlines()
+            source = _file(page_file, "page file")
+            try:
+                lines = source.read_text(encoding='ascii',
+                                         errors='replace').splitlines()
+            except Exception as e:
+                raise ImportFailure(f"cannot read {source.name}: {e}") from e
             pages[idx] = b'\r'.join(line.encode('ascii', 'replace')
                                     for line in lines) + b'\r'
-    out = Path(out_path) if out_path else Path(vcl_path)
+    out = _out(out_path, vcl_path, "output .vcl")
     out.write_bytes(build_vcl_bytes(sfx, pages))
+    return out
+
+
+def vcl_set_pages(vcl_path, pages, out_path=None) -> Path:
+    """Replace text pages from structured data: {index: [{'colour', 'text'}]}.
+
+    This is the in-memory counterpart of vcl_pages_from_folder(), used by the
+    GUI editor.  Lines are written as colour code + text + 0x0D, like the
+    extractor's pages.json export.
+    """
+    vcl = _load_vcl(vcl_path)
+    sfx, bank = _vcl_parts(vcl)
+    if not isinstance(pages, dict):
+        raise ImportFailure("pages must be a {index: lines} mapping")
+    for idx, lines in pages.items():
+        _index(idx, 40, "text page")
+        if not isinstance(lines, (list, tuple)):
+            raise ImportFailure(f"text page {idx}: lines must be a list")
+        data = bytearray()
+        for line in lines:
+            if not isinstance(line, dict):
+                raise ImportFailure(f"text page {idx}: line must be an object")
+            try:
+                colour = int(line.get('colour', 7))
+            except (TypeError, ValueError) as e:
+                raise ImportFailure(
+                    f"text page {idx}: invalid colour ({e})") from e
+            if not 0 <= colour <= 7:
+                raise ImportFailure(f"text page {idx}: colour {colour} outside 0..7")
+            text = str(line.get('text', ''))
+            if colour != 7:
+                data.extend(str(colour).encode('ascii', 'replace'))
+            data.extend(text.encode('ascii', 'replace'))
+            data.append(0x0D)
+        bank[idx] = bytes(data)
+    out = _out(out_path, vcl_path, "output .vcl")
+    out.write_bytes(build_vcl_bytes(sfx, bank))
     return out
 
 
@@ -778,6 +1244,10 @@ def _cli(argv: Sequence[str]) -> int:
     a = sub.add_parser('sha-frame', help='replace a frame in a .sha entry')
     a.add_argument('sha'); a.add_argument('entry', type=int); a.add_argument('frame', type=int)
     a.add_argument('image'); a.add_argument('-o', '--out')
+    a.add_argument('--adapt-palette', action='store_true',
+                   help='recolour the entry palette from the image (bpp < 8)')
+    a.add_argument('--dither', action='store_true',
+                   help='dither to the existing palette instead of nearest colour')
 
     b = sub.add_parser('sha-folder', help='build a .sha from a PNG folder tree')
     b.add_argument('sha'); b.add_argument('folder'); b.add_argument('-o', '--out')
@@ -798,6 +1268,8 @@ def _cli(argv: Sequence[str]) -> int:
     f = sub.add_parser('sha-tile', help='replace the SHA frame used by a DMA tile')
     f.add_argument('sha'); f.add_argument('dma'); f.add_argument('tile', type=lambda s: int(s, 0))
     f.add_argument('image'); f.add_argument('-o', '--out')
+    f.add_argument('--dither', action='store_true',
+                   help='dither to the existing palette instead of nearest colour')
 
     g = sub.add_parser('board-image', help='rebuild a board from a 2048x1024 render')
     g.add_argument('board'); g.add_argument('sha'); g.add_argument('dma')
@@ -810,13 +1282,50 @@ def _cli(argv: Sequence[str]) -> int:
     i = sub.add_parser('vcl-pages', help='replace VCL text pages from text_pages/')
     i.add_argument('vcl'); i.add_argument('folder'); i.add_argument('-o', '--out')
 
+    j = sub.add_parser('sha-entry-folder',
+                       help='replace one shape entry from a folder of frames')
+    j.add_argument('sha'); j.add_argument('entry', type=int)
+    j.add_argument('folder'); j.add_argument('-o', '--out')
+
+    k = sub.add_parser('tile-clone',
+                       help='import tile art with a fresh palette into a free '
+                            'shape entry (writes .sha and .dma)')
+    k.add_argument('sha'); k.add_argument('dma')
+    k.add_argument('tile', type=lambda s: int(s, 0)); k.add_argument('image')
+    k.add_argument('--out-sha'); k.add_argument('--out-dma')
+
     args = p.parse_args(argv)
+    try:
+        return _run(args)
+    except Exception as e:
+        # Any bad input file is reported as a short message, never a traceback.
+        if os.environ.get('JILL_IMPORT_DEBUG'):
+            traceback.print_exc()
+        message = str(e) or type(e).__name__
+        print(f"error: {message}", file=sys.stderr)
+        return 1
+
+
+def _run(args) -> int:
     if args.cmd == 'sha-frame':
         out = replace_sha_frame(Path(args.sha), args.entry, args.frame,
-                                Path(args.image), Path(args.out) if args.out else None)
+                                Path(args.image), Path(args.out) if args.out else None,
+                                adapt_palette=args.adapt_palette, dither=args.dither)
     elif args.cmd == 'sha-folder':
         out = sha_from_folder(Path(args.sha), Path(args.folder),
                               Path(args.out) if args.out else None)
+    elif args.cmd == 'sha-entry-folder':
+        out = sha_entry_from_folder(Path(args.sha), args.entry, Path(args.folder),
+                                    Path(args.out) if args.out else None)
+    elif args.cmd == 'tile-clone':
+        sha_out, dma_out, entry, frame = clone_tile_to_entry(
+            Path(args.sha), Path(args.dma), args.tile, Path(args.image),
+            Path(args.out_sha) if args.out_sha else None,
+            Path(args.out_dma) if args.out_dma else None)
+        print(f"tile -> cloned shape {entry}:{frame}")
+        print(f"wrote {sha_out}")
+        print(f"wrote {dma_out}")
+        return 0
     elif args.cmd == 'sha-font':
         out = font_from_sheet(Path(args.sha), Path(args.sheet),
                               Path(args.out) if args.out else None,
@@ -824,7 +1333,7 @@ def _cli(argv: Sequence[str]) -> int:
     elif args.cmd == 'sha-tile':
         out, entry, frame = tile_from_png(
             Path(args.sha), Path(args.dma), args.tile, Path(args.image),
-            Path(args.out) if args.out else None)
+            Path(args.out) if args.out else None, dither=args.dither)
         print(f"tile -> shape {entry}:{frame}")
     elif args.cmd == 'board-image':
         out = board_from_image(Path(args.board), Path(args.sha), Path(args.dma),

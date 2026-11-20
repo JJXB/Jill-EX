@@ -38,7 +38,6 @@ struct StudioOptions {
     std::string hud_layout;
     std::string menu_font;
     bool fast_dialogs = false;
-    int message_box = 1;
     bool animated_water = true;
     bool retain_items = false;
     bool air_jump_buffer = false;

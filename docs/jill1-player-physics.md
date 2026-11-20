@@ -205,6 +205,9 @@ state_flags[state] & 1  -> "may throw a weapon in this state" (states 0 and 2)
 state_flags[state] & 2  -> "invulnerable / skip tile events"  (states 4 and 5)
 ```
 
+Port: the `THROW FROM VINES` option (default off) extends the throw permission to
+state 3 (climb) and uses the remembered facing when the climb left `p1b` at 0.
+
 `_playerkill` (26F4:05E7) tests `state_flags[player.state] & 2` and returns
 without damage, which is what makes the recover and death states immune. The
 same table is indexed with an *enemy's* state by `FUN_26f4_23e1`, so for
@@ -487,7 +490,7 @@ Notes:
   | `0x155/0x156` | `WTHORN`/`WTHORN2` | `_playerkill(0x10, 2)` |
   | `0x0A6` | `SPIKE` | `_playerkill(0x10, 2)` |
   | `0x190..0x197` | water surface | `_playerkill(0x10, 1)` unless the player kind is `0x36` (JILLFISH) or `0x39` (JILLFROG) |
-  | `0x198..0x1A3` | water body | `sound(2, 4)` only, throttled to one per `0xA` frames (`DGROUP:0x439E` = last frame) |
+  | `0x198..0x1A3` | water body / waterfall | `_playerkill(0x10, 1)` for the phoenix form (`0x38`, option ON by default), otherwise `sound(2, 4)` only, throttled to one per `0xA` frames (`DGROUP:0x439E` = last frame) |
 
   Mode 1 returns before the scan when `state_flags[state] & 2` is set (dying /
   recovering). Mode 0 is the cell repaint. Mode 2 is the decorative pre-pass

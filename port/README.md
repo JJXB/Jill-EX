@@ -57,7 +57,6 @@ run.cmd --menu-theme N        front-end theme: 0 port, N = N-th game's intro boa
 run.cmd --fire-crouched       start with the crouch-fire enhancement on
 run.cmd --retain-items        start with the keep-inventory enhancement on
 run.cmd --fast-dialogs        start with the faster dialog boxes enhancement on
-run.cmd --no-message-box      plain bottom messages without the frame
 run.cmd --text-page N         open text page N (1 = "How to Play" in Jill 1)
 run.cmd --fullscreen
 run.cmd --windowed             windowed at --scale (default)
@@ -370,8 +369,7 @@ after changing `docs/profiles.json` / `docs/games.json`.
 * CHECKPT 12 drives level entrances/exits: a bare board string warps to that
   board, and `!` returns to the episode's first board (the hub).
 * The bottom message line (`_putbotmsg`, `22AB:05b4`) is shown centred at
-  `y = 186`, `0x50` ticks, all at once; `MESSAGE BOX` in the VIDEO menu puts a
-  framed box behind it (`--no-message-box` starts without).  Level titles are
+  `y = 186`, `0x50` ticks, all at once.  Level titles are
   a dialog box in the middle of the screen (`index = level id + 4` in the
   36-entry title table) and type out at the dialog speed; any input dismisses
   it after a short hold, so a direction still held from the previous level

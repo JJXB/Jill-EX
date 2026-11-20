@@ -155,10 +155,10 @@ This produces both:
 * `port\ps4\build\eboot.bin` (loose homebrew executable)
 * `port\ps4\build\IV0000-BREW00199_00-JILLEXPS40000000.pkg` (fake-signed
   installable package)
-* `port\ps4\build\JillEX-data.zip` (companion data: `jill.ini`, `games/`,
+* `port\ps4\build\JillEX-PS4-Data.zip` (companion data: `jill.ini`, `games/`,
   `profiles/` and a README; extract its contents into `/data/JillEX`)
 
-For convenience the `.pkg` and `JillEX-data.zip` are also copied to the
+For convenience the `.pkg` and `JillEX-PS4-Data.zip` are also copied to the
 repository root after a successful build (and are listed in `.gitignore`).
 
 Packaging artwork (all optional except `icon0.png`):

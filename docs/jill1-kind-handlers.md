@@ -162,7 +162,7 @@ Shapes are written `tileset<<8 | frame`. `O(i).f` is object field `f` (see 6.1).
 - teleport: `kind(player) == 0x17` (TINY) -> `_setorigin(0, dx, dy)` (the checkpoint's dx/dy hold the map position), else write `x = obj.x`, `y = obj.y - 0x10`, `state = 4`, `p11 = 0`.
 - The pending string is consumed at the top of the next main-loop iteration (`22ab:1531`): `*` music, `#` conditional load, `&` macro, `!` end of level, bare filename = board load. See `jill23-frontend-flow.md` section 4.
 - update (`param_2 == 2`): if the player AABB overlaps the checkpoint AABB, copy the player position into the checkpoint `dx/dy` (a respawn cache).
-- Port: `on_hit` case 12 + `Engine::pending_warp_` / `process_pending_warp` / `place_at_checkpoint`. After a bare-filename warp the player is placed at the target board's CHECKPT whose `p13` equals the new level id; after `!` the episode's first board is loaded and that entrance is killed.
+- Port: `on_hit` case 12 + `Engine::pending_warp_` / `process_pending_warp` / `place_at_checkpoint`. After a bare-filename warp the player is placed at the target board's CHECKPT whose `p13` equals the new level id; after `!` the episode's first board is loaded and that entrance is killed.  The port also records the teleported position in `spawn_x_`/`spawn_y_`, so death restarts Jill at the last CHECKPT she touched.
 
 ### 13. PAUL (1644:22d0) [verified]
 - draw: `_drawshape(0x42<<8 | state, x, y)` - one frame per state byte.
@@ -253,6 +253,7 @@ Shapes are written `tileset<<8 | frame`. `O(i).f` is object field `f` (see 6.1).
 - draw: the score digits are a 1bpp font - `1353:0b64(vp, (p13 & 3)+1, -1)` picks the font, `2b85:0085(value, buf)` formats the number, then one `_drawshape(0x3D0 + ascii_digit, x + i*4, y)` per character (i.e. shape bank 4, frames 0-9 for digits).
 - update: `p13` counts down; while it is still running and on screen, `x += dx`, `y += dy`, `dy -= 1` (a small arc), then `_killobj`.
 - No action-1 branch: score popups cannot be hit.
+- Port: the digits keep the original 4x5 glyphs but cycle through bright palette pairs (one pair per digit) and blink off briefly, so a kill's score reads clearly over the board.
 
 ### 28. TOKEN (1a41:000f) [verified]
 - draw: `_drawshape(0x0E00 + table[p13], x, y)` with the 8-entry word table at DGROUP:`0x0ED4` (38,12,13,11,14,15,18,20).
@@ -324,7 +325,7 @@ Shapes are written `tileset<<8 | frame`. `O(i).f` is object field `f` (see 6.1).
 
 ### 39. SNAKE (1a41:0dcb) [verified]
 - draw: three tables at DGROUP:`0x0F54` (head), `0x0F5C` (mid), `0x0F64` (tail), all indexed `p13`, plus the frame-9/5/0 offsets; body segments are drawn in a loop every 8 px up to `(w-0x18)/8`, mirrored when `dx >= 1`.
-- hit: player -> `_hitplayer`.
+- hit: player -> `_hitplayer`. An attacker (kind flag `0x4000`) removes one 8-px body segment (`w -= 8`); the snake only awards its 35 points when the body is gone (`w <= 0x18`, head + tail left).
 - update: `p13` cycles the three tables (the snake "crawls" by re-assigning head/mid/tail frames); moves like the other crawlers.
 
 ### 40. SEAROCK (1a41:46d5) [verified]

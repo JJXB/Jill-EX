@@ -41,6 +41,7 @@ copy /y "tools\demo_studio\build\jill_demo_studio.exe" "%STAGE%\" >nul || goto :
 rem --- extractor / importer tools --------------------------------------------
 copy /y "jill_extractor.py" "%STAGE%\" >nul || goto :error
 copy /y "jill_import.py" "%STAGE%\" >nul || goto :error
+copy /y "jill_editor.py" "%STAGE%\" >nul || goto :error
 copy /y "extract_all.py" "%STAGE%\" >nul || goto :error
 copy /y "tools\hud_layout.py" "%STAGE%\hud_layout.py" >nul || goto :error
 copy /y "requirements.txt" "%STAGE%\" >nul || goto :error
@@ -55,7 +56,8 @@ if errorlevel 8 goto :error
 
 rem --- documentation and notices ---------------------------------------------
 for %%F in (README.md ENGINE.md MODS.md EXTASSETS.md EXTRACTOR_README.md
-            BUILDING.md TOOLS_DATA.md LICENSE.md THIRD_PARTY_NOTICES.md) do (
+            IMPORT_README.md EDITOR_README.md BUILDING.md TOOLS_DATA.md
+            LICENSE.md THIRD_PARTY_NOTICES.md) do (
     if exist "%%F" copy /y "%%F" "%STAGE%\" >nul
 )
 if exist "docs\hud-layout-tool.md" copy /y "docs\hud-layout-tool.md" "%STAGE%\" >nul

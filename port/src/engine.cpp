@@ -305,11 +305,11 @@ bool Engine::load_board(const std::string& name, std::string& err,
 
     board_name_ = file;
     // Gems are the player's, not the board's: a gem picked up anywhere stays
-    // in the inventory until a gem door spends it.  Shipped boards carry no
-    // starting gems, so this only ever restores what Jill already had.
-    // Recorded macros keep the shipped per-board inventory so playback stays
-    // identical.
-    const int carried_gems = macro_playing_ ? 0 : inv_count(3);
+    // in the inventory until a gem door spends it.  `gems_` is the
+    // authoritative unspent count, so a board file can never grant a free gem
+    // and changing level does not add one either.  Recorded macros keep the
+    // shipped per-board inventory so playback stays identical.
+    const int carried_gems = macro_playing_ ? 0 : gems_;
     // The shipped boards mark nearly every cell 0xC000: those bits are the
     // original's "tile needs redrawing" flags (cleared in FUN_26f4_0d52), not
     // collision data.  The port redraws every frame, so strip them on load and
@@ -320,12 +320,10 @@ bool Engine::load_board(const std::string& name, std::string& err,
     }
     header_ = board_.header;
     objects_ = board_.objects;
-    if (carried_gems > 0) {
-        while (del_item(3)) {
-        }
-        for (int i = 0; i < carried_gems; ++i) {
-            add_item(3);
-        }
+    if (macro_playing_) {
+        sync_gems_from_header();
+    } else {
+        apply_gem_count(carried_gems);
     }
     // Start the level on the track its first music CHECKPT names.  The
     // original does not wait for the player to walk onto that trigger: board 1
@@ -395,6 +393,7 @@ bool Engine::load_board(const std::string& name, std::string& err,
     }
     prev_cam_x_ = cam_x_;
     prev_cam_y_ = cam_y_;
+    capture_level_snapshot();
     return true;
 }
 
@@ -699,7 +698,13 @@ void Engine::tile_hook(int col, int row, int mode) {
         }
         return;
     }
-    if (id >= 0x198 && id <= 0x1A3) {  // water body: splash sound only
+    if (id >= 0x198 && id <= 0x1A3) {  // water body / waterfall
+        // Base-game rule: the phoenix form cannot pass through a waterfall.
+        // The option lets players keep the old splash-only behaviour.
+        if (phoenix_water_death_ && objects_[0].kind == 56) {
+            player_kill(0x10, 1);
+            return;
+        }
         if (frame_ - water_sound_ > 0x0A) {
             sound(2, 4);
             water_sound_ = frame_;
@@ -709,6 +714,7 @@ void Engine::tile_hook(int col, int row, int mode) {
 }
 
 void Engine::update_pass() {
+    apply_pending_respawn_reset();
     active_.clear();
     if (objects_.empty()) {
         return;
@@ -2082,6 +2088,14 @@ bool Engine::on_hit(int a, int b) {
                 p.dx = 0;
                 p.dy = 0;
             }
+            // Touching a checkpoint makes it the respawn point: dying restarts
+            // Jill at the last CHECKPT she reached, not at the board entry.
+            spawn_x_ = p.x;
+            spawn_y_ = p.y;
+            // Register the level status at this checkpoint (elevator/platform
+            // positions, collected pickups, header inventory).  Death can then
+            // reset the board to exactly this moment.
+            capture_checkpoint_snapshot();
             if (!text.empty()) {
                 pending_warp_ = text;
             }
@@ -2235,8 +2249,12 @@ bool Engine::on_hit(int a, int b) {
             if ((profile_->kind(other_kind).flags & 0x4000) && o.state == 0) {
                 stamp_footprint(a);
                 o.state = 0x10;
-                o.h -= 8;
-                if (o.h < 0x18) {
+                // Each hit removes one body segment (8 px).  The 35-point
+                // award lands only when the body is gone (head + tail left).
+                if (o.w > 0x18) {
+                    o.w -= 8;
+                }
+                if (o.w <= 0x18) {
                     killaward(a);
                 } else {
                     sound(3, 0x1F);
@@ -3712,7 +3730,12 @@ bool Engine::tile_pixels(int tile_id, std::vector<uint8_t>& px, int& w,
 // Jill 3 blue, Onesimus grey).  We read another episode's table and remap the
 // current palette indices at draw time, so no second shape bank is needed.
 bool Engine::set_player_look(int look, const std::string& shape_path) {
-    player_look_ = look < 0 ? 0 : look;
+    if (look < 0) {
+        set_player_look_external(true);
+        return true;
+    }
+    player_look_external_ = false;
+    player_look_ = look;
     player_raw_xlate_ = player_base_xlate_;
     if (player_look_ > 0 && shape_path.empty()) {
         player_look_ = 0;
@@ -3729,6 +3752,18 @@ bool Engine::set_player_look(int look, const std::string& shape_path) {
     }
     build_player_remap();
     return true;
+}
+
+void Engine::set_player_look_external(bool on) {
+    player_look_external_ = on;
+    if (!on) {
+        return;
+    }
+    // The pack's sheet supplies its own colours, so keep the game's base
+    // translation table and rely on the external frames being drawn as-is.
+    player_look_ = -1;
+    player_raw_xlate_ = player_base_xlate_;
+    build_player_remap();
 }
 
 void Engine::set_player_suit(int suit) {
@@ -4009,13 +4044,9 @@ void Engine::draw_bottom_msg(Framebuffer& fb) {
     int w = static_cast<int>(shown.size()) * 6;
     int x = (Framebuffer::W - w) / 2;
     int y = Framebuffer::H - 14;
-    if (message_box_style_ == 1) {
-        draw_frame(fb, x - 5, y - 3, w + 10, 13);
-    } else {
-        // Plain line (the original look) with a 1 px shadow so the text stays
-        // readable over bright tiles.  Classic mode also uses this branch.
-        draw_text(fb, x + 1, y + 1, 0, shown.c_str());
-    }
+    // Plain line (the original look) with a 1 px shadow so the text stays
+    // readable over bright tiles.
+    draw_text(fb, x + 1, y + 1, 0, shown.c_str());
     draw_text(fb, x, y, msg_colour_, shown.c_str());
 }
 
@@ -4102,58 +4133,12 @@ void Engine::draw_caption(Framebuffer& fb) {
     if (lines.empty()) {
         return;
     }
-    if (message_box_style_ == 2) {
-        draw_caption_classic(fb, lines);
-        return;
-    }
-    int maxlen = 0;
-    for (const std::string& line : lines) {
-        maxlen = std::max(maxlen, static_cast<int>(line.size()));
-    }
-    maxlen = std::min(maxlen, 46);
-    const int boxw = maxlen * 6 + 16;
-    const int boxh = static_cast<int>(lines.size()) * 10 + 12;
-    int bx = (Framebuffer::W - boxw) / 2;
-    const int by = (Framebuffer::H - boxh) / 2;
-
-    // Dialog portrait: the original title screen shows the character where the
-    // in-game inventory panel sits.  Draw the same portrait beside the caption
-    // box; pack `portrait.<ext>` overrides it.
-    constexpr int kPortraitW = 64;
-    constexpr int kPortraitH = 70;
-    constexpr int kPortraitGap = 6;
-    int px = -1;
-    if (hud_portrait_ && boxw + kPortraitGap + kPortraitW <= Framebuffer::W) {
-        const int total = boxw + kPortraitGap + kPortraitW;
-        const int start = (Framebuffer::W - total) / 2;
-        px = start;
-        bx = start + kPortraitW + kPortraitGap;
-    }
-    if (px >= 0) {
-        const int py = std::max(
-            0, std::min(by + (boxh - kPortraitH) / 2,
-                        Framebuffer::H - kPortraitH));
-        draw_frame(fb, px - 3, py - 3, kPortraitW + 6, kPortraitH + 6);
-        draw_portrait(fb, px, py);
-    }
-    draw_frame(fb, bx, by, boxw, boxh);
-
-    size_t budget = caption_shown_;
-    int ty = by + 6;
-    for (const std::string& line : lines) {
-        const size_t n = std::min(budget, line.size());
-        if (n > 0) {
-            const std::string part = line.substr(0, n);
-            draw_text(fb, bx + 8, ty, 7, part.c_str());
-            budget -= n;
-        }
-        ty += 10;
-    }
+    draw_caption_classic(fb, lines);
 }
 
 // Original level-title card: a shape-7 window with the 64x70 Jill portrait on
 // the left and a blue text plate on the right (the "JILL BOUNDS THROUGH THE
-// BOULDERS" box).  Selected by VIDEO > MESSAGE BOX: CLASSIC.
+// BOULDERS" box).
 void Engine::draw_caption_classic(Framebuffer& fb,
                                   const std::vector<std::string>& lines) {
     constexpr int kBoxW = 200;
@@ -4301,9 +4286,6 @@ void Engine::draw_text_page(Framebuffer& fb) {
     // Title (the page's first line); its colour digit follows the same 0-7
     // rule as the body but colour 1 is remapped so it stays readable.
     std::string title = page->lines.empty() ? std::string() : page->lines[0].text;
-    if (title.empty()) {
-        title = "PAGE " + std::to_string(page_number_);
-    }
     const uint8_t title_colour =
         page->lines.empty() ? 7 : page_colour(page->lines[0].colour);
 
@@ -4320,10 +4302,10 @@ void Engine::draw_text_page(Framebuffer& fb) {
     }
     maxlen = std::max(1, std::min(maxlen, 48));
 
-    // Footer text shared by both styles.
+    // Footer text shared by both styles.  The original text-page presentation
+    // does not show a page number, so only the scroll position and close hint
+    // are drawn.
     char info[48];
-    std::snprintf(info, sizeof(info), "PAGE %d", page_number_);
-    const std::string page_label = info;
     std::string screen_label;
     if (max_scroll > 0) {
         const int boxes = (static_cast<int>(body.size()) + visible - 1) / visible;
@@ -4333,7 +4315,6 @@ void Engine::draw_text_page(Framebuffer& fb) {
     }
 
     auto draw_footer = [&](int x, int y, int w, uint8_t colour) {
-        draw_text_font(fb, x + 2, y, colour, 2, 6, page_label.c_str());
         if (!screen_label.empty()) {
             const int sw = static_cast<int>(screen_label.size()) * 6;
             draw_text_font(fb, x + (w - sw) / 2, y, colour, 2, 6,
@@ -4374,7 +4355,7 @@ void Engine::draw_text_page(Framebuffer& fb) {
         return;
     }
 
-    if (message_box_style_ == 2) {
+    {
         // CLASSIC: the original news-bulletin window - a shape-7 patterned
         // frame, a blue title, then a blue plate with the page text.
         constexpr int kLineH = 8;
@@ -4418,57 +4399,6 @@ void Engine::draw_text_page(Framebuffer& fb) {
         draw_footer(panel_x, panel_y + panel_h - 10, panel_w, 15);
         return;
     }
-
-    // MODERN: a centred, semi-transparent card over the live screen instead
-    // of a full-screen black page.  Three of every four pixels are cleared so
-    // the board stays visible behind the text without swallowing the letters.
-    constexpr int kLineH = 8;
-    const int bw = std::max(196, std::min(296, maxlen * 6 + 36));
-    const int bh = std::min(170, std::max(88, count * kLineH + 42));
-    const int bx = (Framebuffer::W - bw) / 2;
-    const int by = (Framebuffer::H - bh) / 2;
-    for (int y = by; y < by + bh; ++y) {
-        for (int x = bx; x < bx + bw; ++x) {
-            // 2x2 ordered dither: one pixel in four stays visible.
-            if (!((x & 1) == 0 && (y & 1) == 0)) {
-                fb.put(x, y, 0);
-            }
-        }
-    }
-    fb.fill_rect(bx, by, bw, 1, 8);
-    fb.fill_rect(bx, by + bh - 1, bw, 1, 8);
-    fb.fill_rect(bx, by, 1, bh, 8);
-    fb.fill_rect(bx + bw - 1, by, 1, bh, 8);
-
-    // Solid title/footer strips keep the small type readable; the body stays
-    // translucent so the board is still visible behind it.
-    fb.fill_rect(bx + 1, by + 1, bw - 2, 14, 0);
-    fb.fill_rect(bx + 1, by + bh - 14, bw - 2, 13, 0);
-
-    const int tw = static_cast<int>(title.size()) * 6;
-    draw_text_font(fb, std::max(bx + 3, bx + (bw - tw) / 2) + 1, by + 6, 0,
-                   2, 6, title.c_str());
-    draw_text_font(fb, std::max(bx + 4, bx + (bw - tw) / 2), by + 5,
-                   title_colour, 2, 6, title.c_str());
-    fb.fill_rect(bx + 6, by + 15, bw - 12, 1, 8);
-
-    const int body_top = by + 20;
-    const int body_h = bh - 34;
-    int y = body_top + std::max(0, (body_h - count * kLineH) / 2);
-    for (int i = page_scroll_; i < page_scroll_ + count; ++i) {
-        const TextPage::Line& line = body[static_cast<size_t>(i)];
-        if (!line.text.empty()) {
-            const int x =
-                (Framebuffer::W - static_cast<int>(line.text.size()) * 6) / 2;
-            draw_text_font(fb, std::max(bx + 3, x + 1), y + 1, 0, 2, 6,
-                           line.text.c_str());
-            draw_text_font(fb, std::max(bx + 2, x), y,
-                           page_colour(line.colour), 2, 6,
-                           line.text.c_str());
-        }
-        y += kLineH;
-    }
-    draw_footer(bx, by + bh - 12, bw, 8);
 }
 
 void Engine::show_text_page(int number) {
@@ -4633,11 +4563,22 @@ void Engine::draw_player_shape(Framebuffer& fb, int shape, int x, int y,
                                bool transparent) {
     const int entry = (shape >> 8) & 0x3F;
     const int index = shape & 0xFF;
-    const ShapeFrame* f = shape_frame(entry, index);
-    if (!f) {
-        return;
+    // The external pack look uses its own `sprites/player` sheet first, then
+    // falls back to the running game's (possibly pack-overridden) art.
+    const ShapeFrame* f = nullptr;
+    bool external = false;
+    if (player_look_external_ && ext_visuals_) {
+        f = ext_visuals_->player_shape(index);
+        external = f != nullptr;
     }
-    const bool external = ext_visuals_ && ext_visuals_->shape((entry << 8) | index);
+    if (!f) {
+        f = shape_frame(entry, index);
+        if (!f) {
+            return;
+        }
+        external = ext_visuals_ &&
+                   ext_visuals_->shape((entry << 8) | index) != nullptr;
+    }
     for (int sy = 0; sy < f->h; ++sy) {
         for (int sx = 0; sx < f->w; ++sx) {
             uint8_t c = f->px[static_cast<size_t>(sy) * f->w + sx];
@@ -4782,9 +4723,37 @@ void Engine::draw_object(int i, Framebuffer& fb) {
                 buf[n++] = static_cast<char>('0' + (v % 10));
                 v /= 10;
             } while (v != 0 && n < 11);
+            // Enhancement: the floating score blinks and cycles through bright
+            // palette pairs, one pair per digit, so it stands out from the
+            // board art.  The glyphs use palette entries 1 and 3.
+            static const uint8_t kPairs[4][2] = {
+                {11, 3},   // light cyan / cyan
+                {14, 12},  // yellow / light red
+                {10, 2},   // light green / green
+                {13, 5},   // light magenta / magenta
+            };
+            const int phase = (o.p13 + frame_) / 2;
+            if ((phase & 3) == 3) {
+                return;  // blink off one frame in four
+            }
             for (int d = 0; d < n; ++d) {
                 int digit = buf[n - 1 - d] - '0';
-                draw_shape(fb, 0x0400 + digit, x + d * 4, y, true);
+                const uint8_t* pair = kPairs[(phase / 4 + d) & 3];
+                const ShapeFrame* f = shape_frame(4, digit);
+                if (!f) {
+                    continue;
+                }
+                for (int sy = 0; sy < f->h; ++sy) {
+                    for (int sx = 0; sx < f->w; ++sx) {
+                        const uint8_t c =
+                            f->px[static_cast<size_t>(sy) * f->w + sx];
+                        if (c == 0) {
+                            continue;
+                        }
+                        fb.put(x + d * 4 + sx, y + sy,
+                               c == 1 ? pair[0] : pair[1]);
+                    }
+                }
             }
             return;
         }
@@ -5570,6 +5539,9 @@ void Engine::add_item(int id) {
     header_[5] = 0;
     header_[6 + n * 2] = static_cast<uint8_t>(id);
     header_[7 + n * 2] = 0;
+    if (id == 3) {
+        ++gems_;
+    }
 }
 
 bool Engine::del_item(int id) {
@@ -5583,9 +5555,31 @@ bool Engine::del_item(int id) {
             header_[7 + j * 2] = header_[7 + (j + 1) * 2];
         }
         header_[4] = static_cast<uint8_t>(n - 1);
+        if (id == 3 && gems_ > 0) {
+            --gems_;
+        }
         return true;
     }
     return false;
+}
+
+void Engine::sync_gems_from_header() {
+    gems_ = inv_count(3);
+}
+
+void Engine::apply_gem_count(int n) {
+    if (n < 0) {
+        n = 0;
+    }
+    if (n > kMaxInventory) {
+        n = kMaxInventory;
+    }
+    while (del_item(3)) {
+    }
+    for (int i = 0; i < n; ++i) {
+        add_item(3);
+    }
+    gems_ = n;
 }
 
 // 1FAE:2E61: transformation tokens.  4-7 become frog/bird/spider/fish; token
@@ -5732,7 +5726,32 @@ void Engine::debug_spawn_blade() {
     }
 }
 
-void Engine::respawn() {
+void Engine::capture_level_snapshot() {
+    level_snapshot_.map = map_;
+    level_snapshot_.header = header_;
+    level_snapshot_.objects = objects_;
+    level_snapshot_.extra.clear();
+    level_snapshot_valid_ = true;
+    level_spawn_x_ = spawn_x_;
+    level_spawn_y_ = spawn_y_;
+    checkpoint_snapshot_valid_ = false;
+    pending_respawn_reset_ = false;
+}
+
+void Engine::capture_checkpoint_snapshot() {
+    checkpoint_snapshot_.map = map_;
+    checkpoint_snapshot_.header = header_;
+    checkpoint_snapshot_.objects = objects_;
+    checkpoint_snapshot_.extra.clear();
+    checkpoint_snapshot_valid_ = true;
+    checkpoint_spawn_x_ = spawn_x_;
+    checkpoint_spawn_y_ = spawn_y_;
+}
+
+void Engine::place_player_after_respawn() {
+    if (objects_.empty()) {
+        return;
+    }
     BoardObject& p = objects_[0];
     p.kind = 0;
     p.x = spawn_x_;
@@ -5762,6 +5781,79 @@ void Engine::respawn() {
     for (uint16_t& cell : map_) {
         cell &= 0x3FFF;
     }
+}
+
+// Restore the registered level status after a death.  This runs at the start
+// of the next update pass: respawn() is called from inside the object loop, so
+// replacing `objects_` there would invalidate the caller's reference.
+void Engine::apply_pending_respawn_reset() {
+    if (!pending_respawn_reset_) {
+        return;
+    }
+    pending_respawn_reset_ = false;
+    const Board* snap = nullptr;
+    if (respawn_mode_ == 1) {
+        if (level_snapshot_valid_) {
+            snap = &level_snapshot_;
+        }
+    } else if (respawn_mode_ == 0) {
+        if (checkpoint_snapshot_valid_) {
+            snap = &checkpoint_snapshot_;
+        } else if (level_snapshot_valid_) {
+            snap = &level_snapshot_;
+        }
+    }
+    if (!snap || snap->objects.empty()) {
+        return;
+    }
+    // Score is the one header field that always survives death.  Everything
+    // else (health, inventory, gems) returns to the registered snapshot, which
+    // keeps a spent key/gem and the door it opened consistent.
+    const std::array<uint8_t, 4> score = {
+        header_[0x26], header_[0x27], header_[0x28], header_[0x29]};
+    map_ = snap->map;
+    for (uint16_t& cell : map_) {
+        cell &= 0x3FFF;
+    }
+    objects_ = snap->objects;
+    header_ = snap->header;
+    header_[0x26] = score[0];
+    header_[0x27] = score[1];
+    header_[0x28] = score[2];
+    header_[0x29] = score[3];
+    sync_gems_from_header();
+    for (BoardObject& o : objects_) {
+        o.flags &= ~0xC000;
+        o.prev_x = o.x;
+        o.prev_y = o.y;
+    }
+    active_.clear();
+    order_.clear();
+    board_.map = map_;
+    board_.header = header_;
+    board_.objects = objects_;
+    place_player_after_respawn();
+}
+
+void Engine::respawn() {
+    // Pick the respawn point for the configured mode.  The board reset itself
+    // is deferred to the next update pass (see apply_pending_respawn_reset).
+    if (respawn_mode_ == 0) {
+        if (checkpoint_snapshot_valid_) {
+            spawn_x_ = checkpoint_spawn_x_;
+            spawn_y_ = checkpoint_spawn_y_;
+            pending_respawn_reset_ = true;
+        } else if (level_snapshot_valid_) {
+            spawn_x_ = level_spawn_x_;
+            spawn_y_ = level_spawn_y_;
+            pending_respawn_reset_ = true;
+        }
+    } else if (respawn_mode_ == 1 && level_snapshot_valid_) {
+        spawn_x_ = level_spawn_x_;
+        spawn_y_ = level_spawn_y_;
+        pending_respawn_reset_ = true;
+    }
+    place_player_after_respawn();
 }
 
 // 1415:05FD / 0415:0A8B: replay a recorded input macro.  The file has no
@@ -5986,57 +6078,36 @@ void Engine::process_pending_warp() {
         board_level_ = level;
         loaded_level = level_id();
     }
-    // FUN_22AB_1531 saves only the score around the board change: health,
-    // keys/gems/weapons come from the incoming board's header, or from the
-    // `temp` copy when `!` restores a board.  (The old port carried the source
-    // header and then dropped non-gems, so a level entered from the hub or the
-    // demo kept the hub's health and item list instead of the board's.)
+    // FUN_22AB_1531 saves only the score around the board change: health and
+    // keys/weapons come from the incoming board's header, or from the `temp`
+    // copy when `!` restores a board.  Gems are the exception: unspent gems
+    // belong to Jill across levels.  Without `retain_items_`, every other
+    // carried item is dropped when a level is left.
     std::array<uint8_t, 4> saved_score = {saved[0x26], saved[0x27],
                                           saved[0x28], saved[0x29]};
     if (retain_items_) {
         // Enhancement: keep the live inventory/health across the change.
         header_ = saved;
-    } else if (c == '!' && restored_hub) {
-        header_ = hub_backup_.header;
-        // The hub copy was stashed when the level was entered, so it still has
-        // the item list Jill had *before* the level.  On the world map, keys
-        // and gems picked up inside the level (and not spent) belong to Jill,
-        // so carry the live list over.  Other stashed boards (the demo's intro
-        // screen) keep the stashed header, exactly as the original does.
-        if (hub_map_mode_) {
-            header_[4] = saved[4];
-            header_[5] = saved[5];
-            for (int i = 0; i < kMaxInventory * 2; ++i) {
-                header_[6 + i] = saved[6 + i];
-            }
-            hub_backup_.header = header_;
+        if (!macro_playing_) {
+            sync_gems_from_header();
         }
-    } else if (c == '!' && map_mode_) {
-        // No stashed hub (a save from before the hub block existed, or a level
-        // started directly): the map was just reloaded from disk.  Keep the
-        // inventory the level ended with so gems still show on the map.
-        header_[4] = saved[4];
-        header_[5] = saved[5];
+    } else if (macro_playing_) {
+        // Recorded macros keep the shipped per-board inventory so playback
+        // stays identical; load_board already synced `gems_` from the header.
+    } else if (c == '!') {
+        // Leaving a level: the original restores the stashed `temp` board.
+        // Health and keys come from that copy, but no carried non-gem item
+        // survives; only Jill's unspent gems are put back.
+        if (restored_hub) {
+            header_ = hub_backup_.header;
+        }
+        const int carried_gems = gems_;
+        header_[4] = 0;
+        header_[5] = 0;
         for (int i = 0; i < kMaxInventory * 2; ++i) {
-            header_[6 + i] = saved[6 + i];
+            header_[6 + i] = 0;
         }
-    }
-    // Gems are never cleared by a board change: they stay until a gem door
-    // spends them.  `load_board` already carried them into a freshly loaded
-    // board; this covers the hub restores above, which bypass it.  Recorded
-    // macros keep the shipped per-board inventory so playback stays identical.
-    if (!retain_items_ && !macro_playing_) {
-        int gems = 0;
-        for (int i = 0; i < 16; ++i) {
-            if ((saved[6 + i * 2] | (saved[7 + i * 2] << 8)) == 3) {
-                ++gems;
-            }
-        }
-        while (del_item(3)) {
-        }
-        for (int i = 0; i < gems; ++i) {
-            add_item(3);
-        }
+        apply_gem_count(carried_gems);
         if (restored_hub) {
             hub_backup_.header = header_;
         }
@@ -6139,6 +6210,10 @@ void Engine::process_pending_warp() {
             last_music_ = hub_music;
         }
     }
+    // Everything above (restored hub, consumed entrance, placed player) is the
+    // status this board starts with.  Re-capture it for the respawn setting and
+    // discard any checkpoint snapshot from the previous board.
+    capture_level_snapshot();
 }
 
 // 26F4:04C7: after a board load, stand the player on the CHECKPT whose p13
@@ -6199,6 +6274,10 @@ bool Engine::place_at_checkpoint(int level) {
     }
     spawn_x_ = x;
     spawn_y_ = y;
+    // The entrance is the level's start position: keep it for "reset to level
+    // start" even after a later CHECKPT moves the respawn point.
+    level_spawn_x_ = x;
+    level_spawn_y_ = y;
     cam_x_ = std::max(0, std::min(x + 8 - sim_center_x(),
                                   Board::kCols * 16 - sim_view_w()));
     cam_y_ = std::max(0, std::min(y + 16 - sim_center_y(),
@@ -6338,6 +6417,7 @@ bool Engine::load_game(int slot, std::string& err) {
     }
     header_ = b.header;
     objects_ = b.objects;
+    sync_gems_from_header();
     // A save does not record the board name; the hub is the only board whose
     // level id is 0 in the episodes that place MAPDEMO (Onesimus).
     map_mode_ = (header_[0] | (header_[1] << 8)) == 0;
@@ -6464,6 +6544,7 @@ bool Engine::load_game(int slot, std::string& err) {
     }
     prev_cam_x_ = cam_x_;
     prev_cam_y_ = cam_y_;
+    capture_level_snapshot();
     put_bottom_msg("GAME RESTORED");
     return true;
 }

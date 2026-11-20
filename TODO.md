@@ -2,16 +2,19 @@
   * Neaten up Classic Menus - Mostly there?
   * Stereo Rendering - SBS, Interlaced - Code Disabled,
   * Fix PS4 Crashes
-    * Quit: Still broken.
+    * Quit: videoout now flips to the spare group, unregisters it, then flips
+      to the system blank (`-1`) before closing/freeing.  Built 2026-11-20
+      (startup marker "quit diag 4") - awaiting test.
   * Check Version? 
   * Demos - Jill2 still desyncing JN3DEM1 Knife misses but completes anyway Desync after T460/R45, JN3DEM2 - blade desyncs somewhere after T250/R16 JN3DEM3 desync after T265/R34
   * Level 1 > MAP music carryover issue? - Check with the person - Not happening for me
   * Tiny Landing pause with kneeling animation - Check with others if visible
   * Menu Sizes? (separate Menus themselves and the game render?)
   * Docs/info readability?
-  * Blinking multicoloured numbers for score 
-  * Make Nuked Default OPL core
-  * Remove Modern menu and Messagebox.
+
+  * Gameplay option: Fire weapon from vines
+
+  * Tile issue with editor
 
 * Least Important Ideas
   * Other Games

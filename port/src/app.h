@@ -81,30 +81,22 @@ struct Options {
     bool invincible = false;    // --invincible: debug no-damage mode
     int super_jump = 0;         // --super-jump N: cheat, minimum feather count (0..15)
     int menu_theme = 0;         // --menu-theme N: 0 plain, N = games[N-1] intro board
-    bool classic_menu = false;  // --classic-menu: original frame/window menu
-    bool live_menu_bg = false;  // show the live game behind a modern menu
     int splash = -1;            // --splash N: -1 auto, 0 off, N = games[N-1]
     int save_slot = -1;         // --save N: headless debug, write save slot N
     int load_slot = -1;         // --load N: load save slot N before running
     bool fire_crouched = false; // --fire-crouched: enhancement default
     bool retain_items = false;  // --retain-items: enhancement default
     bool fast_dialogs = false;  // --fast-dialogs: shorter, revealing messages
-    int message_box = 1;        // 0 off, 1 modern frame, 2 classic windows
     bool air_jump_buffer = false; // --air-jump-buffer: hold jump through a fall
     bool minimap = false;       // --minimap: board overview overlay
     bool animated_water = true; // --no-animated-water: freeze water tiles
-#if defined(JILL_XBOX)
-    // The built-in OPL2 core synthesises with doubles and calls sin()/pow()
-    // per operator per sample: ~10-19 ms per 48 kHz buffer on a 733 MHz CPU,
-    // i.e. half of a single core.  Nuked OPL3 is integer and ~10x cheaper (the
-    // user can still pick BUILTIN in OPTIONS > SOUND > OPL CORE).
-    int opl_core = 1;           // --opl-core: 0 built-in OPL2, 1 Nuked, 2 fmopl
-#else
-    int opl_core = 0;           // --opl-core: 0 built-in OPL2, 1 Nuked, 2 fmopl
-#endif
+    int opl_core = 0;           // --opl-core: 0 Nuked OPL3, 1 fmopl
     bool center_fish_shot = false; // --center-fish-shot: vertical fish shot
+    int respawn_mode = 0;      // --respawn N: 0 checkpoint, 1 level start, 2 none
+    bool phoenix_water_death = true; // --no-phoenix-water-death: splash only
+    bool throw_from_vines = false; // --throw-from-vines: throw while climbing
     bool turtle = false;       // --turtle: Jill 3-style half-speed mode
-    int player_look = 0;       // --jill-look N: 0 game default, N = games[N-1]
+    int player_look = 0;       // --jill-look N: 0 default, N = game N, -1 pack
     int player_suit = 0;       // --jill-colour N: 0 default, 1..8 presets
 };
 

@@ -380,12 +380,22 @@ shared_tail:
     // enabled, use the last direction the player faced instead and spawn the
     // weapon at the crouch-pose hand height (frame 0x3D occupies rows 12..31).
     const bool crouched = o.state == 0 && o.dy == 3;
+    const bool climbing = o.state == 3;
     int facing = o.p1b;
     if (fire_while_crouched_ && crouched) {
         facing = last_facing_;
     }
-    if (in_.btn2 && o.state >= 0 && o.state < 6 &&
-        (kStateFlags[o.state] & 1) && facing != 0) {
+    // Climbing usually keeps the last horizontal facing in p1b, but a vine
+    // grabbed without one leaves it at 0: use the remembered aim, then fall
+    // back to the right so the option always has a direction.
+    if (throw_from_vines_ && climbing && facing == 0) {
+        facing = last_facing_ != 0 ? last_facing_ : 1;
+    }
+    // The original marks states that may throw with state_flags bit 0 (only
+    // states 0 and 2).  The option adds the climb state.
+    const bool may_throw =
+        (kStateFlags[o.state] & 1) || (throw_from_vines_ && climbing);
+    if (in_.btn2 && o.state >= 0 && o.state < 6 && may_throw && facing != 0) {
         latch2_ = true;
         int blades = 0;
         for (const BoardObject& b : objects_) {
@@ -394,7 +404,8 @@ shared_tail:
             }
         }
         int sx = o.x + facing * 0x0C + 4;
-        int sy = o.y + ((fire_while_crouched_ && crouched) ? 0x12 : 2);
+        int sy = o.y + ((fire_while_crouched_ && crouched) ? 0x12
+                                                          : (climbing ? 8 : 2));
         if (blades < inv_count(8)) {
             int n = add_obj(0x32, sx, sy);
             if (n >= 0) {

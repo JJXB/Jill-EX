@@ -22,7 +22,6 @@ add_executable(jill
     src/platform_paths.cpp
     src/screen_sdl.cpp
     src/cmf.cpp
-    src/opl2.cpp
     src/nuked_opl.cpp
     src/fmopl_opl.cpp
     src/music.cpp

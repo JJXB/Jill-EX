@@ -47,18 +47,16 @@ uint8_t carrier_level(uint8_t scaling, int velocity) {
 }  // namespace
 
 Music::Music(int sample_rate)
-    : opl_(sample_rate), nuked_(sample_rate), fmopl_(sample_rate) {
+    : nuked_(sample_rate), fmopl_(sample_rate) {
     reset();
 }
 
 const char* Music::opl_core_name(OplCore core) {
     switch (core) {
-        case OplCore::Nuked:
-            return "NUKED OPL3";
         case OplCore::Fmopl:
             return "FMOPL";
         default:
-            return "BUILTIN OPL2";
+            return "NUKED OPL3";
     }
 }
 
@@ -71,53 +69,43 @@ void Music::set_opl_core(OplCore core) {
 }
 
 void Music::reset_cores() {
-    opl_.reset();
     nuked_.reset();
     fmopl_.reset();
 }
 
 void Music::write_reg(uint8_t reg, uint8_t value) {
     switch (core_) {
-        case OplCore::Nuked:
-            nuked_.write(reg, value);
-            break;
         case OplCore::Fmopl:
             fmopl_.write(reg, value);
             break;
         default:
-            opl_.write(reg, value);
+            nuked_.write(reg, value);
             break;
     }
 }
 
 int Music::core_rate() const {
     switch (core_) {
-        case OplCore::Nuked:
-            return nuked_.sample_rate();
         case OplCore::Fmopl:
             return fmopl_.sample_rate();
         default:
-            return opl_.sample_rate();
+            return nuked_.sample_rate();
     }
 }
 
 double Music::note_rate() const {
-    // The built-in core generates one phase increment per output sample; the
-    // other two run at the chip's native rate internally.
-    return core_ == OplCore::Builtin ? static_cast<double>(core_rate())
-                                     : kOpl2Rate;
+    // Both cores run at the chip's native rate internally and resample to the
+    // output rate.
+    return kOpl2Rate;
 }
 
 void Music::core_generate(float* out, int frames) {
     switch (core_) {
-        case OplCore::Nuked:
-            nuked_.generate(out, frames);
-            break;
         case OplCore::Fmopl:
             fmopl_.generate(out, frames);
             break;
         default:
-            opl_.generate(out, frames);
+            nuked_.generate(out, frames);
             break;
     }
 }

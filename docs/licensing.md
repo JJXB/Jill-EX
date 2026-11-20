@@ -117,7 +117,7 @@ Downsides to accept:
 * `README.md` - has a Legal/trademarks section with the Epic disclaimer and the
   "supply your own game data" statement.  `DISCLAIMER.txt` repeats it for
   binary/data distributions and is copied beside the `.pkg` and into
-  `JillEX-data.zip`.
+  `JillEX-PS4-Data.zip`.
 * The PS4 application icon (`port/ps4/sce_sys/icon0.png`) is rendered from the
   original game's artwork.  It is excluded from the project licence, called out
   in the README/notices, and the port also prints a two-line notice on every

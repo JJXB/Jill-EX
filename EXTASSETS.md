@@ -151,6 +151,7 @@ audio extension.
 | --- | --- |
 | `kind_<n>.<ext>` | every frame of kind `n` |
 | `shape_<entry>_<frame>.<ext>` | one shape-bank entry/frame |
+| `player.<ext>` | the player sheet used by the EXTERNAL PACK Jill look |
 
 `kind_<n>` is a horizontal strip.  The number of cells is the original
 shape's frame count; cell `i` occupies columns
@@ -164,6 +165,12 @@ cells.
 `shape_<entry>_<frame>` overrides a single shape directly.  `entry` is the
 `.sha` bank entry (0..63) and `frame` is its frame index.  This is the escape
 hatch for art that is not tied to a kind.
+
+`player.<ext>` is a horizontal strip of the player's shape entry 8 frames.  It
+is only used when `GAMEPLAY > JILL LOOK` is set to `EXTERNAL PACK` (also
+`--jill-look -1`); the other look choices keep the game's own art.  A pack
+without `player.<ext>` falls back to its normal `kind_0` / `shape_8_*`
+overrides for that look.
 
 ### 5.2 Tiles: `tiles\`
 
@@ -351,6 +358,7 @@ game = jill1
 [sprites]
 kind_4 = art/frog_strip.png
 shape_8_16 = art/jill_torso.png
+player = art/jill_player_strip.png
 
 [tiles]
 12 = art/grass.png
@@ -515,7 +523,9 @@ mounts/unmounts immediately; `RESCAN FOLDER` re-reads `external\`.
 * Check the id/key matches the game's data.  Kind numbers, tile ids and board
   names differ between episodes.
 * Shapes are replaced by shape id, not by object: a kind override only affects
-  objects that use that kind's tileset.
+  objects that use that kind's tileset.  Jill herself is kind `0` / shape entry
+  `8`, so use `kind_0`, `shape_8_*` or `sprites/player.<ext>` - `kind_8` is the
+  BUNNY enemy and will not change the player.
 * Board names are without extensions (`3`, not `3.jn1`).
 * Check the console: decode failures print `external: <file>: <reason>`.
 * Some art (menus, text layout, splash screens) is not data-driven and is not

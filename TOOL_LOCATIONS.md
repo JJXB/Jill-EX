@@ -4,6 +4,8 @@ MKPROFILE - "tools\\mkprofile.py" (Python; profiles a Jill-engine EXE into profi
 
 HUDLAYOUT - "tools\\hud_layout.py" (Python/Tk + Pillow; HUD alignment editor with PNG or Jill .dma/.sha tilesets, writes .hudlayout files; see docs\hud-layout-tool.md)
 
+JILLEDITOR - "jill_editor.py" (Python/Tk + Pillow; GUI editor for .sha sprites, .dma tiles, .jn1 boards/levels, VCL text pages and VCL SFX, built on jill_extractor.py + jill_import.py; see EDITOR_README.md)
+
 DEMOSTUDIO - "tools\\demo_studio" (C++/SDL2; external .mac playback viewer/editor that links the port/src engine core; x64 build tools\build_demo_studio.cmd + tools\run_demo_studio.cmd, Win32 build tools\build_demo_studio32.cmd + tools\run_demo_studio32.cmd, capture with tools\capture_demo_studio.cmd; the matching jill_demo_studio.exe is included in the x64/x86 release zips; see docs\demo-studio.md)
 
 FFMPEG - "C:\\Apps\\ffmpeg-master-latest-win64-gpl-shared\\bin"

@@ -146,10 +146,9 @@ frame rate at 480i/480p and 720p, with pad input, music and sound effects.
   milliseconds: pdclib's `printf` has no `%f`).  `[debug] overlay = 1` also
   draws the numbers on screen.  Nothing is printed to the debug channel,
   because debug BIOSes draw it over the TV picture.
-* Music defaults to the integer **Nuked OPL3** core (`[audio] opl_core = 1`);
-  the built-in OPL2 core uses `sin()`/`pow()` per operator per sample and cost
-  ~10-19 ms per 48 kHz buffer on this CPU.  OPTIONS > SOUND > OPL CORE can
-  switch back.
+* Music defaults to the integer **Nuked OPL3** core (`[audio] opl_core = 0`),
+  which is both accurate and cheap on this CPU.  OPTIONS > SOUND > OPL CORE
+  can switch to fmopl if needed.
 * Startup bandwidth check in the log: `xbox fb bench: cached=.. framebuffer=..
   MB/s` (measured 640 / 1121 MB/s on hardware).
 

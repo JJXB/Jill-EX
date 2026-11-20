@@ -1,5 +1,223 @@
 # Progress
 
+## 2026-11-20 (PS4 data zip renamed)
+
+* `build_ps4.cmd` now writes/copies `JillEX-PS4-Data.zip` (repository root and
+  `port\ps4\build`) instead of `JillEX-data.zip`, so the PS4 companion data is
+  clearly separated from the desktop and Vita archives.  `.gitignore`,
+  `BUILDING.md`, `README.md`, `docs/licensing.md` and `PS4_PORT_PLAN.md`
+  updated.
+
+## 2026-11-20 (port: respawn modes, phoenix waterfall, snake hits, page numbers)
+
+* `OPTIONS > GAMEPLAY > RESPAWN` adds `RESET TO CHECKPOINT` (default),
+  `RESET TO LEVEL START` and `NO RESET`.  The board (map, objects and header)
+  is snapshotted at load and again whenever a CHECKPT is touched; death
+  restores the selected snapshot, so elevator/platform positions and opened
+  doors rewind consistently.  Score always survives; the reset is applied at
+  the start of the next update pass so no handler reference is invalidated.
+  INI key `[gameplay] respawn_mode` (`0`/`1`/`2`), CLI `--respawn N`.
+* `PHOENIX WATER DEATH` (default ON) makes the phoenix form die on waterfall /
+  water-body tiles (`0x198`..`0x1A3`); `--no-phoenix-water-death` keeps the
+  old splash-only behaviour.  INI `[gameplay] phoenix_water_death`.
+* `THROW FROM VINES` (default OFF) lets Jill throw a knife/blade from the climb
+  state; the original restricts throws to states 0 and 2.  INI
+  `[gameplay] throw_from_vines`, CLI `--throw-from-vines`.
+* Text-page dialogs no longer print `PAGE n` in the title or footer.
+* A SNAKE now loses one 8-px body segment per hit; the 35-point award lands
+  only when the body is gone.  `docs/jill1-kind-handlers.md` updated.
+* The cheat formerly labelled `BECOME BIRD` is now `BECOME PHOENIX`.
+
+## 2026-11-20 (port: gem tracking, checkpoint respawn, exit items, score popups)
+
+* Gems (item 3) now have an authoritative `Engine::gems_` counter.  A board file
+  can no longer grant a free gem, changing level does not add one, and the
+  header inventory is rebuilt from the counter whenever a board is loaded or
+  restored.  Unspent gems still follow Jill between levels.
+* Touching a `CHECKPT` now records the player's position as the respawn point,
+  so death restarts at the last checkpoint instead of the board entry.
+* Leaving a level through `!` drops every non-gem item (keys, knives, etc.).
+  Only gems are put back into the restored hub/map header; the `retain_items`
+  enhancement still keeps the whole inventory.
+* Floating score popups (kind 27) blink and cycle through bright palette pairs,
+  one colour pair per digit.
+* Text pages are no longer switchable with Left/Right, the D-pad or the stick;
+  vertical scrolling and close still work.  `HOTKEYS.md` updated.
+
+## 2026-11-20 (editor: kind-aware level canvas; original-game-safe tiles)
+
+* Preserving the palette words' low bits did not fix the original DOS game, so
+  tile palette cloning is no longer exposed in the GUI.  Tile import now has a
+  **Dither to existing palette** checkbox (`jill_import.quantize(dither=True)`
+  plus `--dither` on `sha-frame`/`sha-tile`): the palette and `.dma` are never
+  touched, and new art is approximated with Floyd-Steinberg dithering.  The
+  `tile-clone` CLI remains available but is documented as port-only.
+* Level canvas gained object overlays: coloured boxes/short kind names
+  (**Kinds**), dashed yellow lines between objects sharing a non-zero
+  `primary_param` trigger channel (**Links**), a right-click properties menu
+  (edit/select links/delete), Shift+left-click to delete an object under the
+  cursor, Ctrl+left-click to paint a configurable **Erase tile**, and zoom
+  cycling at 1x/2x/4x.  Smoke test exercises painting, both erase modes,
+  zoom and the overlays without error dialogs.
+* Docs updated in `EDITOR_README.md` and `IMPORT_README.md`.
+
+## 2026-11-20 (Vita / Android: PS4-only fault handler guard)
+
+* `main.cpp` called `install_ps4_fault_handlers()` from the shared
+  console/Android log setup, but the helper is compiled only for `JILL_PS4`.
+  Guarded the call (and its PS4 quit trace) with `#if defined(JILL_PS4)`, which
+  fixes the Vita and Android builds.  Also removed the now-unused
+  `lower_ascii` / `text_has_word` helpers to clear the Android warning.
+* Rebuilt: `build.cmd`, `build_vita.cmd` and `build_android.cmd` all pass.
+
+## 2026-11-20 (port: STORY menu from intro boards)
+
+* Added a front-end `STORY` row (after `RESTORE GAME`).  It lists every
+  installed game/mod, then shows that game's story as a full-screen board page:
+  the intro board is loaded in a temporary `Engine`, the `CHECKPT` with
+  `p13 = 0` is used as the original page anchor, and the page is rendered at
+  its `x,y` (following `p1b` links when a mod has more than one page).  Enter /
+  Right advances, Left / Esc returns to the selector.  Uses the selected game's
+  palette so Onesimus and total-conversion mods keep their colours.
+* The menu is still the classic-only layout from the previous change; the story
+  viewer bypasses the menu chrome and draws the board page directly.
+* Builds: `build.cmd` clean.  Headless camera renders confirmed the page
+  anchors at the expected intro-board regions for Jill 1/2/3.
+* No in-game run was performed (user controls interactive testing).
+
+## 2026-11-20 (port: external Jill look, Nuked default, classic-only UI)
+
+* `GAMEPLAY > JILL LOOK` gained an `EXTERNAL PACK` entry (also
+  `--jill-look -1`).  It draws a pack's `sprites/player.<ext>` strip (entry 8
+  frames) or its normal `kind_0` / `shape_8_*` overrides, so a texture pack can
+  replace Jill's art without touching the game files.  Added manifest
+  `[sprites] player = ...`, `ExternalVisuals::player_shape()`, and a shared
+  `add_entry_sheet()` helper.  Headless check: a 75-frame magenta/white strip
+  changed exactly the 16x32 player rectangle and nothing else.
+* Nuked OPL3 is now the only default synthesis core; the hand-written
+  `port/src/opl2.*` core was removed from every build and `--opl-core` /
+  `[audio] opl_core` are now `0` = Nuked, `1` = fmopl.  Both `--dump-music`
+  paths render.  Updated the sound docs, notices and Xbox defaults.
+* Removed the modern menu layout and the message-box style selector.  The
+  front end always uses the classic frame/shape-7 window, in-game menus always
+  overlay the live game, and captions/pages/reminders always use the original
+  classic windows.  Removed the obsolete MENUS rows (STYLE, BACKGROUND), the
+  VIDEO MESSAGE BOX row, their ini keys and CLI switches.
+* Builds: `build.cmd` and `tools\build_demo_studio.cmd` both clean.  No
+  in-game run was performed (user controls interactive testing).
+
+## 2026-11-20 (importer: optional palette adaptation)
+
+* Diagnosed a user report where a purple/red gradient tile imported as
+  grey/brown: tile 0x168 points at shape entry 23, a 4bpp entry whose 16-colour
+  table contains only greens/browns/greys, so the importer correctly snapped
+  the new art to those colours.  The global VGA palette does contain magentas.
+* Added `jill_import.adapt_entry_palette()` plus an `adapt_palette` option on
+  `replace_sha_frame()`, `tile_from_png()` and `sha_entry_from_folder()` (and
+  `--adapt-palette` on the matching CLI commands).  It median-cuts the source
+  image to the entry's colour count and snaps each colour to the nearest
+  global VGA index, so genuinely new hues can be imported.  It is opt-in
+  because the per-entry palette is shared by every frame of that entry.
+* The editor exposes this as an **Adapt palette** checkbox on the Sprites and
+  Tiles tabs.  Testing on the real map showed why the tile version must not
+  recolour in place: entry 23 has 65 frames and all 16 palette slots are used,
+  so every ground tile changed colour.  Tile adaptation now uses the new
+  `clone_tile_to_entry()`: the entry is copied into a free shape slot 0..63,
+  the palette is adapted on the copy, and the tile's DMA record is repointed;
+  both `.sha` and `.dma` are written.  Verified on the real files: entry 23's
+  palette and its other frames are byte-identical afterwards, the new tile is
+  magenta, and a no-free-slot case reports a clear error.  `sha-tile
+  --adapt-palette` was removed; `tile-clone` is the supported CLI path.
+* Follow-up after an original-game (non-port) test showed corruption: the
+  adapted palette words had zeroed their low 16 bits.  The original engine's
+  CGA/EGA paths read those bytes at shifts 0/4/8/12, while the port only uses
+  bits 16..23, so JillEX looked right but the DOS game did not.  Palette words
+  now preserve the original low 16 bits and only replace the VGA byte at
+  bits 16..23.  Verified on the real files: low bytes identical to the
+  original, cloned tile still magenta in the port.  Awaiting a retest in the
+  original game.
+
+## 2026-11-20 (jill editor: GUI asset editor)
+
+* Added `jill_editor.py`, a standalone Tkinter editor built on the extractor's
+  parsers/renderers and the importer's writers.  Tabs cover shape frames
+  (preview, PNG replace, folder rebuild, font sheet), DMA tiles (preview, PNG
+  export/import, paint-source selection), boards (tile-map painting, object,
+  string and header editing, full-render import/export, `.jn1` save), VCL text
+  pages (colour-aware line editor + preview + pages.json import) and VCL SFX
+  (play, WAV export/import, folder import).  Game discovery and palette loading
+  match `jill_extractor.py`; File > Open Files works without a game manifest.
+* Added `jill_import.vcl_set_pages()` and `jill_import.save_board()` so the GUI
+  reuses validated writers instead of duplicating archive encoding.  All GUI
+  actions write a new file via Save dialogs and report failures as dialogs.
+* Added `EDITOR_README.md` and `test_jill_editor.py` (headless API round-trip +
+  withdrawn-root UI smoke test with synthetic archives).  Both release scripts
+  now ship `jill_editor.py`, `EDITOR_README.md` and `IMPORT_README.md`;
+  `TOOL_LOCATIONS.md` registers JILLEDITOR.
+* Follow-up: added a **Replace Animation from Folder** action on Sprites.
+  It uses `jill_import.sha_entry_from_folder()` (new API + `sha-entry-folder`
+  CLI) to replace every frame of the selected entry from a folder of images,
+  with natural filename sorting, palette-preserving re-encode and validation.
+  The Text tab gained an explicit **Add Line** button (also Enter in the text
+  box) so lines can be appended to an existing page while another line is
+  selected.
+* Both Windows release scripts (`make_release.cmd`, `make_release_32.cmd`) and
+  the local `copy.cmd` now include `jill_editor.py`; the release scripts also
+  ship `EDITOR_README.md` and `IMPORT_README.md`.  Existing release zips are
+  stale until those scripts are re-run.
+* Tests run: `test_jill_import.py` 4/4, `test_jill_editor.py` OK,
+  `jill_editor.py --check` OK.  No game files or in-game test needed.
+
+## 2026-11-20 (jill importer: arbitrary-input hardening)
+
+* `jill_import.py` now validates every input before writing: file/dir existence
+  and type, archive directory bounds (`.sha`/`.vcl`), image/WAV decoding, JSON
+  metadata, entry/frame/slot/tile indexes, frame dimensions and payload sizes.
+  Bad inputs raise `ImportFailure` with the file name and reason instead of raw
+  `struct.error`/`IndexError` traces; the CLI prints `error: ...` with exit 1
+  (`JILL_IMPORT_DEBUG=1` keeps the traceback).  GUI converters show the same
+  messages via their existing handlers.
+* Removed silent corruption paths: oversized entries now fail before the 16-bit
+  size fields wrap, short raw frame payloads are rejected instead of padded,
+  folder commands no longer treat an existing garbage reference as "no
+  reference", and `pack` rejects a missing/identical source and writes
+  non-ASCII names as UTF-8.
+* Added `test_jill_import.py`: synthetic archives cover every valid command,
+  garbage/corrupt inputs, size limits and CLI error reporting (4/4 checks pass;
+  no game files needed).  Documented validation and error codes in
+  `IMPORT_README.md`.
+
+## 2026-11-20 (PS4 quit: blank-group flip before release; fault logging)
+
+* The quit log reaches `startup: exiting (rc=0)` and the fault is after that,
+  and the old teardown still showed `videoout: unregister failed 0x80290009`
+  (RESOURCE_BUSY).  A buffer group cannot be unregistered while its buffer is
+  the one being scanned out, which is exactly the case after the last
+  `present()`: the display keeps showing that frame indefinitely.
+* The videoout backend now allocates a fourth, never-drawn buffer and registers
+  it as its own group.  On quit it flips to that spare buffer, unregisters the
+  presentation group, then flips to the **system's** blank frame (buffer index
+  `-1`) so the spare group is also off screen and can be unregistered.  Only
+  then does it close the port, wait 100 ms and unmap/release the direct memory.
+  A console run showed that unregistering only after the spare flip works for
+  group 0 but leaves group 1 (the spare, on screen) busy with
+  `0x80290009` — hence the second, system-blank flip.
+* A first attempt (2026-11-20, previous entry) left the port and memory to
+  process exit; the console still reported CE-34878-0, so the resources are now
+  released in a display-safe order.
+* New PS4 fault handlers write `fatal: signal N addr=... rip=... rsp=...` to
+  `/data/JillEX/fatal.log` for SIGSEGV/SIGBUS/SIGILL/SIGFPE/SIGABRT/SIGSYS/
+  SIGTRAP.  The console run with the spare-group release produced an empty
+  `fatal.log`, so the remaining fault is not a signal in our process; the app
+  reaches `_exit(0)` and is terminated inside the exit syscall (the console
+  debugger parks on `mov rax,1; syscall` in a system module).
+* Audio/shutdown traces: the native mixer waits one buffer before its heap
+  buffers are freed, and `MusicPlayer::close`/`ps4_pad_shutdown` log their
+  results (`audio: thread stopped`, `audio: device closed`, `pad: close`).
+* Rebuilt `build_ps4.cmd` (only the known `stb_vorbis` warning).  Awaiting a
+  console quit test; the startup log line
+  `videoout: quit blanks the display before releasing` identifies this build.
+
 ## 2026-11-19 (Xbox: playable on hardware, stable at 480i/480p and 720p)
 
 * The original-Xbox target now runs the game on a real console: HDD install,

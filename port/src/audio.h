@@ -24,7 +24,7 @@ public:
     // Swaps in a parsed track (nullptr stops).  Safe before open(): the track
     // is queued and starts with the device.
     void play(std::shared_ptr<const CmfSong> song);
-    // 0 = built-in OPL2, 1 = Nuked OPL3, 2 = fmopl.  Restarts the current song
+    // 0 = Nuked OPL3, 1 = fmopl.  Restarts the current song
     // if the core changes so the register state is rebuilt by the active core.
     void set_opl_core(int core);
     int opl_core() const;

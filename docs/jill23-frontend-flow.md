@@ -323,6 +323,12 @@ combines:
 * the game blurb and ordering information,
 * CHECKPT warps used by the attract mode.
 
+**Port status:** the front-end `STORY` row lists every installed game/mod,
+loads its intro board, finds the `p13 = 0` story anchor and renders the page
+at the anchor's `x,y` (with the original caption cleared).  `p1b` chains are
+followed for mods with more than one page; the selected game's palette is used
+so Onesimus and total conversions keep their colours.
+
 Jill 3's intro ends with the "save the prince" story text; Jill 2's with the
 "your adventure begins in . . ." text. The intro music is `funky.ddt` in both.
 

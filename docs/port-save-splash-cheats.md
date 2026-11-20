@@ -109,7 +109,7 @@ The cheat menu now has one entry per form, each calling the same
 |--|--|--|
 | BECOME JILL | 0 | 0 (normal) |
 | BECOME FROG | 4 | 57 |
-| BECOME BIRD | 5 | 56 |
+| BECOME PHOENIX | 5 | 56 |
 | BECOME SPIDER | 6 | 55 |
 | BECOME FISH | 7 | 54 |
 
@@ -274,11 +274,14 @@ to frames `0x5410..0x5413`, four ticks each.  Headless `--watch-tile 166` on
   a single line (or eight with Shift).  This keeps each page inside one box and
   reports the bank page number actually shown.
 * **Jill Select:** `GAMEPLAY > JILL LOOK` cycles GAME DEFAULT / JILL 1 / JILL 2 /
-  JILL 3 / ONESIMUS (any installed game).  The player art bytes are identical
-  across the episodes; only the entry's 16-colour translation table differs
-  (green/red/blue/grey outfit).  The port reads that table from the selected
-  game's `.sha` and remaps the live player pixels, so no second shape bank is
-  loaded.  `JILL COLOUR` applies a custom suit preset (green, red, blue, yellow,
-  orange, cyan, purple, silver) and also drives the SUIT HUD background.
-  Saved as `[gameplay] player_look` / `player_suit`; CLI `--jill-look N` and
-  `--jill-colour N`.  **[verified tables read from all four .sha files]**
+  JILL 3 / ONESIMUS (any installed game) / EXTERNAL PACK.  The player art bytes
+  are identical across the episodes; only the entry's 16-colour translation
+  table differs (green/red/blue/grey outfit).  The port reads that table from
+  the selected game's `.sha` and remaps the live player pixels, so no second
+  shape bank is loaded.  `EXTERNAL PACK` instead draws a pack's
+  `sprites/player.<ext>` sheet (falling back to the pack's normal entry-8
+  overrides).  `JILL COLOUR` applies a custom suit preset (green, red, blue,
+  yellow, orange, cyan, purple, silver) and also drives the SUIT HUD
+  background.  Saved as `[gameplay] player_look` / `player_suit`; CLI
+  `--jill-look N` (negative = external pack) and `--jill-colour N`.
+  **[verified tables read from all four .sha files]**

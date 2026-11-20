@@ -13,8 +13,8 @@ struct FmOplDeleter {
 
 // Wrapper around fmopl 0.37a, the AdPlug fork of Tatsuyuki Satoh's YM3812
 // emulator relicensed under the LGPL-2.1 (see third_party/fmopl.c).  It
-// exposes the same reset/write/generate surface as the built-in Opl2 core so
-// the CMF sequencer can select it at runtime.
+// exposes the same reset/write/generate surface as the Nuked core so the CMF
+// sequencer can select it at runtime.
 class FmOpl {
 public:
     explicit FmOpl(int sample_rate = 48000);

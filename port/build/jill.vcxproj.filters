@@ -49,9 +49,6 @@
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\cmf.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\opl2.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\nuked_opl.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

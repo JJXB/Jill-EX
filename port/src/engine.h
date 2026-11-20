@@ -205,6 +205,9 @@ public:
     // enhancement keeps the inventory across board warps instead.
     void set_retain_items(bool on) { retain_items_ = on; }
     bool retain_items() const { return retain_items_; }
+    // A new game always starts with no gems, even when the same Engine object
+    // is reused after a previous run.
+    void reset_gems() { gems_ = 0; }
     // Enhancement: the original caps knife pickups at 3; allowing 5 is optional.
     void set_max_knives(int n) { max_knives_ = (n >= 5) ? 5 : 3; }
     int max_knives() const { return max_knives_; }
@@ -228,10 +231,28 @@ public:
     // Enhancement: centre the fish form's shot vertically on the player.
     void set_center_fish_shot(bool on) { center_fish_shot_ = on; }
     bool center_fish_shot() const { return center_fish_shot_; }
+    // Death respawn behaviour.  0 = reset the level to the status registered
+    // on the last checkpoint, 1 = reset to the level start, 2 = keep the live
+    // level state (no reset).  The default mirrors the base game.
+    void set_respawn_mode(int mode) {
+        respawn_mode_ = (mode < 0) ? 0 : (mode > 2 ? 2 : mode);
+    }
+    int respawn_mode() const { return respawn_mode_; }
+    // Enhancement (default ON): the phoenix (bird) form dies when it touches a
+    // waterfall / water body, matching the base game's hazard rules.
+    void set_phoenix_water_death(bool on) { phoenix_water_death_ = on; }
+    bool phoenix_water_death() const { return phoenix_water_death_; }
+    // Enhancement (default OFF): allow throwing a weapon while climbing a vine
+    // or ladder.  The original only permits it in states 0 and 2.
+    void set_throw_from_vines(bool on) { throw_from_vines_ = on; }
+    bool throw_from_vines() const { return throw_from_vines_; }
     // Jill Select: draw normal Jill with another episode's player colour table.
     // look 0 = the running game, otherwise 1..N = games[N-1].  `suit` 0 keeps
-    // the look's own colours; 1..8 are the custom presets.
+    // the look's own colours; 1..8 are the custom presets.  A negative look
+    // selects the external pack's `sprites/player` sheet.
     bool set_player_look(int look, const std::string& shape_path);
+    void set_player_look_external(bool on);
+    bool player_look_external() const { return player_look_external_; }
     void set_player_suit(int suit);
     int player_look() const { return player_look_; }
     int player_suit() const { return player_suit_; }
@@ -278,13 +299,6 @@ public:
         dialogs_per_tick_ = on ? 4 : 1;
     }
     bool fast_dialogs() const { return fast_dialogs_; }
-    // Message-box style (VIDEO menu option): 0 = off, 1 = modern frame,
-    // 2 = classic shape-7 windows (portrait caption + titled card).
-    void set_message_box(int style) {
-        message_box_style_ = (style < 0) ? 0 : (style > 2 ? 2 : style);
-    }
-    int message_box() const { return message_box_style_; }
-    bool message_box_classic() const { return message_box_style_ == 2; }
     // Classic "Reminder" card: a titled shape-7 window centred over the
     // playfield.  Used by the help prompt and the start-of-game reminder.
     void show_message_box(const std::string& title, const std::string& text,
@@ -419,8 +433,24 @@ public:
     int inv_count(int id) const;
     bool del_item(int id);
     void add_item(int id);
+    // Gems (item 3) are the only inventory item that follows Jill between
+    // levels.  `gems_` is the authoritative unspent count; the header list is
+    // rebuilt from it whenever a board is loaded, so a board file can never
+    // hand out a free gem.
+    void sync_gems_from_header();
+    void apply_gem_count(int n);
     void player_kill(int amount, int dir);
     void respawn();
+    // Snapshot the live board so death can reset the level state (map,
+    // objects and header).  Called at board load and when a CHECKPT is hit.
+    void capture_level_snapshot();
+    void capture_checkpoint_snapshot();
+    // Put the player back at spawn_x_/spawn_y_ in the recover state.  Shared by
+    // respawn() and by the deferred snapshot restore.
+    void place_player_after_respawn();
+    // Apply a queued board reset at the start of the next update pass, when no
+    // handler is holding an object reference.
+    void apply_pending_respawn_reset();
     // `_sound(priority, logical_id)`: the app drains the queue after a tick and
     // hands it to the sampled-effect voice.
     void sound(int priority, int id);
@@ -574,6 +604,7 @@ private:
     bool invincible_ = false;
     bool fire_while_crouched_ = false;
     bool retain_items_ = false;
+    int gems_ = 0;  // authoritative unspent gem (item 3) count
     int max_knives_ = 3;
     int hud_bg_ = -2;  // -2 = suit colour (default), -3 = vibrant suit
     int hud_text_ = 7; // HUD label colour (palette index)
@@ -588,12 +619,27 @@ private:
     bool classic_camera_ = false;   // debug: original edge-triggered scrolling
     bool animated_water_ = true;    // enhancement: 4-frame water tile cycle
     bool center_fish_shot_ = false; // enhancement: centre the fish shot
+    int respawn_mode_ = 0;          // 0 checkpoint, 1 level start, 2 none
+    bool phoenix_water_death_ = true; // phoenix dies on waterfall tiles
+    bool throw_from_vines_ = false;   // enhancement: throw while climbing
+    // Board snapshots used by the respawn setting.  `level_snapshot_` is taken
+    // when a board is loaded; `checkpoint_snapshot_` when a CHECKPT is hit.
+    Board level_snapshot_;
+    bool level_snapshot_valid_ = false;
+    int level_spawn_x_ = 0;
+    int level_spawn_y_ = 0;
+    Board checkpoint_snapshot_;
+    bool checkpoint_snapshot_valid_ = false;
+    int checkpoint_spawn_x_ = 0;
+    int checkpoint_spawn_y_ = 0;
+    bool pending_respawn_reset_ = false;
     // Jill Select: source and target player colour tables (16 x palette index).
     std::array<uint8_t, 16> player_base_xlate_{};
     std::array<uint8_t, 16> player_raw_xlate_{};
     std::array<uint8_t, 16> player_look_xlate_{};
     uint8_t player_remap_[256] = {};
     bool player_remap_active_ = false;
+    bool player_look_external_ = false;
     int player_look_ = 0;
     int player_suit_ = 0;
     bool map_mode_ = false;      // hub/world-map board (MAPDEMO visibility)
@@ -627,7 +673,6 @@ private:
     size_t msg_shown_ = 0;       // characters revealed so far
     bool fast_dialogs_ = false;  // enhancement (captions / text pages)
     int dialogs_per_tick_ = 1;
-    int message_box_style_ = 1;  // 0 off, 1 modern frame, 2 classic windows
     std::string box_title_;      // classic titled message card
     std::string box_text_;
     int box_ttl_ = 0;

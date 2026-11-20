@@ -113,10 +113,12 @@ void MusicPlayer::close() {
         ps4_run_ = false;
         SDL_WaitThread(static_cast<SDL_Thread*>(ps4_thread_), nullptr);
         ps4_thread_ = nullptr;
+        jill_paths::trace("audio: thread stopped");
     }
     if (ps4_handle_ > 0) {
         sceAudioOutClose(ps4_handle_);
         ps4_handle_ = 0;
+        jill_paths::trace("audio: device closed");
     }
     if (ps4_lock_ != nullptr) {
         SDL_DestroyMutex(static_cast<SDL_mutex*>(ps4_lock_));
@@ -222,6 +224,11 @@ void MusicPlayer::ps4_audio_loop() {
             mix_ticks = 0;
         }
     }
+    // The last submitted buffer can still be queued in the audio device when
+    // the loop ends, and `buffers` is destroyed the moment this function
+    // returns.  Let the device finish with it (one buffer is ~42.7 ms) before
+    // close() tears the device down, otherwise the DMA reads freed memory.
+    SDL_Delay(static_cast<Uint32>(kPs4AudioFrames * 1000 / 48000 + 20));
 }
 #endif
 
@@ -231,10 +238,8 @@ void MusicPlayer::set_opl_core(int core) {
         SDL_LockAudioDevice(device_);
     }
 #endif
-    Music::OplCore next = Music::OplCore::Builtin;
+    Music::OplCore next = Music::OplCore::Nuked;
     if (core == 1) {
-        next = Music::OplCore::Nuked;
-    } else if (core == 2) {
         next = Music::OplCore::Fmopl;
     }
     if (music_.opl_core() != next) {
@@ -254,10 +259,8 @@ void MusicPlayer::set_opl_core(int core) {
 
 int MusicPlayer::opl_core() const {
     switch (music_.opl_core()) {
-        case Music::OplCore::Nuked:
-            return 1;
         case Music::OplCore::Fmopl:
-            return 2;
+            return 1;
         default:
             return 0;
     }
@@ -686,10 +689,8 @@ bool MusicPlayer::render_wav(const CmfSong& song, const std::string& path,
     }
     auto shared = std::make_shared<CmfSong>(song);
     Music music(sample_rate);
-    Music::OplCore core = Music::OplCore::Builtin;
+    Music::OplCore core = Music::OplCore::Nuked;
     if (opl_core == 1) {
-        core = Music::OplCore::Nuked;
-    } else if (opl_core == 2) {
         core = Music::OplCore::Fmopl;
     }
     music.set_opl_core(core);

@@ -40,7 +40,7 @@ Files are found by relative path inside the pack.  Both `\` and `/` work.
 external/
   MyPack/                 (or MyPack.zip)
     pack.ini              optional manifest
-    sprites/              kind sheets and single shape overrides
+    sprites/              kind/player sheets and single shape overrides
     tiles/                per-tile images
     boards/               whole-level backgrounds
     themes/               extra front-end menu backdrops
@@ -61,9 +61,14 @@ external/
   only.  Each cell is rescaled to that frame's original size [verified].
 * `shape_<entry>_<frame>.<ext>` replaces one shape-bank entry/frame directly.
   `entry` is the `.sha` entry (`tileset & 0x3F`), `frame` the frame index.
+* `player.<ext>` is a horizontal strip of the player's shape entry 8 frames.
+  It is used only when `GAMEPLAY > JILL LOOK` is set to `EXTERNAL PACK`
+  (`--jill-look -1`); if absent, that look falls back to the pack's `kind_0` /
+  `shape_8_*` overrides.
 
 Note: internal and player shapes are keyed by the same entry/frame ids, so a
-kind override also applies wherever that shape id is used [inferred].
+kind override also applies wherever that shape id is used [inferred].  Jill is
+kind `0` / shape entry `8`; `kind_8` is the BUNNY enemy.
 
 ### tiles/
 
@@ -162,6 +167,7 @@ game = jill1
 [sprites]
 kind_4 = art/frog.png
 shape_8_16 = art/jill.png
+player = art/jill_player_strip.png
 
 [tiles]
 12 = art/grass.png
