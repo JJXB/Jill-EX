@@ -715,6 +715,9 @@ void Engine::tile_hook(int col, int row, int mode) {
 
 void Engine::update_pass() {
     apply_pending_respawn_reset();
+    // 26F4:12B9 clears the scroll deltas before the update loop; the player
+    // handler may set the vertical one (DGROUP:0xBAB2) during the loop.
+    cam_step_ = 0;
     active_.clear();
     if (objects_.empty()) {
         return;
@@ -793,6 +796,12 @@ void Engine::update_pass() {
                     aa.y < bb.y + bb.h && bb.y < aa.y + aa.h) {
                     on_hit(i, j);
                     on_hit(j, i);
+                    // 26F4:12B9 marks *both* sides blocked on any AABB
+                    // overlap, whether or not a handler killed them.  A flying
+                    // knife therefore becomes a solid cell for the rest of the
+                    // frame, but it must not stay one after it lands.
+                    objects_[static_cast<size_t>(i)].flags |= 0xC000;
+                    objects_[static_cast<size_t>(j)].flags |= 0xC000;
                 }
             }
         }
@@ -869,12 +878,20 @@ bool Engine::update_object(int i) {
             if (p11 < 1) {
                 if (p11 == -1) {
                     // Fall one pixel until it lands; then it stays put and can
-                    // be picked up again (p11 == 0).
-                    if (move_obj(i, o.x, o.y + 1) == 0) {
+                    // be picked up again (p11 == 0).  `exact` matters here: a
+                    // fall blocked by a temporary wall (an enemy or another
+                    // object's 0xC000 cells) keeps the knife in the falling
+                    // state, so it drops again once that wall moves on.  Only a
+                    // current cell that is itself invalid settles the knife.
+                    if (move_obj(i, o.x, o.y + 1, true) == 0) {
                         objects_[static_cast<size_t>(i)].p11 = 0;
                     }
+                    return true;
                 }
-                return true;
+                // A knife already lying on the ground is not "blocked": the
+                // original returns 0 here, so it must not become a temporary
+                // wall for Jill or other objects.
+                return false;
             }
             ++o.p11;
             if (o.p11 > 0x0E) {
@@ -899,7 +916,7 @@ bool Engine::update_object(int i) {
                     o.dy = 4;
                 }
             }
-            int moved = move_obj(i, o.x + o.dx, o.y + o.dy);
+            int moved = move_obj(i, o.x + o.dx, o.y + o.dy, true);
             if (moved == 0 || o.p11 > 0x40) {
                 objects_[static_cast<size_t>(i)].p11 = -1;
             }
@@ -1995,8 +2012,10 @@ bool Engine::on_hit(int a, int b) {
                 o.dx = 0;
                 o.dy = 0;
                 o.p11 = 0x0F;
-                add_score(profile_->kind(other_kind).count, other.x, other.y);
-                kill_obj(b);
+                // _killaward: score + footprint + kill, exactly like every
+                // other projectile hit.  The footprint matters because it is
+                // part of the map state the board/checkpoint snapshot keeps.
+                killaward(b);
                 sound(3, 10);
             }
             return true;
@@ -2680,7 +2699,6 @@ void Engine::follow_camera() {
         // mode (15 x 11 for normal play); the horizontal step is 8 px (4 for
         // the 4-px-wide TINY form) and the vertical step is the update result.
         const int view_w = 15 * 16;
-        const int view_h = 11 * 16;
         if (p.x < cam_x_ + 0x58) {
             if (cam_x_ >= 8) {
                 cam_x_ -= 8;
@@ -2691,10 +2709,23 @@ void Engine::follow_camera() {
                 cam_x_ += 8;
             }
         }
-        const int lo = std::max(0, p.y - view_h + 0x60);
-        const int hi = std::max(0, p.y - 0x20);
-        int ty = std::max(lo, std::min(p.y - 56, hi));
-        cam_y_ = std::max(0, std::min(ty, Board::kRows * 16 - view_h));
+        // Vertical dead zone (1FAE:000D): keep the player between 0x20 and
+        // 0x50 px below the viewport top.  Inside the zone the camera moves by
+        // the step the player's crouch/vertical-input branch stored in
+        // DGROUP:0xBAB2 (+/-2 from that dy); outside it snaps to the nearest
+        // edge.  The bounds are clamped to 0x360 ((0x41 - 11) << 4), which is
+        // the original's hard camera-y limit.
+        const int y_limit = 0x360;
+        const int lo = std::max(0, std::min(y_limit, p.y - 0x50));
+        const int hi = std::max(0, std::min(y_limit, p.y - 0x20));
+        const int target = cam_y_ + cam_step_;
+        if (target >= lo && target <= hi) {
+            cam_y_ = target;
+        } else if (cam_y_ > hi) {
+            cam_y_ = hi;
+        } else if (cam_y_ < lo) {
+            cam_y_ = lo;
+        }
         return;
     }
     int tx = p.x + 8 - sim_center_x();
@@ -5306,7 +5337,14 @@ bool Engine::just_move(int i, int x, int y) {
 // horizontal/upward moves and 3 when moving down (mask 3 also requires the
 // "blocked from above" bit).  Returns 1/2/4 for the axis that worked, 0 when
 // every candidate is blocked.
-int Engine::move_obj(int i, int x, int y) {
+//
+// `exact` keeps the original's unconditional third probe.  That probe is the
+// object's *current* cell whenever x did not change, so a blocked fall returns
+// 4 instead of 0 and the caller keeps its "falling" state.  KNIFE (2) needs
+// this: a knife whose fall is blocked by a moving temporary wall (another
+// object's 0xC000 cells) must keep retrying and drop again once the wall
+// leaves, instead of snapping onto p11 == 0 and resting in mid-air forever.
+int Engine::move_obj(int i, int x, int y, bool exact) {
     const BoardObject& o = objects_[static_cast<size_t>(i)];
     int mask = 1;
     if (o.y < y) {
@@ -5322,7 +5360,8 @@ int Engine::move_obj(int i, int x, int y) {
     }
     // Do not report a horizontal-only move when x did not change: the frog
     // form relies on a 0 result to snap onto the floor when a fall is blocked.
-    if (x != o.x && cando(i, x, o.y, static_cast<uint16_t>(mask)) == mask) {
+    if ((exact || x != o.x) &&
+        cando(i, x, o.y, static_cast<uint16_t>(mask)) == mask) {
         set_origin(i, x, o.y);
         return 4;
     }
@@ -5346,13 +5385,14 @@ int Engine::crawl(int i, int dx, int dy) {
         int cc = std::max(0, std::min(c, Board::kCols - 1));
         int rr = std::max(0, std::min(r, Board::kRows - 1));
         uint16_t id = map_[cc * Board::kRows + rr] & 0x3FFF;
-        // Spikes/thorns also have the "passable + stand" bit pair, so the
-        // original treats them as holes and walkers pace forever at the pit
-        // edge.  Let crawlers cross them instead (enemies do not run the tile
-        // contact hook, so this is purely a movement fix).
-        const bool spike = id == 0xA6 || id == 0x141 || id == 0x142 ||
-                           id == 0x155 || id == 0x156;
-        if ((tiles_.at(id).flags & 3) == 3 && !spike) {
+        // Spikes/thorns carry the "passable + stand" bit pair (they are only
+        // deadly through the player's tile-contact hook), so the original's
+        // crawl treats them as holes: a crawler paces at the pit edge instead
+        // of walking over it.  Do not exempt them here - that deviation let
+        // Jill 3's crab cross the level-1 thorn pit, which pulled every later
+        // demo event out of sync with the recording (JN3DEM1's returning
+        // knife then dipped into the pit instead of flying back to Jill).
+        if ((tiles_.at(id).flags & 3) == 3) {
             return 0;
         }
     }

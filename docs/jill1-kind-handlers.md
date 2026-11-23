@@ -104,8 +104,10 @@ Shapes are written `tileset<<8 | frame`. `O(i).f` is object field `f` (see 6.1).
 ### 2. KNIFE (1644:0fff) [verified]
 - draw: fixed `_drawshape(0x0D<<8, x, y)`.
 - hit: player, `p11` outside `1..10` and fewer than 3 knives in inventory (`_invcount(2) < 3`): add knife (`_addinv(2)`), sound (2,7), `_killobj` (plus a hint message).
-- hit: other object with `kflags & 0x80` and `p11 > 0`: zero dx/dy, `p11 = 0x0F`, `_killaward(other)`, sound (3,10) - this is the knife killing an enemy.
-- update: `p11` counts up to 0x0E then the knife homes (`_pointvect`, dx clamped +/-8, dy clamped -4..+4), `_trymove`; `p11 = -1` after 0x40 ticks or when stuck, and it falls (probes `y+1`) until it lands.
+- hit: other object with `kflags & 0x80` and `p11 > 0`: zero dx/dy, `p11 = 0x0F`, `_killaward(other)` (score popup + footprint), sound (3,10) - this is the knife killing an enemy.
+- update: `p11` counts up to 0x0E then the knife homes (`_pointvect`, dx clamped +/-8, dy clamped -4..+4), `_trymove`; `p11 = -1` after 0x40 ticks or when stuck, and it falls (probes `y+1`) until it lands. The update result is 1 for the falling/flight frames but **0 while `p11 == 0`**, so a knife already lying on the ground is a pickup and not a temporary wall.
+- falling fidelity: `_trymove` (`26F4:1C89`) always runs its third probe, `(new_x, old_y)`. For a straight-down step `new_x == old_x`, so that probe tests the knife's *current* cell; when the cell itself is free the move returns 4 even though nothing changed. The port's `move_obj(..., exact = true)` does the same for KNIFE, which keeps `p11 == -1`: a fall blocked only by a *temporary* wall (another object's `0xC000` cells, e.g. a snake walking through the gap) retries every frame and the knife drops again as soon as the wall moves away. It only settles to `p11 == 0` when its own cell is genuinely invalid. Without this a knife wedged under a block snapped to `p11 == 0` and rested in mid-air forever.
+- port note: the `exact` flag is passed only by KNIFE. Other handlers keep the port's older `x != old_x` guard, which JILLFROG relies on to snap onto the floor when a fall is blocked.
 
 ### 3. KILLME (1644:0e0b) [verified]
 - Empty handler: returns 0 for every action. Used as a "nothing" object / marker.

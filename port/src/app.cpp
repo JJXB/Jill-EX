@@ -296,6 +296,14 @@ int run_headless(Engine& engine, const Options& opt) {
     if (opt.text_page > 0) {
         engine.show_text_page(opt.text_page);
     }
+    // Debug inventory works in headless runs too, so a scripted throw can be
+    // reproduced without a save slot.
+    for (int i = 0; i < opt.items; ++i) {
+        engine.add_item(2);
+    }
+    for (int i = 0; i < opt.gems; ++i) {
+        engine.add_item(3);
+    }
     if (opt.blade) {
         engine.debug_spawn_blade();
     }

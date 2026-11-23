@@ -6,15 +6,29 @@
       to the system blank (`-1`) before closing/freeing.  Built 2026-11-20
       (startup marker "quit diag 4") - awaiting test.
   * Check Version? 
-  * Demos - Jill2 still desyncing JN3DEM1 Knife misses but completes anyway Desync after T460/R45, JN3DEM2 - blade desyncs somewhere after T250/R16 JN3DEM3 desync after T265/R34
+  * Demos
+    * JN2DEM2 
+      * Landing after T497/R67 damage kills jill where it shouldn't
+    * JN3DEM2
+      * Jump throw misses around T299/R23
+        * The throw is record 24 at T304.  The star (spawned at `(400,438)`,
+          `dx=-6`) homes toward INCHWORM 33 (`16x8` at `(354,440)`) and on
+          frame 309 is 1 px below the worm's bottom edge (`448`), so the strict
+          AABB never fires.  Handler and spawn match `1A41:2B1A` /
+          `1FAE:2E61` exactly - recheck on the current build.
+      * Jump throw bounces off wall instead of hitting enemy (Jump around T792/R116)
+        * Current build: the wall on frame 803 flips `dx` to `+7` and the star
+          hits BIGANT 20 on frame 804 (score 22 -> 28) - recheck on the
+          current build.
   * Level 1 > MAP music carryover issue? - Check with the person - Not happening for me
   * Tiny Landing pause with kneeling animation - Check with others if visible
   * Menu Sizes? (separate Menus themselves and the game render?)
   * Docs/info readability?
 
-  * Gameplay option: Fire weapon from vines
-
   * Tile issue with editor
+  * No Transition Text boxes on menu demos
+
+  * Demo studio:
 
 * Least Important Ideas
   * Other Games

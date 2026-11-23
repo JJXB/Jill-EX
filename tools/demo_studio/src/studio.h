@@ -46,6 +46,9 @@ struct StudioOptions {
     bool center_fish_shot = false;
     bool minimap = false;
     bool turtle = false;
+    int respawn_mode = 0;             // [gameplay] 0 checkpoint, 1 level start, 2 none
+    bool phoenix_water_death = true;  // [gameplay] phoenix dies on waterfalls
+    bool throw_from_vines = false;    // [gameplay] throw while climbing
     int interpolation = 0;            // 0 smooth, 1 no smoothing, 2 original 18.2 Hz
     int window_w = 1360;
     int window_h = 780;
@@ -125,6 +128,12 @@ private:
     void cancel_edit();
     void nudge_field(int dir);
     void toggle_mask_bit(int bit);
+    void clear_mask_bit(int bit);
+    void clear_mask_bits();
+    // Mouse editing of one table cell: TICK opens the inline number editor,
+    // H/V/B1/B2/KEY toggle or cycle in place (`shift` cycles backwards).
+    void click_field(int index, int field, bool shift);
+    int next_key_value(int from, int dir) const;
     void select_row(int index);
     void ensure_visible();
     bool save_macro(bool save_as, std::string& err);
@@ -173,7 +182,8 @@ private:
     // --- input ---
     void handle_event(const SDL_Event& ev, const Layout& l);
     bool handle_key(int key, bool ctrl, bool shift, const Layout& l);
-    void handle_click(int x, int y, const Layout& l);
+    void handle_click(int x, int y, bool shift, const Layout& l);
+    void handle_right_click(int x, int y, bool shift, const Layout& l);
     void handle_wheel(int dy, const Layout& l);
 
     StudioOptions opt_;

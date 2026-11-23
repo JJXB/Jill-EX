@@ -170,6 +170,10 @@ void Engine::player_update(int i) {
                     o.dx = 0;
                     o.p1b = 0;
                     o.p11 = 3;
+                    // 1FAE:1031: the vertical camera scroll is derived from
+                    // this dy (DGROUP:0xBAB2) - it is the crouch/vertical-input
+                    // step, not the airborne dy.
+                    cam_step_ = (o.dy > 1) ? 2 : ((o.dy < -1) ? -2 : 0);
                     // Enhancement: remember the aim direction while crouched.
                     if (fire_while_crouched_ && in_.h != 0) {
                         last_facing_ = in_.h;

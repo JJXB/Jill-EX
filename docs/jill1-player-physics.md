@@ -475,11 +475,25 @@ Notes:
 * `FUN_26f4_23e1(obj)` scans the cells under the object; for every cell whose
   tile attribute has bit 8 it calls `FUN_1f28_0006(col, row, 1)` (the same
   script hook as #1.1), after the `state_flags & 2` early-out.
-* `1FAE:000D` (near call, arg = the update result) is the camera-edge
-  auto-scroll: it sets `DGROUP:0xBAB0` to `+8` (or `+4` for the 4-px-wide TINY
-  form on EGA/VGA) when the player is near one edge of the viewport, and to
-  the negative step at the other edge. The value is consumed by the scrolling
-  code. **[inferred]**
+* `1FAE:000D` is the camera-edge auto-scroll. **[verified]** It writes two
+  deltas, consumed by `26F4:0D52` after the update loop (`26F4:12B9` zeroes
+  both before the loop):
+  * `DGROUP:0xBAB0` (horizontal) is `+8` when `p.x > cam_x + 0xF0 - 0x68`,
+    `-8` when `p.x < cam_x + 0x58` (a step of 4 for the 4-px-wide TINY form on
+    EGA/VGA), and unchanged otherwise. `cam_x` stops at `(0x80 - 0xF - 1) << 4
+    = 1792`.
+  * `DGROUP:0xBAB2` (vertical) is the *argument* of the call, not the update
+    result. The player's state-0 vertical branch (`1FAE:1031`) passes `+2`
+    when `dy > 1`, `-2` when `dy < -1`, else `0`; every other path passes the
+    zero initialised at `1FAE:0226`. With `lo = clamp(p.y - 0x50, 0, 0x360)`
+    and `hi = clamp(p.y - 0x20, 0, 0x360)`: if `cam_y + arg` is inside
+    `[lo, hi]` the delta is `arg`, if `cam_y > hi` it is `hi - cam_y`, if
+    `cam_y < lo` it is `lo - cam_y`, otherwise it stays 0. So the camera is a
+    dead zone keeping the player 0x20..0x50 px below the viewport top and
+    follows a crouch/vertical nudge 2 px per tick.
+  * The view is 16 x 11 tiles (256 x 176): `b998 = 0xF`, `b99a = 0xB`, and
+    `26F4:215F` centres the player with `cam_x = p.x - b998*8` and
+    `cam_y = p.y + 0x10 - b99a*8` (= `p.x - 120`, `p.y - 72`).
 * Hazard tiles (`FUN_1f28_0006(col, row, 1)`, reached through
   `FUN_26f4_23e1`) - the tile id picks the effect: **[verified]**
 

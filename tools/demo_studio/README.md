@@ -18,4 +18,9 @@ scale, game view scale, interpolation and classic HUD).  `CTRL+N` starts a new
 timeline columns and headless/selftest modes are documented in
 [`docs/demo-studio.md`](../../docs/demo-studio.md).
 
+Playback reads the same `[gameplay]` keys as the game, including `respawn_mode`,
+`phoenix_water_death` and `throw_from_vines`, so a preview uses the options you
+are currently testing.  The matching CLI switches are `--respawn N`,
+`--no-phoenix-water-death` and `--throw-from-vines`.
+
 Generated files (`build/`, `shots/`) are ignored by git.

@@ -35,7 +35,10 @@ the matching `jill_demo_studio.exe` in the package root.  It shares the bundle's
 
 It reads `jill.ini` exactly like the game (including `[paths]` install
 directories and the HUD/gameplay options), so no extra configuration is
-normally needed.  `--help` lists every switch.
+normally needed.  That includes `respawn_mode`, `phoenix_water_death` and
+`throw_from_vines`; the same values can be overridden per run with
+`--respawn N`, `--no-phoenix-water-death` and `--throw-from-vines`.  `--help`
+lists every switch.
 
 `tools\build_demo_studio.cmd` and `tools\build_demo_studio32.cmd` use the same
 Visual Studio + vcpkg toolchain as `build.cmd` and write
@@ -115,16 +118,17 @@ macros (`end1.mac`, hand-made files) keep whatever start state is selected.
 Each row is one record from the file:
 
 ```
-#    TICK   D     H  V  B1 B2 KEY  MASK
-0    0      -     -  -  X  .  -    ..1..
-1    1      +1    -  -  .  .  -    ..1..
-2    29     +28   -  U  .  .  -    .V...
+#    TICK   D     H  V  B1 J B2 T KEY  MASK
+0    0      -     -  -  X    .    -    ..1..
+1    1      +1    -  -  .    .    -    ..1..
+2    29     +28   -  U  .    .    -    .V...
 ```
 
 * `TICK` is the absolute tick when the record takes effect.
 * `D` is the tick difference from the previous record.
 * `H`/`V` show the direction as `L`/`R`, `U`/`D` or `-`.
-* `B1`/`B2` are the action buttons; `KEY` is the recorded ASCII key.
+* `B1 J`/`B2 T` are the action buttons: jump and throw.  `KEY` is the
+  recorded ASCII key.
 * `MASK` is the five channels the record actually sets (`H V 1 2 K`); a `.`
   means the channel keeps its previous value.  Mask-0 records are pure time
   markers and are legitimate in the format.
@@ -157,6 +161,26 @@ using the old record list until `R` (or `F2`/`F3` starts a new run).
 
 Editing `H`, `V`, `B1`, `B2` or `KEY` sets that mask bit automatically, so a
 value typed into a record cannot silently fail to serialise.
+
+### Mouse editing
+
+The table is directly editable, so a single value does not need the field
+cursor:
+
+| mouse | action |
+|---|---|
+| click `TICK` | opens the inline number editor (type, `ENTER` applies, `ESC` cancels) |
+| click `H` / `V` | cycles the direction `-` -> `R`/`D` -> `L`/`U` -> `-` and sets the mask bit |
+| click `B1 J` / `B2 T` | toggles jump / throw and sets the mask bit |
+| click `KEY` | cycles `-` and every key value the recording already uses |
+| click a `MASK` letter | toggles that channel (`H V 1 2 K`) |
+| `SHIFT` + click | the same, backwards (H/V/KEY cycle the other way) |
+| `SHIFT` + right-click a cell | clears that column's mask bit |
+| `SHIFT` + right-click `#`/`TICK`/`D` | clears the whole mask (record becomes a time marker) |
+| click `#` or `D` | only selects the row |
+
+Every mouse edit is a single undo step, and `CTRL+Z` undoes it like a keyboard
+edit.
 
 ### Saving
 
@@ -256,7 +280,9 @@ are also looked up in the episode's folder, so
 ## Headless checks
 
 The same walk is available without a window, which is handy for regression
-tests and scripted comparisons:
+tests and scripted comparisons.  `--ticks`, `--trace`, `--dump-map` and
+`--dump-objects` imply `--headless` (they are meaningless with a window), so
+the explicit flag is optional:
 
 ```bat
 REM write the frame after N ticks

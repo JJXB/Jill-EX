@@ -71,6 +71,9 @@ void usage() {
         "  --palette FILE   override the game's 768-byte palette\n"
         "  --external DIR   external pack directory (default external)\n"
         "  --pack ID        mount an external pack at start-up\n"
+        "  --respawn N      death reset: 0 checkpoint, 1 level start, 2 none\n"
+        "  --no-phoenix-water-death  phoenix passes waterfalls (splash only)\n"
+        "  --throw-from-vines        allow throwing while climbing\n"
         "  --interp MODE    smooth | off | original  (default smooth)\n"
         "  --hud            draw the classic HUD panel\n"
         "  --no-portrait    hide the level-title portrait\n"
@@ -131,6 +134,12 @@ int main(int argc, char** argv) {
             opt.external_dir = value(i, "--external");
         } else if (a == "--pack") {
             opt.pack = value(i, "--pack");
+        } else if (a == "--respawn") {
+            opt.respawn_mode = std::atoi(value(i, "--respawn"));
+        } else if (a == "--no-phoenix-water-death") {
+            opt.phoenix_water_death = false;
+        } else if (a == "--throw-from-vines") {
+            opt.throw_from_vines = true;
         } else if (a == "--interp") {
             const std::string mode = value(i, "--interp");
             if (mode == "off" || mode == "1") {
@@ -179,6 +188,13 @@ int main(int argc, char** argv) {
             usage();
             return 2;
         }
+    }
+
+    // The dump/advance switches only mean anything without a window; treating
+    // them as an implicit --headless avoids a silent no-op run.
+    if (opt.ticks > 0 || !opt.trace.empty() || !opt.dump_map.empty() ||
+        !opt.dump_objects.empty()) {
+        opt.headless = true;
     }
 
     std::string err;

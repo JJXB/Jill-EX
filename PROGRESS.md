@@ -1,5 +1,81 @@
 # Progress
 
+## 2026-11-22 (JN3DEM2 throwing-star check: T304 near-miss, T792 bounce kill)
+
+* The two flagged JN3DEM2 throws were traced tick for tick.  Record 23
+  (`T299`, B1 release) only ends the jump; the throw is record 24 at `T304`
+  (studio tick 304, engine frame 305).
+* T304 throw: the star spawns at `(400,438)` (player `(408,436)`, facing left,
+  `x - 0xC + 4`, `y + 2`) with `dx = -6`.  It homes horizontally toward
+  INCHWORM 33 (`16x8` at `(354,440)`), gains `dy += 1` every frame, and on
+  frame 309 sits at `(366,448)` - exactly 1 px below the worm's
+  `y + h = 448` - so the strict `<` AABB never fires and the star passes
+  under it.  `1A41:2B1A`, `26F4:12B9`, `26F4:263A`/`2772` and the
+  `1FAE:2E61` spawn were re-read line by line and the port matches, so this
+  is the recording's real trajectory (the star misses), not a port
+  divergence.
+* T792 throw: the star spawns at `(96,30)`; the `0x153` wall in columns 0-3
+  blocks the horizontal probe on frame 803, so `dx` flips to `+7`; on frame
+  804 it overlaps BIGANT 20 (`24x16` at `(70,64)`) and `_killaward` kills it
+  (score 22 -> 28).  The "bounce instead of hit" case no longer reproduces
+  on the current build.
+* Removed the temporary `JILL_DBG_BLAD` tracing from `engine.cpp`; no logic
+  change from the tested build.  Nine-macro headless regression unchanged
+  (JN3DEM1 ends hp=7 inv=2 objs=14, JN3DEM2 hp=3 inv=5 objs=75, etc.).
+
+## 2026-11-21 (demo studio: direct mouse editing of the record table)
+
+* Clicking a cell now edits it in place: `TICK` opens the inline number editor
+  (fresh value, `ENTER` applies, `ESC` cancels), `H`/`V` cycle
+  `- -> R/D -> L/U -> -`, `B1 J`/`B2 T` toggle jump/throw, `KEY` cycles `-` and
+  every key value the recording already uses, and each `MASK` letter toggles
+  its channel.  Every click sets the matching mask bit and is one undo step.
+* `SHIFT`+click runs the same action backwards; `SHIFT`+right-click clears the
+  clicked column's mask bit (on `#`/`TICK`/`D` it clears the whole mask, which
+  turns the record into a pure time marker).
+* Column headers are now `B1 J` and `B2 T` so the buttons read as jump/throw.
+  Help overlay, panel hint lines, footer, `docs/demo-studio.md` and `TODO.md`
+  updated.  Both `jill_demo_studio.exe` builds rebuilt and the release staging
+  refreshed; `--selftest` still reports `reencode=identical`.
+
+## 2026-11-21 (port: knife handler fidelity)
+
+* KNIFE (kind 2) update now returns 0 while the knife is lying on the ground
+  (`p11 == 0`), matching `1644:0fff`: a landed knife is a pickup, not a
+  temporary wall.  Only the falling frame (`p11 == -1`) and the flight frames
+  still report "blocked".  This stops resting knives from becoming solid cells
+  for Jill/enemies.
+* KNIFE hit on an enemy uses `_killaward` (score + footprint + kill) instead of
+  a bare score popup + kill, so the footprint is part of the map state the
+  respawn/checkpoint snapshot keeps.
+* The update pass now marks *both* objects `0xC000` on any AABB hit, as
+  `26F4:12B9` does.  Flying projectiles therefore act as temporary walls for
+  the rest of the frame exactly like the original.
+* Headless replay check: all shipped demos produce the same end-of-macro state
+  as before the change; JN3DEM1 still completes.
+* Demo studio: `StudioOptions` now reads `[gameplay] respawn_mode`,
+  `phoenix_water_death` and `throw_from_vines` from `jill.ini` and applies them
+  to its engine, with matching `--respawn N`, `--no-phoenix-water-death` and
+  `--throw-from-vines` switches.  Since the tool links `port/src/engine.cpp`
+  directly, the KNIFE fixes above are part of its build too.  Rebuilt x64 and
+  Win32 `jill_demo_studio.exe` and refreshed the copies in `build/release/`
+  and `build32/Release32/` together with the matching `jill.exe` builds;
+  headless JN3DEM3 output matches the game tick for tick.
+* A knife whose fall is blocked only by a *temporary* wall still froze: the port
+  turned a `move_obj` result of 0 into `p11 = 0`, so a knife wedged under a
+  block (Jill 1 board 3: the 1-tile gap between the 2-tile block and the snake
+  platform) rested in mid-air for good.  `26F4:1C89` `_trymove` always runs its
+  third probe `(new_x, old_y)`, which for a straight-down step is the object's
+  current cell, so a blocked fall returns 4 and the caller stays in the falling
+  state.  `move_obj` gained `bool exact` (default false); KNIFE passes true.
+  A/B headless check (`exact=false` vs `true`, all shipped demos): JN1DEMO,
+  JN2DEM1..3, JN3DEM1/2, END1/END2 are identical at the end tick; JN3DEM3 is the
+  only board that changes, and the pre-fix build leaves three knives resting in
+  mid-air (`p11 == 0`, `dy == 4`, e.g. `(1028,774)`) where the fixed build keeps
+  them falling/homing.  x64 + Win32 `jill.exe` and both `jill_demo_studio.exe`
+  builds agree tick for tick on that board; release staging refreshed with
+  `make_release.cmd` / `make_release_32.cmd`.
+
 ## 2026-11-20 (PS4 data zip renamed)
 
 * `build_ps4.cmd` now writes/copies `JillEX-PS4-Data.zip` (repository root and
@@ -2989,3 +3065,53 @@ offsets, board list, title table).
   and the `!` hub restores do the same for the braces that bypass `load_board`.
   Recorded macros still get the shipped per-board inventory so recorded
   playback is byte-identical.  New `--gems N` debug flag for testing.
+
+* **Macro camera: faithful `1FAE:000D` dead zone + 16x11 view (JN3DEM1 fix).**
+  Supersedes the earlier "faithful camera" attempt (see the 2026-11-16 note
+  above), which used the full `p.y - p.prev_y` delta and the 232x160 view and
+  therefore reverted.  Two things were wrong:
+  * `DGROUP:0xBAB2` is not the player's movement delta.  `1FAE:1031` sets it
+    to `+2 / -2 / 0` from `dy` inside the state-0 vertical-input branch (the
+    crouch/gravity nudge), and every other path passes the zero initialised
+    at `1FAE:0226`.  `26F4:12B9` zeroes it before the update loop and
+    `26F4:0D52` applies it after.
+  * The original's scroll window is 16 x 11 tiles, not 15 x 10.  `b998 = 0xF`
+    and `b99a = 0xB`; `26F4:215F` centres with `cam_x = p.x - 120` and
+    `cam_y = p.y - 72`, and the clamps `(0x80-0xF-1)<<4 = 1792` /
+    `(0x41-0xB)<<4 = 864` only make sense with 256x176.  Macro playback now
+    uses that `sim_view_w/h` (was 232x160); normal play is unchanged.
+  * Verified rule: `lo = clamp(p.y-0x50,0,0x360)`,
+    `hi = clamp(p.y-0x20,0,0x360)`; if `cam_y + step` is in `[lo,hi]` the
+    camera moves by `step`, else it snaps to the edge it is outside of.
+  * Results: JN3DEM1's knife now reaches the crab (crab gone at tick 526,
+    `killaward` runs; the 4x5 score popup can be cancelled by the knife's own
+    AABB the same tick, the points still count).  JN2DEM1's recorded health
+    drops still land at ticks 90/165/211 (video 89/164/210).  jn1demo still
+    ends on the jungle map at lvl 102 and end1/end2 are unchanged.  All nine
+    shipped macros run to their normal end state with no deaths.
+  * Demo-studio and both release zips rebuilt.
+
+* Demo studio: `--ticks`, `--trace`, `--dump-map` and `--dump-objects` now
+  imply `--headless`.  Previously `--ticks 527 --dump-objects FILE` without
+  `--headless` opened the window and exited without writing the dump, which
+  looked like a broken dump.  Verified on jn3dem1 tick 527: the studio's
+  object table matches `jill.exe --dump-objects` (crab gone, knife alive).
+
+* **Crawlers no longer cross spike/thorn pits (`_crawl` fidelity).**  The port
+  exempted `SPIKE`/`WTHORN` tiles from `_crawl`'s "hole" test as a deliberate
+  deviation (see the 2026-11-08 note); that note was written while the board
+  loader's sign-extension bug was making walkers look stuck, and the original
+  plainly treats those tiles as holes.  Exemption removed.
+  * It mattered: Jill 3 level 1's crab could walk straight across the
+    one-tile thorn pit at (36,5).  The port's crab reached x=640, was culled
+    there, thawed late, and was still at x=604 when JN3DEM1's knife arrived,
+    so the kill landed ~7 ticks later than the recording - by then Jill had
+    landed, and the returning knife homed *down* into the thorn notch and
+    stayed there (p11 = -1 forever).
+  * With the exemption gone the crab paces between the platform's left end
+    and the thorn (x 512..560), exactly as in the original video, and the
+    knife kills it at tick 518 while Jill is still airborne.  The knife then
+    climbs left to her, is picked up (inventory 1 -> 2) and never touches the
+    thorn.  JN3DEM1 now ends hp=7 inv=2 objs=14 (was 6/1/16).
+  * The other eight shipped macros are unchanged (jn2dem1..3, jn3dem2/3,
+    end1/end2, jn1demo), x64 and Win32 agree.

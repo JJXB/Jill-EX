@@ -427,7 +427,7 @@ public:
     void set_origin(int i, int x, int y);
     bool try_move(int i, int x, int y);   // 26F4:1E70
     bool just_move(int i, int x, int y);  // 26F4:1D73
-    int move_obj(int i, int x, int y);    // 26F4:1C89 _trymove (1/2/4/0)
+    int move_obj(int i, int x, int y, bool exact = false);  // 26F4:1C89 _trymove (1/2/4/0)
     int crawl(int i, int dx, int dy);     // 26F4:1F35 _crawl
     bool fishdo(int i, int x, int y);     // 26F4:2605 _fishdo
     int inv_count(int id) const;
@@ -559,13 +559,16 @@ private:
     int view_h() const;
     int view_center_x() const;
     int view_center_y() const;
-    // World-simulation viewport.  The original always centres the camera and
-    // culls objects against its 232x160 game area (the HUD panel is outside
-    // that rect).  Macros were recorded against it, so playback must not
-    // inherit a larger HUD-style view: off-screen object updates would start
-    // at different ticks and the recording would drift.
-    int sim_view_w() const { return macro_playing_ ? 232 : view_w(); }
-    int sim_view_h() const { return macro_playing_ ? 160 : view_h(); }
+    // World-simulation viewport.  The original's scroll window is 16 x 11
+    // tiles (256 x 176): 1FAE:000D steps by 8 px against `b998 = 15` /
+    // `b99a = 11`, and 26F4:215F centres the player with `x - b998*8` and
+    // `y + 0x10 - b99a*8`, i.e. (x - 120, y - 72).  The camera clamps
+    // `(0x80 - 15 - 1) << 4 = 1792` and `(0x41 - 11) << 4 = 864` follow from
+    // the same numbers.  Macros were recorded against that rect, so playback
+    // must not inherit the larger HUD-style view: off-screen object updates
+    // would start at different ticks and the recording would drift.
+    int sim_view_w() const { return macro_playing_ ? 256 : view_w(); }
+    int sim_view_h() const { return macro_playing_ ? 176 : view_h(); }
     int sim_center_x() const { return sim_view_w() / 2; }
     int sim_center_y() const { return sim_view_h() / 2; }
     void clear_frame_marks();
@@ -592,6 +595,9 @@ private:
     std::vector<int> order_;
     int cam_x_ = 0;
     int cam_y_ = 0;
+    // Vertical scroll delta for this tick (DGROUP:0xBAB2).  Reset by the
+    // update pass and written only by the player's crouch/vertical branch.
+    int cam_step_ = 0;
     int prev_cam_x_ = 0;  // presentation interpolation (previous tick)
     int prev_cam_y_ = 0;
     int frame_ = 0;

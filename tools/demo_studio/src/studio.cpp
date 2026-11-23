@@ -92,6 +92,13 @@ std::string key_label(int key) {
     return buf;
 }
 
+// Steps a -1/0/+1 direction through 0 -> +1 -> -1 -> 0 (or backwards).
+int cycle_dir(int v, int dir) {
+    int idx = v < 0 ? 0 : (v > 0 ? 2 : 1);
+    idx = (idx + (dir > 0 ? 1 : 2)) % 3;
+    return idx - 1;
+}
+
 std::string tick_label(int t) { return std::to_string(t); }
 
 bool load_palette_file(const std::string& path, uint8_t rgb[768]) {
@@ -220,6 +227,12 @@ bool Studio::init(const StudioOptions& opt, std::string& err) {
             ini.get_bool("gameplay", "center_fish_shot", opt_.center_fish_shot);
         opt_.minimap = ini.get_bool("gameplay", "minimap", opt_.minimap);
         opt_.turtle = ini.get_bool("gameplay", "turtle", opt_.turtle);
+        opt_.respawn_mode =
+            ini.get_int("gameplay", "respawn_mode", opt_.respawn_mode);
+        opt_.phoenix_water_death = ini.get_bool(
+            "gameplay", "phoenix_water_death", opt_.phoenix_water_death);
+        opt_.throw_from_vines = ini.get_bool("gameplay", "throw_from_vines",
+                                             opt_.throw_from_vines);
     }
     load_settings();
 
@@ -418,6 +431,9 @@ bool Studio::select_game(int index, std::string& err) {
     fresh->set_center_fish_shot(opt_.center_fish_shot);
     fresh->set_minimap(opt_.minimap);
     fresh->set_turtle(opt_.turtle);
+    fresh->set_respawn_mode(opt_.respawn_mode);
+    fresh->set_phoenix_water_death(opt_.phoenix_water_death);
+    fresh->set_throw_from_vines(opt_.throw_from_vines);
     load_palette_file(g.palette, palette_);
 
     // Mount the optional external pack/autoload exactly like the game does, so
@@ -952,6 +968,117 @@ void Studio::toggle_mask_bit(int bit) {
     dirty_ = true;
     run_dirty_ = true;
     say("MASK " + mask_letters(r.mask), demo_ui::kTextDim, 2.0);
+}
+
+void Studio::clear_mask_bit(int bit) {
+    if (records_.empty() || bit < 0 || bit > 4) {
+        return;
+    }
+    MacroRecord& r = records_[static_cast<size_t>(selected_)];
+    const int mask_bit = 1 << bit;
+    if (!(r.mask & mask_bit)) {
+        say("MASK BIT ALREADY CLEAR", demo_ui::kTextDim, 2.0);
+        return;
+    }
+    push_undo();
+    r.mask &= ~mask_bit;
+    dirty_ = true;
+    run_dirty_ = true;
+    say("MASK " + mask_letters(r.mask), demo_ui::kTextDim, 2.0);
+}
+
+void Studio::clear_mask_bits() {
+    if (records_.empty()) {
+        return;
+    }
+    MacroRecord& r = records_[static_cast<size_t>(selected_)];
+    if (r.mask == 0) {
+        say("MASK BIT ALREADY CLEAR", demo_ui::kTextDim, 2.0);
+        return;
+    }
+    push_undo();
+    r.mask = 0;
+    dirty_ = true;
+    run_dirty_ = true;
+    say("MASK CLEARED - RECORD IS A TIME MARKER", demo_ui::kTextDim, 2.0);
+}
+
+// Cycles through 0 and every key value the recording actually uses, so a KEY
+// cell can be changed without typing a number.
+int Studio::next_key_value(int from, int dir) const {
+    std::vector<int> vals;
+    vals.push_back(0);
+    for (const MacroRecord& r : records_) {
+        if ((r.mask & kMacroMaskKey) && r.key > 0) {
+            vals.push_back(r.key);
+        }
+    }
+    std::sort(vals.begin(), vals.end());
+    vals.erase(std::unique(vals.begin(), vals.end()), vals.end());
+    const int n = static_cast<int>(vals.size());
+    int idx = 0;
+    for (int i = 0; i < n; ++i) {
+        if (vals[static_cast<size_t>(i)] <= from) {
+            idx = i;
+        }
+    }
+    if (vals[static_cast<size_t>(idx)] != from) {
+        // The current value is not in the list; land on the nearest entry.
+        return vals[static_cast<size_t>(idx)];
+    }
+    idx = (idx + (dir > 0 ? 1 : n - 1)) % n;
+    return vals[static_cast<size_t>(idx)];
+}
+
+void Studio::click_field(int index, int field, bool shift) {
+    if (records_.empty()) {
+        return;
+    }
+    select_row(index);
+    if (editing_) {
+        cancel_edit();
+    }
+    field_ = field;
+    if (field == static_cast<int>(Field::Tick)) {
+        begin_edit();
+        edit_buf_.clear();  // clicking a number starts a fresh value
+        say("TYPE A NEW TICK - ENTER APPLIES, ESC CANCELS", demo_ui::kTextDim,
+            3.0);
+        return;
+    }
+    if (field == static_cast<int>(Field::Mask)) {
+        return;  // the mask column toggles one letter at a time
+    }
+    push_undo();
+    MacroRecord& r = records_[static_cast<size_t>(selected_)];
+    const int dir = shift ? -1 : 1;
+    switch (static_cast<Field>(field)) {
+        case Field::H:
+            r.h = cycle_dir(r.h, dir);
+            r.mask |= kMacroMaskH;
+            break;
+        case Field::V:
+            r.v = cycle_dir(r.v, dir);
+            r.mask |= kMacroMaskV;
+            break;
+        case Field::Btn1:
+            r.btn1 = !r.btn1;
+            r.mask |= kMacroMaskBtn1;
+            break;
+        case Field::Btn2:
+            r.btn2 = !r.btn2;
+            r.mask |= kMacroMaskBtn2;
+            break;
+        case Field::Key:
+            r.key = next_key_value(r.key, dir);
+            r.mask |= kMacroMaskKey;
+            break;
+        default:
+            break;
+    }
+    dirty_ = true;
+    run_dirty_ = true;
+    ensure_visible();
 }
 
 void Studio::select_row(int index) {
@@ -1580,8 +1707,8 @@ void Studio::draw_track(const Layout& l) {
 
 void Studio::draw_rows(const Layout& l) {
     // Column header.
-    static const char* heads[9] = {"#",  "TICK", "D",   "H",   "V",
-                                   "B1", "B2",   "KEY", "MASK"};
+    static const char* heads[9] = {"#",  "TICK",  "D",    "H",   "V",
+                                   "B1 J", "B2 T", "KEY", "MASK"};
     for (int i = 0; i < 9; ++i) {
         ui_->text(l.col[i], l.rows.y - 8 * hint_scale() - 4, heads[i],
                   demo_ui::kTextDim, hint_scale());
@@ -1617,7 +1744,13 @@ void Studio::draw_rows(const Layout& l) {
         const int ty = y + (l.row_h - 8 * body_scale()) / 2;
         ui_->text(l.col[0], ty, std::to_string(index), demo_ui::kTextDim,
                   body_scale());
-        ui_->text(l.col[1], ty, tick_label(r.time), demo_ui::kText, body_scale());
+        if (sel && editing_ && field_ == static_cast<int>(Field::Tick)) {
+            ui_->text(l.col[1], ty, edit_buf_ + "_", demo_ui::kAccent,
+                      body_scale());
+        } else {
+            ui_->text(l.col[1], ty, tick_label(r.time), demo_ui::kText,
+                      body_scale());
+        }
         const int delta =
             index > 0 ? r.time - records_[static_cast<size_t>(index) - 1].time : 0;
         ui_->text(l.col[2], ty,
@@ -1725,6 +1858,8 @@ void Studio::draw_editor(const Layout& l) {
               "^Z UNDO   ^S SAVE");
     hint_line("MASK FIELD: 1-5 TOGGLE H V JUMP THROW KEY   "
               "CTRL+SHIFT+S SAVE AS");
+    hint_line("CLICK CELL: EDIT/TOGGLE   SHIFT+CLICK: BACK   "
+              "SHIFT+RCLICK: CLEAR MASK BIT");
     if (!macro_path_.empty()) {
         std::string hint = "FILE ";
         hint += macro_path_;
@@ -1742,7 +1877,8 @@ void Studio::draw_footer(const Layout& l) {
     const std::string hints =
         "SPACE PLAY/PAUSE|R RESTART|LEFT/RIGHT STEP|SHIFT STEP 18|HOME/END "
         "SEEK|F5 INTERPOLATION|F6 HUD|F9 SCREENSHOT|F2 SETUP|F3 OPEN .MAC|F4 "
-        "OPTIONS|CTRL+N NEW .MAC|INS ADD|DEL REMOVE|MASK FIELD 1-5 TOGGLE|"
+        "OPTIONS|CTRL+N NEW .MAC|INS ADD|DEL REMOVE|CLICK CELL EDIT/TOGGLE|"
+        "SHIFT+RCLICK CLEAR MASK|MASK FIELD 1-5 TOGGLE|"
         "CTRL+S SAVE|CTRL+SHIFT+S SAVE AS|F1 HELP|F10 QUIT";
     std::string line;
     int y = l.footer.y + 6;
@@ -1940,6 +2076,9 @@ void Studio::draw_help(const Layout& l) {
         "  UP / DOWN        select a record",
         "  TAB / SHIFT+TAB  next / previous field (tick, H, V, jump, throw, key)",
         "  TYPE or +/-      edit the selected field; ENTER commits, ESC cancels",
+        "  CLICK a cell     TICK opens the editor; H/V/JUMP/THROW/KEY toggle",
+        "  SHIFT+CLICK      cycle the other way   SHIFT+RCLICK  clear its bit",
+        "  MASK column      click a letter to toggle it (index col: whole mask)",
         "  with MASK field: 1..5 toggle the H V jump throw key bits",
         "  INS              insert a record at the playhead with its current input",
         "  DEL              delete the selected record",
@@ -2120,7 +2259,11 @@ void Studio::handle_event(const SDL_Event& ev, const Layout& l) {
             break;
         case SDL_MOUSEBUTTONDOWN:
             if (ev.button.button == SDL_BUTTON_LEFT) {
-                handle_click(ev.button.x, ev.button.y, l);
+                handle_click(ev.button.x, ev.button.y,
+                             (SDL_GetModState() & KMOD_SHIFT) != 0, l);
+            } else if (ev.button.button == SDL_BUTTON_RIGHT) {
+                handle_right_click(ev.button.x, ev.button.y,
+                                   (SDL_GetModState() & KMOD_SHIFT) != 0, l);
             }
             break;
         case SDL_MOUSEWHEEL:
@@ -2557,7 +2700,7 @@ bool Studio::handle_key(int key, bool ctrl, bool shift, const Layout& l) {
     return false;
 }
 
-void Studio::handle_click(int x, int y, const Layout& l) {
+void Studio::handle_click(int x, int y, bool shift, const Layout& l) {
     if (overlay_ != Overlay::None) {
         if (overlay_ == Overlay::Files) {
             const FileGeometry g = file_geometry(l);
@@ -2592,29 +2735,84 @@ void Studio::handle_click(int x, int y, const Layout& l) {
     if (l.rows.contains(x, y)) {
         const int row = (y - l.rows.y) / l.row_h;
         const int index = scroll_ + row;
-        if (index >= 0 && index < static_cast<int>(records_.size())) {
+        if (index < 0 || index >= static_cast<int>(records_.size())) {
+            return;
+        }
+        // Which column was hit?  Column i starts at l.col[i].
+        int col = 0;
+        for (int i = 0; i < 9; ++i) {
+            if (x >= l.col[i]) {
+                col = i;
+            }
+        }
+        if (col == 8) {
+            // MASK: one letter per channel, so a click toggles that bit.
+            select_row(index);
+            field_ = static_cast<int>(Field::Mask);
+            editing_ = false;
+            const int bit = clamp_int((x - l.col[8]) / (6 * body_scale()), 0, 4);
+            if (shift) {
+                clear_mask_bit(bit);
+            } else {
+                toggle_mask_bit(bit);
+            }
+            return;
+        }
+        // The index and delta columns only select; the rest edit in place.
+        static const int field_for_col[9] = {
+            -1, static_cast<int>(Field::Tick), -1,
+            static_cast<int>(Field::H), static_cast<int>(Field::V),
+            static_cast<int>(Field::Btn1), static_cast<int>(Field::Btn2),
+            static_cast<int>(Field::Key), static_cast<int>(Field::Mask)};
+        const int field = field_for_col[col];
+        if (field < 0) {
             select_row(index);
             editing_ = false;
-            // Pick the field from the clicked column.
-            int best = 0;
-            for (int i = 0; i < 9; ++i) {
-                if (x >= l.col[i]) {
-                    best = i;
-                }
-            }
-            static const int field_for_col[9] = {
-                static_cast<int>(Field::Tick), static_cast<int>(Field::Tick),
-                static_cast<int>(Field::Tick), static_cast<int>(Field::H),
-                static_cast<int>(Field::V),    static_cast<int>(Field::Btn1),
-                static_cast<int>(Field::Btn2), static_cast<int>(Field::Key),
-                static_cast<int>(Field::Mask)};
-            field_ = field_for_col[best];
+            return;
         }
+        click_field(index, field, shift);
         return;
     }
     if (l.game.contains(x, y)) {
         toggle_play();
     }
+}
+
+void Studio::handle_right_click(int x, int y, bool shift, const Layout& l) {
+    if (overlay_ != Overlay::None || !shift) {
+        return;
+    }
+    if (!l.rows.contains(x, y)) {
+        return;
+    }
+    const int row = (y - l.rows.y) / l.row_h;
+    const int index = scroll_ + row;
+    if (index < 0 || index >= static_cast<int>(records_.size())) {
+        return;
+    }
+    int col = 0;
+    for (int i = 0; i < 9; ++i) {
+        if (x >= l.col[i]) {
+            col = i;
+        }
+    }
+    select_row(index);
+    editing_ = false;
+    // SHIFT+RCLICK clears the mask bit of the clicked channel.  On the index,
+    // tick and delta columns it clears the whole mask instead.
+    static const int bit_for_col[9] = {-1, -1, -1, 0, 1, 2, 3, 4};
+    if (col == 8) {
+        field_ = static_cast<int>(Field::Mask);
+        clear_mask_bit(clamp_int((x - l.col[8]) / (6 * body_scale()), 0, 4));
+        return;
+    }
+    const int bit = bit_for_col[col];
+    if (bit < 0) {
+        clear_mask_bits();
+        return;
+    }
+    field_ = static_cast<int>(Field::H) + bit;
+    clear_mask_bit(bit);
 }
 
 void Studio::handle_wheel(int dy, const Layout& l) {
