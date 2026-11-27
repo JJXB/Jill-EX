@@ -48,6 +48,12 @@ the CLASSIC HUD (CURRENT, or another installed game).  It is stored as
 so switch STYLE to CLASSIC to see it.  Stored as `[hud] layout`; also
 `--hud-layout NAME`.  The editor is `tools\hud_layout.py`; see
 [docs/hud-layout-tool.md](docs/hud-layout-tool.md) for the live part names.
+The built-in CLASSIC HUD uses the same positions as
+`games/Classic.hudlayout` (health bar 46,27 23x7, score right edge 70).
+
+`OPTIONS > HUD > NO HUD` hides the HUD completely and uses the full 320x200
+view; it defaults to OFF.  Stored as `[hud] hidden`, with `--no-hud` /
+`--hud-visible` for command-line runs.
 
 `OPTIONS > HUD > BACKGROUND: SUIT` gives the modern bar a two-row drop shadow
 (one solid dark edge plus a 50% checker row) so it reads as a raised strip over
@@ -102,10 +108,16 @@ caption, the titled `Reminder` card, and the news-bulletin/text pages
 `Reminder` card after the first level-title caption.
 
 The front-end main menu is `START GAME`, `DEMO`, `RESTORE GAME`, `STORY`,
-`HIGH SCORES`, `OPTIONS`, `NOISEMAKER`, `QUIT`.  It always has `RESTORE GAME`
-and `HIGH SCORES`.  On `RESTORE GAME`, Left/Right changes the episode and the
+`HIGH SCORES`, `OPTIONS`, `NOISEMAKER`, `LEVEL EDITOR`, `QUIT`.  It always has
+`RESTORE GAME` and `HIGH SCORES`.  On `RESTORE GAME`, Left/Right changes the episode and the
 slots then show that game's saves.  `HIGH SCORES` also uses Left/Right to switch
 episodes.  Each game/mod keeps its own table in `hiscore_<game id>.txt`.
+
+`START GAME` lists the installed episodes plus **CUSTOM LEVELS**, which plays a
+board saved by JILL MAKER (`editor/<game id>/<name>`).  Menus with more than
+ten rows are split into pages (a `page/total` counter sits beside the title);
+Up/Down moves through all rows and flips the page at the boundary.  `OPTIONS >
+HUD > NO HUD` hides the HUD for a full-frame view.
 
 `STORY` opens the installed-game selector and then shows that game's
 intro-board story page at full screen, exactly like the original front-end
@@ -123,7 +135,10 @@ When a score qualifies, a name prompt appears first:
 | Enter | Save the score |
 | Esc | Save with the default name `JILL` |
 
-Leaving the name blank also saves it as `JILL`.
+Leaving the name blank also saves it as `JILL`.  On Vita and Android the prompt
+opens the platform text input (Vita IME / Android soft keyboard); text arrives
+through SDL's native text-input events, so physical and on-screen keyboards both
+work.  Vita physical keyboards are also accepted through key events.
 
 ## In-game system keys
 
@@ -163,6 +178,152 @@ Menus also accept the gamepad: D-pad or left stick moves, **A** confirms,
 | Left / Right | Previous / next episode |
 | Enter | Load the selected board |
 | Esc or F3 | Close the panel |
+
+### Level editor (JILL MAKER)
+
+`LEVEL EDITOR` on the front-end main menu opens an episode selector, then a
+board selector.  Saved custom levels appear there as `CUSTOM <name>` rows after
+`NEW LEVEL`.  The editor draws the board without the HUD and uses the mouse
+for painting.
+
+| Key / input | Action |
+| --- | --- |
+| `1` | Tile paint mode |
+| `2` | Object place mode |
+| `3` | Object select/drag mode |
+| `4` | Tile region mode (click A then B) |
+| `T` | Tile palette (click a tile, wheel/`[`/`]` pages) |
+| `Tab` or `E` | Object palette (click a kind, wheel/`[`/`]` pages) |
+| Left click | Paint tile / place object / select object |
+| Right click | Erase to the erase tile / delete object |
+| Shift + left click | Pick the tile or object kind under the cursor |
+| Shift + right click | Pick the erase tile from the map |
+| Left drag | Paint tiles, or move a selected object |
+| Arrows / D-pad / left stick | Move the cell cursor |
+| `WASD` / right stick | Pan the board |
+| `Space`, `Enter` or pad `A` | Paint / place / select at the cursor |
+| `Backspace`, `Delete` or pad `X` | Erase tile / delete object |
+| `P` or pad `L3` | Pick the brush at the cursor |
+| Pad `LB` / `RB` | Previous / next mode (tile, object, select, region) |
+| Pad `Y` | Palette for the current mode |
+| Pad `R3` | Cycle the tile paint tool (single / line / rect / flood) |
+| Pad `Back` | Playtest (also dismisses playtest dialogs) |
+| Pad `Start` | Open the editor menu |
+| Pad `B` | Object properties; closes an open panel first |
+| Mouse wheel | Pan vertically (`Shift` for horizontally); pages an open palette |
+| `G` | Toggle the tile grid |
+| `N` | Toggle the board minimap panel |
+| `M` or `F6` | Cycle paint tool: single / line A-B / rectangle fill / flood fill |
+| `C` / `V` | Copy / paste the selected or hovered object, or the tile region in region mode |
+| `Z` / `Y` | Undo / redo |
+| `O` | Object properties (kind, position, DX/DY, size, state, params, flags, TTL, string) |
+| `R` | Place presets (gem door / key door) |
+| `I` | Board info (level id, health, item count, score, flash, score copy) |
+| `F2` | Quick-save to the current edit target |
+| `F3` | Save As picker (existing edits or a new file) |
+| `F4` | Load picker (original board or any saved edit) |
+| `F9` | Quick-load the current edit target |
+| `F5` | Playtest: tap starts Jill at the cursor cell, hold (~0.6 s) restarts from the board's spawn; `F5`, `Esc` or pad `Back`/`B` returns |
+| `H` or `F1` | Scrollable control reference (keyboard / controller / touch) |
+| `Esc` | Close the overlay; otherwise open the editor menu |
+| Editor menu: `PAD TEXT` | Use the on-screen D-pad keyboard for object strings (PC; consoles always use it); stored as `[editor] pad_text` |
+
+Select mode: pressing the action button again while the cursor is still over the
+highlighted object lets go of it (toggle).  Panning the board (right stick,
+wheel, `WASD`) drags the highlight cell along so it stays in view.
+
+Mouse coordinates use the renderer's actual viewport/scale and saturate at the
+frame edges; dragging is captured so it keeps painting while the button is held.
+The pointer is confined to the game image while the editor is open; playtest
+releases it.  In the tile/object palettes, the file pickers, the editor menu and
+the board-info panel, the arrow keys, D-pad or left stick navigate the
+highlighted entry; `Enter`/pad `A` accepts or closes the panel.  The `H`/`F1`
+control reference is scrollable with Up/Down, Page Up/Page Down, the mouse wheel
+or the D-pad; `Enter`/`A` closes it.  Keyboard, controller and touch bindings
+are listed in separate sections.
+
+**Touch (Android / Vita):** the bottom bar has two rows of ten buttons:
+
+* Row 1: `MODE PAL PICK TOOL PAN SAVE LOAD PLAY INFO MENU`
+* Row 2: `UNDO REDO COPY PASTE PROPS PRST GRID HELP MINI ERASE`
+
+`PAN` is a toggle: while it is lit, dragging the canvas moves the camera;
+tap it again to go back to painting.  `ERASE` toggles the canvas between paint
+and erase.  Tapping a tile/object palette cell selects it (tap outside to
+close the palette).  The file picker, editor menu, board info, object props and
+presets also accept direct taps; props and info use the left/right side of a
+row to decrease/increase the selected field.
+
+`Esc` (or pad `Start`) opens the **editor menu**: SAVE, SAVE AS, LOAD, SAVE TO GAME
+DATA, PAINT TOOL, UNDO, REDO, COPY/PASTE OBJECT, COPY/PASTE TILES, OBJECT
+PROPS, PLACE PRESETS, PLAYTEST, BOARD INFO, HELP, MINIMAP and EXIT TO MAIN MENU.
+SAVE TO
+GAME DATA asks for confirmation and writes the current board into the game's
+data folder (it can overwrite the original board).  This is the console-friendly
+path to every save/load and editing action.
+
+`M` or the editor menu cycles the tile brush through **single**, **line A-B**,**rectangle fill** and **flood fill**.  For line/rectangle tools, click/tap the
+first cell, then the second, and the line or rectangle between them is filled
+with the selected tile.  Flood fill replaces the connected same-tile region.
+`Esc`/pad `B` cancels a pending A point.  Line and rectangle shapes are
+previewed before committing.
+
+`Z`/`Y` undo and redo map, object and header changes.  `C` copies the selected
+or hovered object and `V` pastes it at the cursor.  `O` opens the object
+property panel: Up/Down selects a field, Left/Right adjusts it, and Enter on the
+STRING row opens the native text prompt (Vita IME, Android soft keyboard or
+desktop keyboard).  On PS4 and Xbox the prompt is an on-screen keyboard:
+D-pad moves, A types, Y deletes, B cancels.  Object W/H are editable there, which covers object resizing;
+DX/DY are exposed for doors and moving objects.  The P13 row shows how many
+trigger objects share the channel, and Enter on P13 links this object to the
+nearest trigger sender/receiver.  The editor menu also has UNDO, REDO, COPY,
+PASTE and OBJECT PROPS rows for controller-only use.
+
+`N` toggles the **minimap** panel in the top-right corner: one pixel per board
+cell in the live palette, with the camera rectangle, cell cursor and selected
+object marked.  It is also an editor-menu row; the panel is redrawn only when
+the board changes.
+
+`R` (or the menu's PLACE PRESETS row) opens the placeable presets.  **GEM DOOR**
+writes the 0x0BE map door tile and places a `DOOR` object on it.  **KEY DOOR**
+writes the two stacked 0x0A1/0x0A2 door tiles and places a `DOOR` object.  Pick
+the preset, then click/tap the board cells; the preset stays active like the
+other object brushes until `Esc` cancels it or another mode/object is chosen.
+See `docs/editor-doors.md` for a complete key/gem door setup guide and trigger
+channel rules.
+
+`4` enters **tile region** mode (also reachable by cycling modes with pad
+`LB`/`RB` or the touch MODE button).  Click/tap the first and second corners;
+the rectangle is outlined.  `C` copies those tiles and `V` pastes them at the
+cursor; the clipboard size and a preview are shown in the top bar.  Right click
+or `Esc` clears the region.  The editor menu has COPY TILES / PASTE TILES rows
+for controller-only use.  Repeated property/header tweaks are grouped into one
+undo step per field.
+
+During playtest, `Esc`/pad `B`/`Back` first dismisses an open level-title,
+message or text-page dialog and stays in the playtest.  Press again to return to
+the editor; `F5` always returns to the editor.
+
+Vita and Android show an on-screen toolbar along the bottom with MODE, PAL,
+PICK, ERASE, SAVE, LOAD, PLAY and MENU, covering the console buttons that do
+not exist (L2/L3/R2/R3).  The TOOL button cycles the tile paint tool
+(single / line A-B / rectangle / flood fill); pad `R3` and `F6` do the same.
+
+Edits are written as normal board files under
+`editor/<game id>/<name>` (for example `editor/jill1/1.jn1`), leaving the
+installed game data untouched.  `F3` opens the **Save As** picker,
+which lists the existing edits and a `NEW FILE` entry; `F4` opens the **Load**
+picker, which lists the original board plus every saved edit.  `F2` and
+`F9` quick-save/load the current target.  The episode board selector also has a
+`NEW LEVEL` row that starts a blank level with a two-row floor, a player object
+and default health, then picks a `custom_N` file name for saving.
+
+Copy a saved file over the original board in the game's data folder when it is
+ready to ship, or start the editor again to keep tuning it.  The board header
+fields are edited with `I`: Up/Down selects a field and Left/Right changes it.
+
+While playtesting, the edited map and object list are used in memory; the
+editor copy is restored when you return.
 
 ### Save / restore
 

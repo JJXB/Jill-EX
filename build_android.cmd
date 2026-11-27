@@ -5,7 +5,7 @@ rem Jill-EX Android build (Gradle + AGP + Android NDK + SDL2 source).
 rem
 rem Outputs:
 rem   port\android\app\build\outputs\apk\debug\app-debug.apk
-rem   JillEX-android.apk                  copy in the repository root
+rem   Releases\JillEX-android.apk              copy in the git root
 rem
 rem Usage:  build_android.cmd           assemble the debug APK + copy it
 rem         build_android.cmd install   ... and adb install -r it
@@ -17,6 +17,8 @@ rem and the SDL2 source tree (default D:\Apps\AndroidSDK\SDL2\SDL2-2.32.10).
 set ROOT=%~dp0
 set ANDROID=%ROOT%port\android
 set OUT=%ANDROID%\app\build\outputs\apk\debug\app-debug.apk
+set "RELEASES=%ROOT%Releases"
+set "APK=%RELEASES%\JillEX-android.apk"
 
 if /I "%~1"=="clean" (
     if exist "%ANDROID%\app\build" rmdir /s /q "%ANDROID%\app\build"
@@ -84,15 +86,17 @@ if not exist "%OUT%" (
     echo Build finished but %OUT% is missing.
     exit /b 1
 )
-copy /y "%OUT%" "%ROOT%JillEX-android.apk" >nul
+if not exist "%RELEASES%" mkdir "%RELEASES%"
+if errorlevel 1 goto :fail
+copy /y "%OUT%" "%APK%" >nul
 if errorlevel 1 goto :fail
 
 echo.
 echo Built  %OUT%
-echo Copied %ROOT%JillEX-android.apk
+echo Copied %APK%
 
 if /I "%~1"=="install" (
-    "%ANDROID_HOME%\platform-tools\adb.exe" install -r "%ROOT%JillEX-android.apk"
+    "%ANDROID_HOME%\platform-tools\adb.exe" install -r "%APK%"
     if errorlevel 1 goto :fail
 )
 

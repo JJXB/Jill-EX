@@ -5,7 +5,7 @@ Target: Android phone/tablet, API 24+ (arm64-v8a; add x86_64 for an emulator)
 Engine: the same `port/src` C++17 sources used by desktop, PS4 and Vita.
 Toolchain root: `D:\Apps\AndroidSDK`
 Project: `port/android/` (see `port/android/README.md`)
-Build: `build_android.cmd` → `JillEX-android.apk` in the repository root
+Build: `build_android.cmd` → `Releases/JillEX-android.apk` (git root)
 
 ## 0. Provisioned toolchain (this step)
 

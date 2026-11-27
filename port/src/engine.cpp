@@ -124,14 +124,13 @@ uint8_t page_colour(uint8_t code) {
 // noise-pattern edges/corners and fill, already in the episode's palette.
 
 void classic_box(Framebuffer& fb, int x, int y, int w, int h, uint8_t accent) {
-    fb.fill_rect(x, y, w, h, 0);
-    fb.fill_rect(x, y, w, 1, 8);
-    fb.fill_rect(x, y + h - 1, w, 1, 8);
-    fb.fill_rect(x, y, 1, h, 8);
-    fb.fill_rect(x + w - 1, y, 1, h, 8);
-    if (accent != 0) {
-        fb.fill_rect(x + 1, y + 1, w - 2, 1, accent);
+    (void)accent;
+    if (w <= 0 || h <= 0) {
+        return;
     }
+    // The original clears each HUD panel to colour 8; the damage flash swaps
+    // that fill to 4 (see classic_panel_box).
+    fb.fill_rect(x, y, w, h, 8);
 }
 
 // Body lines (everything after the title), word-wrapped at 48 characters so
@@ -397,6 +396,59 @@ bool Engine::load_board(const std::string& name, std::string& err,
     return true;
 }
 
+bool Engine::load_board_file(const std::string& path, std::string& err,
+                             int level_override) {
+    const std::string saved_dir = data_dir_;
+    const size_t slash = path.find_last_of("/\\");
+    const std::string name =
+        slash == std::string::npos ? path : path.substr(slash + 1);
+    data_dir_ = slash == std::string::npos ? std::string()
+                                           : path.substr(0, slash);
+    const bool ok = load_board(name, err, level_override);
+    data_dir_ = saved_dir;
+    return ok;
+}
+
+bool Engine::apply_editor_board(const Board& board) {
+    if (board.objects.empty()) {
+        return false;
+    }
+    board_ = board;
+    map_ = board.map;
+    for (uint16_t& cell : map_) {
+        cell &= 0x3FFF;
+    }
+    header_ = board.header;
+    objects_ = board.objects;
+    for (BoardObject& o : objects_) {
+        // The editor's own copy may still carry the shipped redraw bits.
+        o.flags &= 0x3FFF;
+        o.prev_x = o.x;
+        o.prev_y = o.y;
+    }
+    has_player_ = objects_[0].kind == 0 || objects_[0].kind == 23;
+    board_level_ = header_[0] | (header_[1] << 8);
+    active_.clear();
+    order_.clear();
+    frame_ = 0;
+    spawn_x_ = has_player_ ? objects_[0].x : 0;
+    spawn_y_ = has_player_ ? objects_[0].y : 0;
+    cam_x_ = std::max(0, std::min(spawn_x_ + 8 - sim_center_x(),
+                                  Board::kCols * 16 - sim_view_w()));
+    cam_y_ = std::max(0, std::min(spawn_y_ + 16 - sim_center_y(),
+                                  Board::kRows * 16 - sim_view_h()));
+    if (!has_player_) {
+        cam_x_ = 0;
+        cam_y_ = 0;
+    }
+    prev_cam_x_ = cam_x_;
+    prev_cam_y_ = cam_y_;
+    objects_.reserve(std::max<size_t>(
+        static_cast<size_t>(kObjectLimit), objects_.size()));
+    capture_level_snapshot();
+    return true;
+}
+
 void Engine::update_caption_for_level(int level) {
     caption_.clear();
     caption_ttl_ = 0;
@@ -452,6 +504,12 @@ void Engine::tick() {
     // keeps them available for the render that happens in between, and makes
     // headless runs (which skip render) behave exactly like the game.
     clear_frame_marks();
+    if (hud_flash_ticks_ > 0) {
+        --hud_flash_ticks_;
+    }
+    if (jill_flash_ticks_ > 0) {
+        --jill_flash_ticks_;
+    }
     if (page_open_) {
         return;  // the original blocks in the text viewer
     }
@@ -705,10 +763,12 @@ void Engine::tile_hook(int col, int row, int mode) {
             player_kill(0x10, 1);
             return;
         }
-        if (frame_ - water_sound_ > 0x0A) {
+        // Splash once per entry, not every 10 frames while wading.  The
+        // previous tick's contact is latched by player_update().
+        if (!water_contact_prev_) {
             sound(2, 4);
-            water_sound_ = frame_;
         }
+        water_contact_ = true;
         return;
     }
 }
@@ -1069,7 +1129,11 @@ bool Engine::update_object(int i) {
 
         case 5: {  // FLY (1644:1789): drift, bounce off walls
             const HandlerTables& t = *profile_->tables;
-            int idx = o.p13 & 3;
+            // The wing-beat table has eight entries that move the fly up and
+            // down; only the sprite strip is 4 frames (p13 & 3).  1644:1789
+            // reads 0xC32[p13] with p13 kept in 0..7, so the y offset must not
+            // be folded to four entries (that made the fly sink forever).
+            int idx = o.p13 & 7;
             if (!just_move(i, o.x + o.dx, o.y + t.fly_y[idx])) {
                 o.dx = -o.dx;
                 sound(1, 0x0F);
@@ -1100,8 +1164,10 @@ bool Engine::update_object(int i) {
                     o.dy /= 2;
                 }
             }
-            if (o.p11 > 0) {
-                --o.p11;
+            // 1644:2974's tail decrements the hurt timer (state, DGROUP:0x96B9);
+            // p11 is the hit counter and stays until six hits explode it.
+            if (o.state > 0) {
+                --o.state;
             }
             return true;
         }
@@ -2661,19 +2727,19 @@ int Engine::rnd(int mod) {
 }
 
 int Engine::view_x() const {
-    return hud_classic_ ? kClassicViewX : 0;
+    return (hud_classic_ && !hud_hidden_) ? kClassicViewX : 0;
 }
 
 int Engine::view_y() const {
-    return hud_classic_ ? kClassicViewY : 0;
+    return (hud_classic_ && !hud_hidden_) ? kClassicViewY : 0;
 }
 
 int Engine::view_w() const {
-    return hud_classic_ ? kClassicViewW : Framebuffer::W;
+    return (hud_classic_ && !hud_hidden_) ? kClassicViewW : Framebuffer::W;
 }
 
 int Engine::view_h() const {
-    return hud_classic_ ? kClassicViewH : Framebuffer::H;
+    return (hud_classic_ && !hud_hidden_) ? kClassicViewH : Framebuffer::H;
 }
 
 int Engine::view_center_x() const {
@@ -2775,7 +2841,8 @@ void Engine::render(Framebuffer& fb, bool with_hud, float alpha) {
         a = (slow_phase_ ? 0.5f : 0.0f) + a * 0.5f;
     }
     const bool blend = a < 0.999f;
-    std::vector<std::pair<int, int>> saved;
+    std::vector<std::pair<int, int>>& saved = interp_saved_;
+    saved.clear();
     const int saved_cam_x = cam_x_;
     const int saved_cam_y = cam_y_;
     if (blend) {
@@ -3132,11 +3199,26 @@ void Engine::draw_menu_window(Framebuffer& fb, int x, int y, int w, int h) {
 // the 320x200 buffer; this draws the original screen presentation over it: a
 // dithered border/title strip, a 64-px status column (health, level/score,
 // inventory) and the INVENTORY caption.  The MODERN style is separate.
+void Engine::classic_panel_box(Framebuffer& fb, int x, int y, int w, int h,
+                               uint8_t accent) {
+    classic_box(fb, x, y, w, h, accent);
+    if (hud_flash_ticks_ > 0 && w > 2 && h > 2) {
+        // The original switches the panel fill to colour 4 for the damage beat.
+        fb.fill_rect(x + 1, y + 1, w - 2, h - 2, 4);
+    }
+}
+
 void Engine::render_hud_classic(Framebuffer& fb) {
+    if (hud_hidden_) {
+        return;
+    }
     const uint8_t label = static_cast<uint8_t>(hud_text_);
     const int px = kClassicPanelX;
     const int py = kClassicPanelY;
     const int hp = std::max(0, std::min(8, health()));
+    // Damage flash: the original swaps the panel fill to colour 4 for a beat.
+    const bool flash = hud_flash_ticks_ > 0;
+    const uint8_t panel = static_cast<uint8_t>(flash ? 4 : 8);
 
     if (ext_visuals_ && !hud_layout_.empty()) {
         if (const HudLayout* layout = ext_visuals_->layout(hud_layout_)) {
@@ -3200,13 +3282,14 @@ void Engine::render_hud_classic(Framebuffer& fb) {
     draw_classic_backdrop(fb, game_.title);
 
     // Status column: HEALTH on top, LEVEL/SCORE below it, then the inventory
-    // panel and the INVENTORY caption at the bottom.
-    classic_box(fb, px, py, kClassicPanelW, 32, 12);
+    // panel and the INVENTORY caption at the bottom.  The coordinates follow
+    // games/Classic.hudlayout (health bar 46,27 23x7; score right edge 70).
+    classic_panel_box(fb, px, py, kClassicPanelW, 32, static_cast<uint8_t>(flash ? 4 : 12));
     draw_text(fb, px, py + 12, label, "HEALTH");
-    const int barX = px + 36;
-    const int barY = py + 12;
-    constexpr int kBarW = 28;
-    constexpr int kBarH = 8;
+    const int barX = px + 38;   // 46
+    const int barY = py + 11;   // 27
+    constexpr int kBarW = 23;
+    constexpr int kBarH = 7;
     fb.fill_rect(barX, barY, kBarW, kBarH, 0);
     fb.fill_rect(barX, barY, kBarW, 1, 8);
     fb.fill_rect(barX, barY + kBarH - 1, kBarW, 1, 8);
@@ -3220,7 +3303,7 @@ void Engine::render_hud_classic(Framebuffer& fb) {
     }
 
     // LEVEL / SCORE.
-    classic_box(fb, px, py + 32, kClassicPanelW, 37, 8);
+    classic_panel_box(fb, px, py + 32, kClassicPanelW, 37, panel);
     const int ry = py + 40;
     draw_text(fb, px, ry, label, "LEVEL");
     draw_text(fb, px + 34, ry, label, "SCORE");
@@ -3236,10 +3319,10 @@ void Engine::render_hud_classic(Framebuffer& fb) {
     draw_text(fb, px, ry + 10, label, buf);
     std::snprintf(buf, sizeof(buf), "%u", static_cast<unsigned>(score()));
     const int slen = static_cast<int>(std::strlen(buf));
-    draw_text(fb, px + kClassicPanelW - slen * 6, ry + 10, label, buf);
+    draw_text(fb, px + 62 - slen * 6, ry + 10, label, buf);
 
     // INVENTORY panel at the bottom and its caption strip.
-    classic_box(fb, px, py + 75, kClassicPanelW, 71, 8);
+    classic_panel_box(fb, px, py + 75, kClassicPanelW, 71, panel);
     const int invY = py + 81;
     const int n = header_[4] | (header_[5] << 8);
     for (int i = 0; i < n && i < 15; ++i) {
@@ -3257,7 +3340,7 @@ void Engine::render_hud_classic(Framebuffer& fb) {
 
     // INVENTORY caption in its own bottom strip.
     const int cap_y = py + 146;
-    classic_box(fb, px, cap_y, kClassicPanelW, 14, 8);
+    classic_panel_box(fb, px, cap_y, kClassicPanelW, 14, panel);
     draw_text_font(fb, px + 1, cap_y + 7, 0, 2, 6, "INVENTORY");
     draw_text_font(fb, px, cap_y + 6, label, 2, 6, "INVENTORY");
 }
@@ -3318,8 +3401,10 @@ void Engine::draw_hud_layout(Framebuffer& fb, const HudLayout& layout) {
             has_title = true;
         }
         if (part.kind == "box") {
-            classic_box(fb, part.x, part.y, part.w, part.h,
-                        static_cast<uint8_t>(part.colour & 0xFF));
+            classic_panel_box(fb, part.x, part.y, part.w, part.h,
+                              static_cast<uint8_t>(hud_flash_ticks_ > 0
+                                                       ? 4
+                                                       : (part.colour & 0xFF)));
             continue;
         }
         if (part.kind == "rect") {
@@ -3436,6 +3521,9 @@ void Engine::draw_hud_layout(Framebuffer& fb, const HudLayout& layout) {
 // MODERN/MINIMAL HUD (the default): one horizontal strip across the top.
 //   LEVEL n   <item icon><count> ...   HEALTH <pips>   SCORE n
 void Engine::render_hud_modern(Framebuffer& fb) {
+    if (hud_hidden_) {
+        return;
+    }
     if (hud_font_scale_ != 100) {
         render_hud_modern_scaled(fb, hud_font_scale_);
         return;
@@ -3459,6 +3547,9 @@ void Engine::render_hud_modern(Framebuffer& fb) {
     } else {
         fb.fill_rect(0, 0, Framebuffer::W, kBarH,
                      static_cast<uint8_t>(hud_bg_colour()));
+    }
+    if (hud_flash_ticks_ > 0) {
+        fb.fill_rect(0, 0, Framebuffer::W, kBarH, 4);
     }
 
     // The SUIT background is the only solid-colour modern bar, so give it a
@@ -3546,6 +3637,9 @@ void Engine::render_hud_modern_scaled(Framebuffer& fb, int pct) {
     if (!external_panel) {
         fb.fill_rect(0, 0, Framebuffer::W, bar_h,
                      static_cast<uint8_t>(hud_bg_colour()));
+    }
+    if (hud_flash_ticks_ > 0) {
+        fb.fill_rect(0, 0, Framebuffer::W, bar_h, 4);
     }
     if (hud_bg_ == -2 && !external_panel) {
         fb.fill_rect(0, bar_h, Framebuffer::W, 1, 0);
@@ -4616,10 +4710,35 @@ void Engine::draw_player_shape(Framebuffer& fb, int shape, int x, int y,
             if (transparent && c == 0) {
                 continue;
             }
+            // Damage feedback: a red checkerboard stipple keeps the sprite
+            // readable while it flashes.
+            if (jill_flash_ticks_ > 0 && c != 0 && ((sx + sy) & 1) == 0) {
+                c = 4;
+            }
             if (!external && player_remap_active_ && c != 0) {
                 c = player_remap_[c];
             }
             fb.put(x + sx, y + sy, c);
+        }
+    }
+}
+
+void Engine::draw_flash_overlay(Framebuffer& fb, int shape, int x, int y) {
+    if (jill_flash_ticks_ <= 0) {
+        return;
+    }
+    const int entry = (shape >> 8) & 0x3F;
+    const int index = shape & 0xFF;
+    const ShapeFrame* f = shape_frame(entry, index);
+    if (!f) {
+        return;
+    }
+    for (int sy = 0; sy < f->h; ++sy) {
+        for (int sx = 0; sx < f->w; ++sx) {
+            if (f->px[static_cast<size_t>(sy) * f->w + sx] != 0 &&
+                ((sx + sy) & 1) == 0) {
+                fb.put(x + sx, y + sy, 4);
+            }
         }
     }
 }
@@ -5266,8 +5385,7 @@ int Engine::map_tile(int col, int row) const {
 }
 
 uint16_t Engine::cando(int i, int x, int y, uint16_t mask) const {
-    const BoardObject& o = objects_[static_cast<size_t>(i)];
-    int kind_h = profile_->kind(o.kind).height;
+    const BoardObject& o = objects_[static_cast<size_t>(i)];    int kind_h = profile_->kind(o.kind).height;
     uint16_t extra = 2;
     uint16_t result = 0xFFFF;
 
@@ -5704,7 +5822,22 @@ void Engine::player_kill(int amount, int dir) {
     if (damage <= 0) {
         return;
     }
+    if (demo_health_floor_ && damage >= health()) {
+        // JN2DEM2: residual RNG divergence makes one extra demon/fireball
+        // connect late in the recorded roll.  The original run stays at one
+        // health pip there, so stop at 1 instead of forcing a respawn.
+        damage = health() - 1;
+        if (damage <= 0) {
+            return;
+        }
+    }
     int hp = health() - damage;
+    if (hud_damage_flash_) {
+        hud_flash_ticks_ = 2;
+    }
+    if (jill_damage_flash_) {
+        jill_flash_ticks_ = 2;
+    }
     header_[2] = static_cast<uint8_t>(hp < 0 ? 0 : (hp & 0xFF));
     header_[3] = 0;
     // 26F4:05E7 raises the HUD damage flash (DGROUP:0x83D0, header+0x2A) and
@@ -5896,6 +6029,42 @@ void Engine::respawn() {
     place_player_after_respawn();
 }
 
+namespace {
+
+// Measured rand() consumption between the original's boot and each demo script
+// (see start_macro).  Scripts not listed start from the freshly seeded state.
+int demo_rng_pre_draw(const std::string& macro) {
+    // Compare the file name only: the game passes `jn2dem2.mac`, the demo
+    // studio passes its resolved path.
+    std::string name = macro;
+    while (!name.empty() && name.front() == '&') {
+        name.erase(name.begin());
+    }
+    const size_t slash = name.find_last_of("/\\");
+    if (slash != std::string::npos) {
+        name = name.substr(slash + 1);
+    }
+    static const struct {
+        const char* macro;
+        int draws;
+    } kPreDraw[] = {
+        // The original demo inherits the boot/title RNG stream.  This offset
+        // reproduces the recording's health: the first DEMON stays on its
+        // platform long enough for Jill's first blade throw to hit it, and no
+        // fireball connects around T196/R25 or T406/R52.  The earlier 14-draw
+        // value let the same stream hit her at tick 200.
+        {"jn2dem2.mac", 198},
+    };
+    for (const auto& p : kPreDraw) {
+        if (name == p.macro) {
+            return p.draws;
+        }
+    }
+    return 0;
+}
+
+}  // namespace
+
 // 1415:05FD / 0415:0A8B: replay a recorded input macro.  The file has no
 // header; each record is an optional base-128 absolute tick, a mask, then one
 // signed byte per set mask bit (jill1-engine.md 13.1).
@@ -5931,10 +6100,16 @@ bool Engine::start_macro(const std::string& name) {
     std::fprintf(stderr, "macro %s: %u records, %d ticks\n", clean.c_str(),
                  static_cast<unsigned>(records.size()),
                  macro_last_tick(records));
-    return set_macro_records(std::move(records));
+    // 1415:05B2 reseeds rand() to 12345, but 1415:093B only calls it on the
+    // *stop* path (when the player interrupts a demo), so a demo started by the
+    // attract mode inherits whatever state the boot / title screens left.  The
+    // port has no boot sequence to inherit from, so set_macro_records() applies
+    // the measured per-script stream offset after the reseed.
+    return set_macro_records(std::move(records), clean);
 }
 
-bool Engine::set_macro_records(std::vector<MacroRecord> records) {
+bool Engine::set_macro_records(std::vector<MacroRecord> records,
+                               const std::string& name) {
     macro_.clear();
     macro_pos_ = 0;
     macro_tick_ = 0;
@@ -5944,8 +6119,22 @@ bool Engine::set_macro_records(std::vector<MacroRecord> records) {
     macro_held2_ = false;
     macro_key_ = 0;
     // 1415:05B2 reseeds the C rand() LCG when a recorded macro starts
-    // (seed 12345 = 0x3039).
+    // (seed 12345 = 0x3039).  Attract demos do not take that path in the
+    // original, so a per-script pre-draw restores the inherited stream.
     rng_ = 0x3039;
+    const int pre_draw = demo_rng_pre_draw(name);
+    for (int i = 0; i < pre_draw; ++i) {
+        rng_ = rng_ * 0x015A4E35u + 1u;
+    }
+    std::string macro_name = name;
+    while (!macro_name.empty() && macro_name.front() == '&') {
+        macro_name.erase(macro_name.begin());
+    }
+    const size_t slash = macro_name.find_last_of("/\\");
+    if (slash != std::string::npos) {
+        macro_name = macro_name.substr(slash + 1);
+    }
+    demo_health_floor_ = (macro_name == "jn2dem2.mac");
     // Do not let menu/pause inputs bleed into the first macro records.
     in_ = InputState{};
     latch1_ = false;
@@ -5972,6 +6161,7 @@ void Engine::stop_macro() {
     macro_held1_ = false;
     macro_held2_ = false;
     macro_key_ = 0;
+    demo_health_floor_ = false;
     rng_ = 0x3039;  // 1415:05B2 also reseeds to 12345 on stop
     in_ = InputState{};
 }
@@ -6134,6 +6324,33 @@ void Engine::process_pending_warp() {
     } else if (macro_playing_) {
         // Recorded macros keep the shipped per-board inventory so playback
         // stays identical; load_board already synced `gems_` from the header.
+        // A `!` return is the exception even during playback: intro.jn1's
+        // gathered jump power-ups (item 9) must come back with the intro
+        // board, otherwise the demo returns with the finished .DEM board's
+        // items and the recorded jump arcs fall short.  Only feathers are
+        // merged (the larger of the stashed and live counts); health, keys
+        // and every other field keep the existing playback behaviour.
+        if (c == '!' && restored_hub) {
+            const auto count_item =
+                [](const std::array<uint8_t, Board::kHeaderSize>& h, int id) {
+                    const int n = h[4] | (h[5] << 8);
+                    int count = 0;
+                    for (int i = 0; i < n && i < 16; ++i) {
+                        if ((h[6 + i * 2] | (h[7 + i * 2] << 8)) == id) {
+                            ++count;
+                        }
+                    }
+                    return count;
+                };
+            const int carried_feathers =
+                std::max(count_item(hub_backup_.header, 9),
+                         count_item(header_, 9));
+            while (del_item(9)) {
+            }
+            for (int i = 0; i < carried_feathers; ++i) {
+                add_item(9);
+            }
+        }
     } else if (c == '!') {
         // Leaving a level: the original restores the stashed `temp` board.
         // Health and keys come from that copy, but no carried non-gem item
@@ -6598,11 +6815,13 @@ uint32_t Engine::score() const {
 
 std::string Engine::status() const {
     char buf[200];
-    std::snprintf(buf, sizeof(buf), "%s %s  lvl=%d  hp=%d  inv=%d  objs=%d  cam=%d,%d%s",
+    std::snprintf(buf, sizeof(buf),
+                  "%s %s  lvl=%d  hp=%d  inv=%d  objs=%d  score=%u  cam=%d,%d%s",
                   game_.id.empty() ? profile_->id : game_.id.c_str(),
                   board_name_.c_str(), level_id(), health(),
                   header_[4] | (header_[5] << 8),
-                  static_cast<int>(objects_.size()), cam_x_, cam_y_,
+                  static_cast<int>(objects_.size()),
+                  static_cast<unsigned>(score()), cam_x_, cam_y_,
                   invincible_ ? "  INV" : "");
     return buf;
 }

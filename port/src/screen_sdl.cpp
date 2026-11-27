@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "platform_paths.h"
+#include "scaler.h"
 
 #ifdef JILL_HAVE_SDL
 #include <SDL.h>
@@ -207,8 +208,8 @@ public:
         (void)display_w;
         (void)display_h;
 #elif defined(JILL_ANDROID)
-        // Android owns the window size and orientation.  SDL_RenderSetLogicalSize
-        // in present_renderer() already scales the 320x200 frame to the surface.
+        // Android owns the window size and orientation.  The presenter scales
+        // the 320x200 frame to the surface with the selected scaler.
         (void)pixel_w;
         (void)pixel_h;
         (void)mode;
@@ -262,6 +263,127 @@ public:
         }
     }
 
+    void set_scale_mode(int mode) override {
+        if (mode < jill_scale::kInteger || mode > jill_scale::kFull) {
+            mode = jill_scale::kInteger;
+        }
+        scale_mode_ = mode;
+    }
+
+    void set_mouse_grab(bool on) override {
+        if (!window_) {
+            return;
+        }
+        mouse_grabbed_ = on;
+        SDL_SetWindowGrab(window_, on ? SDL_TRUE : SDL_FALSE);
+        if (on) {
+            refresh_mouse_rect();
+        } else {
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+            SDL_SetWindowMouseRect(window_, nullptr);
+#endif
+            mouse_rect_ = SDL_Rect{};
+        }
+    }
+
+    void refresh_mouse_rect() override {
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+        if (!window_ || !mouse_grabbed_) {
+            return;
+        }
+        SDL_Rect rect{};
+        if (!frame_window_rect(rect)) {
+            return;
+        }
+        if (std::memcmp(&rect, &mouse_rect_, sizeof(rect)) == 0) {
+            return;
+        }
+        mouse_rect_ = rect;
+        SDL_SetWindowMouseRect(window_, &rect);
+#else
+        (void)0;
+#endif
+    }
+
+    bool window_to_frame(int wx, int wy, int& x, int& y) override {
+        if (!window_) {
+            return false;
+        }
+#ifndef JILL_DIRECT_PRESENT
+        if (!renderer_) {
+            return false;
+        }
+        // Map the window pixel through the same fit the presenter uses.
+        int ww = 0;
+        int wh = 0;
+        SDL_GetWindowSize(window_, &ww, &wh);
+        if (ww <= 0 || wh <= 0) {
+            return false;
+        }
+        int ow = 0;
+        int oh = 0;
+        if (SDL_GetRendererOutputSize(renderer_, &ow, &oh) != 0 || ow <= 0 ||
+            oh <= 0) {
+            return false;
+        }
+        const jill_scale::Fit fit =
+            jill_scale::compute_fit(320, 200, ow, oh, scale_mode_);
+        if (fit.w <= 0 || fit.h <= 0) {
+            return false;
+        }
+        const float px = static_cast<float>(wx) * ow / ww;
+        const float py = static_cast<float>(wy) * oh / wh;
+        x = static_cast<int>((px - fit.x) * 320.0f / fit.w);
+        y = static_cast<int>((py - fit.y) * 200.0f / fit.h);
+        // Clicking in the letterbox saturates at the nearest frame edge.
+        if (x < 0) {
+            x = 0;
+        } else if (x >= 320) {
+            x = 319;
+        }
+        if (y < 0) {
+            y = 0;
+        } else if (y >= 200) {
+            y = 199;
+        }
+        return true;
+#else
+        int ww = 0;
+        int wh = 0;
+        SDL_GetWindowSize(window_, &ww, &wh);
+        if (ww <= 0 || wh <= 0) {
+            return false;
+        }
+        int pw = ww;
+        int ph = wh;
+        if (surface_) {
+            pw = surface_->w;
+            ph = surface_->h;
+        }
+        const jill_scale::Fit fit =
+            jill_scale::compute_fit(320, 200, pw, ph, scale_mode_);
+        const float scale_x =
+            static_cast<float>(fit.w) / static_cast<float>(320);
+        const float scale_y =
+            static_cast<float>(fit.h) / static_cast<float>(200);
+        const int px = wx * pw / ww;
+        const int py = wy * ph / wh;
+        x = static_cast<int>((px - fit.x) / (scale_x > 0.0f ? scale_x : 1.0f));
+        y = static_cast<int>((py - fit.y) / (scale_y > 0.0f ? scale_y : 1.0f));
+        if (x < 0) {
+            x = 0;
+        } else if (x >= 320) {
+            x = 319;
+        }
+        if (y < 0) {
+            y = 0;
+        } else if (y >= 200) {
+            y = 199;
+        }
+        return true;
+#endif
+    }
+
     bool touch_to_frame(float nx, float ny, int& x, int& y) override {
 #if defined(JILL_DIRECT_PRESENT)
         // Direct window-surface presentation has no SDL renderer/logical size.
@@ -276,17 +398,36 @@ public:
         }
         int ww = 0;
         int wh = 0;
-        SDL_GetWindowSizeInPixels(window_, &ww, &wh);
+        SDL_GetWindowSize(window_, &ww, &wh);
         if (ww <= 0 || wh <= 0) {
             return false;
         }
-        float lx = 0.0f;
-        float ly = 0.0f;
-        SDL_RenderWindowToLogical(renderer_, static_cast<int>(nx * ww),
-                                  static_cast<int>(ny * wh), &lx, &ly);
-        x = static_cast<int>(lx);
-        y = static_cast<int>(ly);
-        return x >= 0 && y >= 0 && x < 320 && y < 200;
+        int ow = 0;
+        int oh = 0;
+        if (SDL_GetRendererOutputSize(renderer_, &ow, &oh) != 0 || ow <= 0 ||
+            oh <= 0) {
+            return false;
+        }
+        const jill_scale::Fit fit =
+            jill_scale::compute_fit(320, 200, ow, oh, scale_mode_);
+        if (fit.w <= 0 || fit.h <= 0) {
+            return false;
+        }
+        const float px = nx * static_cast<float>(ow);
+        const float py = ny * static_cast<float>(oh);
+        x = static_cast<int>((px - fit.x) * 320.0f / fit.w);
+        y = static_cast<int>((py - fit.y) * 200.0f / fit.h);
+        if (x < 0) {
+            x = 0;
+        } else if (x >= 320) {
+            x = 319;
+        }
+        if (y < 0) {
+            y = 0;
+        } else if (y >= 200) {
+            y = 199;
+        }
+        return true;
 #endif
     }
 
@@ -309,6 +450,50 @@ public:
     }
 
 private:
+    bool frame_window_rect(SDL_Rect& rect) {
+        if (!window_) {
+            return false;
+        }
+        int ww = 0;
+        int wh = 0;
+        SDL_GetWindowSize(window_, &ww, &wh);
+        if (ww <= 0 || wh <= 0) {
+            return false;
+        }
+#ifndef JILL_DIRECT_PRESENT
+        if (!renderer_) {
+            return false;
+        }
+        int ow = 0;
+        int oh = 0;
+        if (SDL_GetRendererOutputSize(renderer_, &ow, &oh) != 0 || ow <= 0 ||
+            oh <= 0) {
+            return false;
+        }
+        const jill_scale::Fit fit =
+            jill_scale::compute_fit(320, 200, ow, oh, scale_mode_);
+        rect.x = fit.x * ww / ow;
+        rect.y = fit.y * wh / oh;
+        rect.w = fit.w * ww / ow;
+        rect.h = fit.h * wh / oh;
+        // Keep a whole-pixel rect so SDL's pointer confine does not jitter.
+        if (rect.w < 1) {
+            rect.w = 1;
+        }
+        if (rect.h < 1) {
+            rect.h = 1;
+        }
+#else
+        const jill_scale::Fit fit =
+            jill_scale::compute_fit(320, 200, ww, wh, scale_mode_);
+        rect.w = fit.w;
+        rect.h = fit.h;
+        rect.x = fit.x;
+        rect.y = fit.y;
+#endif
+        return rect.w > 0 && rect.h > 0;
+    }
+
 #ifdef JILL_XBOX
     // Scale the 320x200 ARGB frame straight into the GPU framebuffer.
     // SDL's own window-surface route would copy the frame twice: once into the
@@ -321,14 +506,12 @@ private:
             present_direct(argb, w, h);  // unusual mode: use the SDL surface
             return;
         }
-        int scale = std::min(vm.width / w, vm.height / h);
-        if (scale < 1) {
-            scale = 1;
-        }
-        const int out_w = w * scale;
-        const int out_h = h * scale;
-        const int off_x = (vm.width - out_w) / 2;
-        const int off_y = (vm.height - out_h) / 2;
+        const jill_scale::Fit fit =
+            jill_scale::compute_fit(w, h, vm.width, vm.height, scale_mode_);
+        const int out_w = fit.w;
+        const int out_h = fit.h;
+        const int off_x = fit.x;
+        const int off_y = fit.y;
 
         // Black out the letterbox bars only; the frame itself overwrites every
         // pixel it covers.
@@ -347,29 +530,37 @@ private:
             }
         }
 
-        // Build one scaled row, then copy it into the `scale` destination rows.
-        // memcpy into the write-combined framebuffer is much faster than
-        // per-pixel stores.
-        if (row_buf_.size() < static_cast<size_t>(out_w)) {
-            row_buf_.resize(static_cast<size_t>(out_w));
-        }
-        for (int sy = 0; sy < h; ++sy) {
-            const uint32_t* src = argb + static_cast<size_t>(sy) * w;
-            uint32_t* expanded = row_buf_.data();
-            for (int sx = 0; sx < w; ++sx) {
-                const uint32_t c = src[sx] | 0xFF000000u;
-                for (int dx = 0; dx < scale; ++dx) {
-                    *expanded++ = c;
+        if (scale_mode_ == jill_scale::kInteger) {
+            // Build one scaled row, then copy it into the `scale` destination
+            // rows.  memcpy into the write-combined framebuffer is much faster
+            // than per-pixel stores.
+            const int scale = out_w / w;
+            if (row_buf_.size() < static_cast<size_t>(out_w)) {
+                row_buf_.resize(static_cast<size_t>(out_w));
+            }
+            for (int sy = 0; sy < h; ++sy) {
+                const uint32_t* src = argb + static_cast<size_t>(sy) * w;
+                uint32_t* expanded = row_buf_.data();
+                for (int sx = 0; sx < w; ++sx) {
+                    const uint32_t c = src[sx] | 0xFF000000u;
+                    for (int dx = 0; dx < scale; ++dx) {
+                        *expanded++ = c;
+                    }
+                }
+                for (int dy = 0; dy < scale; ++dy) {
+                    uint32_t* row =
+                        dst + static_cast<size_t>(off_y + sy * scale + dy) *
+                                  vm.width +
+                        off_x;
+                    std::memcpy(row, row_buf_.data(),
+                                static_cast<size_t>(out_w) * sizeof(uint32_t));
                 }
             }
-            for (int dy = 0; dy < scale; ++dy) {
-                uint32_t* row = dst +
-                                static_cast<size_t>(off_y + sy * scale + dy) *
-                                    vm.width +
-                                off_x;
-                std::memcpy(row, row_buf_.data(),
-                            static_cast<size_t>(out_w) * sizeof(uint32_t));
-            }
+        } else {
+            scaler_.setup(w, h, out_w, out_h, scale_mode_);
+            scaler_.blit(argb, [&](int x, int y, uint32_t c) {
+                dst[static_cast<size_t>(off_y + y) * vm.width + off_x + x] = c;
+            });
         }
         XVideoFlushFB();
         if (present_count_ < 3 || present_count_ % 120 == 0) {
@@ -409,19 +600,61 @@ private:
         if (!renderer_) {
             return;
         }
-        if (!texture_) {
-            SDL_RenderSetLogicalSize(renderer_, w, h);
-            SDL_RenderSetIntegerScale(renderer_, SDL_TRUE);
+        int out_pw = 0;
+        int out_ph = 0;
+        if (SDL_GetRendererOutputSize(renderer_, &out_pw, &out_ph) != 0 ||
+            out_pw <= 0 || out_ph <= 0) {
+            out_pw = w;
+            out_ph = h;
+        }
+        // Logical scaling is disabled (set once below), so every destination
+        // rect is in renderer output pixels and the fit can be fractional.
+        const bool vertical = (scale_mode_ == jill_scale::kVertical);
+        const bool linear = (scale_mode_ == jill_scale::kFull);
+        const jill_scale::Fit fit =
+            jill_scale::compute_fit(w, h, out_pw, out_ph, scale_mode_);
+        int tex_h = h;
+        if (vertical) {
+            tex_h = std::max(1, fit.h);
+        }
+        if (!texture_ || tex_w_ != w || tex_h_ != tex_h || tex_linear_ != linear) {
+            if (texture_) {
+                SDL_DestroyTexture(texture_);
+                texture_ = nullptr;
+            }
+            SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY,
+                        linear ? "linear" : "nearest");
             texture_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888,
-                                         SDL_TEXTUREACCESS_STREAMING, w, h);
+                                         SDL_TEXTUREACCESS_STREAMING, w, tex_h);
             if (!texture_) {
                 return;
             }
+            tex_w_ = w;
+            tex_h_ = tex_h;
+            tex_linear_ = linear;
+            SDL_RenderSetLogicalSize(renderer_, 0, 0);
         }
-        SDL_UpdateTexture(texture_, nullptr, argb,
-                          w * static_cast<int>(sizeof(uint32_t)));
+        if (vertical) {
+            // Bilinear on Y only: pre-scale the rows, then let the nearest
+            // sampler handle the fractional horizontal stretch.
+            vert_buf_.resize(static_cast<size_t>(w) * tex_h);
+            scaler_.setup(w, h, w, tex_h, jill_scale::kVertical);
+            scaler_.blit(argb, [&](int x, int y, uint32_t c) {
+                vert_buf_[static_cast<size_t>(y) * w + x] = c;
+            });
+            SDL_UpdateTexture(texture_, nullptr, vert_buf_.data(),
+                              w * static_cast<int>(sizeof(uint32_t)));
+        } else {
+            SDL_UpdateTexture(texture_, nullptr, argb,
+                              w * static_cast<int>(sizeof(uint32_t)));
+        }
         SDL_RenderClear(renderer_);
-        if (SDL_RenderCopy(renderer_, texture_, nullptr, nullptr) != 0) {
+        SDL_Rect dst{};
+        dst.x = fit.x;
+        dst.y = fit.y;
+        dst.w = fit.w;
+        dst.h = fit.h;
+        if (SDL_RenderCopy(renderer_, texture_, nullptr, &dst) != 0) {
             jill_paths::trace("sdl screen: copy failed: %s", SDL_GetError());
         }
         SDL_RenderPresent(renderer_);
@@ -441,53 +674,79 @@ private:
 
         SDL_FillRect(s, nullptr, 0);  // black letterbox
 
-        int scale = std::min(s->w / w, s->h / h);
-        if (scale < 1) {
-            scale = 1;
-        }
-        const int out_w = w * scale;
-        const int out_h = h * scale;
-        const int off_x = (s->w - out_w) / 2;
-        const int off_y = (s->h - out_h) / 2;
+        const jill_scale::Fit fit =
+            jill_scale::compute_fit(w, h, s->w, s->h, scale_mode_);
+        const int out_w = fit.w;
+        const int out_h = fit.h;
+        const int off_x = fit.x;
+        const int off_y = fit.y;
 
         if (SDL_MUSTLOCK(s)) {
             SDL_LockSurface(s);
         }
         uint8_t* base = static_cast<uint8_t*>(s->pixels);
-        for (int sy = 0; sy < h; ++sy) {
-            const uint32_t* src = argb + static_cast<size_t>(sy) * w;
-            for (int sx = 0; sx < w; ++sx) {
-                const uint32_t c = src[sx];
-                const uint32_t r = (c >> 16) & 0xFFu;
-                const uint32_t g = (c >> 8) & 0xFFu;
-                const uint32_t b = c & 0xFFu;
-                uint32_t v = (((r >> f->Rloss) & 0xFFu) << f->Rshift) |
-                             (((g >> f->Gloss) & 0xFFu) << f->Gshift) |
-                             (((b >> f->Bloss) & 0xFFu) << f->Bshift);
-                if (f->Amask != 0) {
-                    v |= 0xFFu << f->Ashift;
-                }
-                for (int dy = 0; dy < scale; ++dy) {
-                    uint8_t* row =
-                        base + static_cast<size_t>(off_y + sy * scale + dy) *
-                                   s->pitch;
-                    uint8_t* dst =
-                        row + static_cast<size_t>(off_x + sx * scale) * bpp;
-                    for (int dx = 0; dx < scale; ++dx) {
-                        if (bpp == 4) {
-                            *reinterpret_cast<uint32_t*>(dst) = v;
-                        } else if (bpp == 3) {
-                            dst[0] = static_cast<uint8_t>(v & 0xFF);
-                            dst[1] = static_cast<uint8_t>((v >> 8) & 0xFF);
-                            dst[2] = static_cast<uint8_t>((v >> 16) & 0xFF);
-                        } else {
-                            *reinterpret_cast<uint16_t*>(dst) =
-                                static_cast<uint16_t>(v);
+
+        // Convert one 0xAARRGGBB pixel to the window surface's format.
+        const auto pack = [&](uint32_t c) -> uint32_t {
+            const uint32_t r = (c >> 16) & 0xFFu;
+            const uint32_t g = (c >> 8) & 0xFFu;
+            const uint32_t b = c & 0xFFu;
+            uint32_t v = (((r >> f->Rloss) & 0xFFu) << f->Rshift) |
+                         (((g >> f->Gloss) & 0xFFu) << f->Gshift) |
+                         (((b >> f->Bloss) & 0xFFu) << f->Bshift);
+            if (f->Amask != 0) {
+                v |= 0xFFu << f->Ashift;
+            }
+            return v;
+        };
+
+        if (scale_mode_ == jill_scale::kInteger) {
+            const int scale = out_w / w;
+            for (int sy = 0; sy < h; ++sy) {
+                const uint32_t* src = argb + static_cast<size_t>(sy) * w;
+                for (int sx = 0; sx < w; ++sx) {
+                    const uint32_t v = pack(src[sx]);
+                    for (int dy = 0; dy < scale; ++dy) {
+                        uint8_t* row =
+                            base +
+                            static_cast<size_t>(off_y + sy * scale + dy) *
+                                s->pitch;
+                        uint8_t* dst =
+                            row + static_cast<size_t>(off_x + sx * scale) * bpp;
+                        for (int dx = 0; dx < scale; ++dx) {
+                            if (bpp == 4) {
+                                *reinterpret_cast<uint32_t*>(dst) = v;
+                            } else if (bpp == 3) {
+                                dst[0] = static_cast<uint8_t>(v & 0xFF);
+                                dst[1] = static_cast<uint8_t>((v >> 8) & 0xFF);
+                                dst[2] = static_cast<uint8_t>((v >> 16) & 0xFF);
+                            } else {
+                                *reinterpret_cast<uint16_t*>(dst) =
+                                    static_cast<uint16_t>(v);
+                            }
+                            dst += bpp;
                         }
-                        dst += bpp;
                     }
                 }
             }
+        } else {
+            scaler_.setup(w, h, out_w, out_h, scale_mode_);
+            scaler_.blit(argb, [&](int x, int y, uint32_t c) {
+                const uint32_t v = pack(c);
+                uint8_t* dst = base +
+                               static_cast<size_t>(off_y + y) * s->pitch +
+                               static_cast<size_t>(off_x + x) * bpp;
+                if (bpp == 4) {
+                    *reinterpret_cast<uint32_t*>(dst) = v;
+                } else if (bpp == 3) {
+                    dst[0] = static_cast<uint8_t>(v & 0xFF);
+                    dst[1] = static_cast<uint8_t>((v >> 8) & 0xFF);
+                    dst[2] = static_cast<uint8_t>((v >> 16) & 0xFF);
+                } else {
+                    *reinterpret_cast<uint16_t*>(dst) =
+                        static_cast<uint16_t>(v);
+                }
+            });
         }
         if (SDL_MUSTLOCK(s)) {
             SDL_UnlockSurface(s);
@@ -513,6 +772,16 @@ private:
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;
     SDL_Texture* texture_ = nullptr;
+    bool mouse_grabbed_ = false;
+    SDL_Rect mouse_rect_{};
+    int scale_mode_ = jill_scale::kInteger;
+    jill_scale::Scaler scaler_;
+#ifndef JILL_DIRECT_PRESENT
+    std::vector<uint32_t> vert_buf_;
+    int tex_w_ = 0;
+    int tex_h_ = 0;
+    bool tex_linear_ = false;
+#endif
 #ifdef JILL_DIRECT_PRESENT
     SDL_Surface* surface_ = nullptr;
     bool first_present_ = false;

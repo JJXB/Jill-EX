@@ -428,6 +428,8 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\main.cpp" />
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\app.cpp" />
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\engine.cpp" />
+    <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\editor.cpp" />
+    <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\textkey.cpp" />
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\macro.cpp" />
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\player.cpp" />
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\board.cpp" />

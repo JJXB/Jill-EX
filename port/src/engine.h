@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "board.h"
@@ -34,6 +35,11 @@ public:
     // the demo tables use it to reproduce the intro CHECKPT level ids.
     bool load_board(const std::string& name, std::string& err,
                     int level_override = -1);
+    // Load a board from an explicit filesystem path (e.g. a JILL MAKER file
+    // under editor/<game>/).  Board-relative asset names still resolve against
+    // the game's data directory.
+    bool load_board_file(const std::string& path, std::string& err,
+                         int level_override = -1);
     // Place the player on the CHECKPT whose p13 matches `level` (the
     // 26F4:04C7 spawn routine).  Used after initial/demo loads; warps call it
     // internally.
@@ -56,8 +62,11 @@ public:
     bool start_macro(const std::string& name);
     // Replay an in-memory record list (the external demo studio loads and
     // edits `*.mac` files itself, then hands the result over).  Records are
-    // stable-sorted by tick and playback restarts from tick 0.
-    bool set_macro_records(std::vector<MacroRecord> records);
+    // stable-sorted by tick and playback restarts from tick 0.  `name` is the
+    // source script when known, so the demo RNG stream offset is applied just
+    // like start_macro().
+    bool set_macro_records(std::vector<MacroRecord> records,
+                           const std::string& name = std::string());
     // True while the scripted inputs are still being fed to the update.
     bool macro_active() const { return macro_playing_; }
     // The record list being played (empty after stop_macro()).
@@ -162,6 +171,19 @@ public:
     // the port keeps its minimal pip strip unless this is enabled.
     void set_hud_classic(bool on) { hud_classic_ = on; }
     bool hud_classic() const { return hud_classic_; }
+    // Hide the HUD completely (full 320x200 view; no top bar or side panel).
+    void set_hud_hidden(bool on) { hud_hidden_ = on; }
+    bool hud_hidden() const { return hud_hidden_; }
+    // Board window the current HUD leaves for the world (public for the level
+    // editor, whose playtest has to line its camera up with the in-game view).
+    int board_view_w() const { return view_w(); }
+    int board_view_h() const { return view_h(); }
+    // Damage feedback: red panel flash (original, default on) and an optional
+    // red Jill sprite stipple (default off).
+    void set_hud_damage_flash(bool on) { hud_damage_flash_ = on; }
+    bool hud_damage_flash() const { return hud_damage_flash_; }
+    void set_jill_damage_flash(bool on) { jill_damage_flash_ = on; }
+    bool jill_damage_flash() const { return jill_damage_flash_; }
     // Selected external HUD panel (empty = the pack's classic/modern default).
     void set_hud_panel(const std::string& name) { hud_panel_ = name; }
     const std::string& hud_panel() const { return hud_panel_; }
@@ -411,6 +433,24 @@ public:
     // Map cell (tile id only, without the 0xC000 redraw bits).
     int map_tile(int col, int row) const;
 
+    // --- in-engine level editor -------------------------------------------
+    // Replace the live map/objects/header from an edited Board.  Used by the
+    // editor for previews and by the playtest toggle.  The board name and the
+    // loaded asset bank stay unchanged.
+    bool apply_editor_board(const Board& board);
+    // Shape id for a kind's neutral editor icon (tileset << 8 | frame).
+    // Returns -1 for kinds without art.
+    int kind_icon_shape(int kind) const {
+        const KindInfo& k = profile_->kind(kind);
+        if (!k.tileset) {
+            return -1;
+        }
+        const int frame = (kind == 0) ? 0x10 : 0;
+        return (k.tileset << 8) | frame;
+    }
+    // Draw one shape frame.  Exposed for editor palettes/previews.
+    void draw_shape(Framebuffer& fb, int shape, int x, int y, bool transparent);
+
     // --- engine services (used by the player handler) ---------------------
     // The header's item list caps at 15 entries (see add_item), so that is also
     // the largest number of feathers (item 9) a jump can be scaled by.
@@ -504,6 +544,10 @@ private:
     void draw_object(int i, Framebuffer& fb);
     void draw_player_shape(Framebuffer& fb, int shape, int x, int y,
                            bool transparent);
+    void draw_flash_overlay(Framebuffer& fb, int shape, int x, int y);
+    // classic_box() plus the damage flash fill (colour 4) over the interior.
+    void classic_panel_box(Framebuffer& fb, int x, int y, int w, int h,
+                           uint8_t accent);
     void build_player_remap();
     // Shape lookup: external pack override first, then the game's shape bank.
     const ShapeFrame* shape_frame(int entry, int index);
@@ -511,7 +555,6 @@ private:
     const ShapeFrame* classic_hud_shape(int entry, int index);
     const ShapeFrame* classic_frame_shape(int entry, int index);
     const ShapeFrame* classic_menu_shape(int entry, int index);
-    void draw_shape(Framebuffer& fb, int shape, int x, int y, bool transparent);
     // Draws the shape's set pixels in a single palette colour (health pips).
     void draw_shape_tint(Framebuffer& fb, int shape, int x, int y,
                          uint8_t colour);
@@ -593,6 +636,9 @@ private:
     std::vector<BoardObject> objects_;
     std::vector<int> active_;
     std::vector<int> order_;
+    // Reused by render() when interpolating between logic ticks; keeping it
+    // alive avoids a malloc/free of two ints per object every presented frame.
+    std::vector<std::pair<int, int>> interp_saved_;
     int cam_x_ = 0;
     int cam_y_ = 0;
     // Vertical scroll delta for this tick (DGROUP:0xBAB2).  Reset by the
@@ -601,9 +647,17 @@ private:
     int prev_cam_x_ = 0;  // presentation interpolation (previous tick)
     int prev_cam_y_ = 0;
     int frame_ = 0;
-    int water_sound_ = -0x100;  // DGROUP:0x439E, last water-splash frame
+    // Water splash latch: play once when the player enters water, not every
+    // cooldown frame while wading.  `prev` is the previous tick's contact.
+    bool water_contact_ = false;
+    bool water_contact_prev_ = false;
     uint32_t rng_ = 0x3039;  // Turbo C rand() LCG (2CA6:0004/0015), demo seed 12345
     bool hud_classic_ = false;
+    bool hud_hidden_ = false;
+    bool hud_damage_flash_ = true;
+    bool jill_damage_flash_ = false;
+    int hud_flash_ticks_ = 0;
+    int jill_flash_ticks_ = 0;
     bool hud_portrait_ = true;
     bool hide_text_kinds_ = false;
     bool debug_fly_ = false;
@@ -672,6 +726,10 @@ private:
     bool macro_held1_ = false;
     bool macro_held2_ = false;
     int macro_key_ = 0;
+    // JN2DEM2 calibration: the original recording's health sits at one pip
+    // through the late fireball/demon section.  Stop damage at 1 during that
+    // script instead of forcing a respawn the recording does not have.
+    bool demo_health_floor_ = false;
     bool ending_done_ = false;
     std::string msg_text_;       // _putbotmsg buffer (DGROUP:0xB662)
     int msg_ttl_ = 0;            // DGROUP:0xB6B4, 0x50 by default

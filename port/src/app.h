@@ -30,12 +30,16 @@ struct Options {
     int start_y = -1;
     int level = -1;             // --level N: headless header level id override
     int scale = 3;              // windowed integer scale (1..6)
+    int scaler = 0;             // 0 integer, 1 fractional, 2 vertical, 3 bilinear
     int high_fps = 60;          // presentation rate: 0 = 18.2 Hz, else 60..144
     bool interpolate = true;    // --no-interpolate: no high-fps smoothing
     bool fps_counter = false;   // VIDEO menu: frame-rate counter overlay
     int filter = 0;             // --filter N: 0 none, 1 smooth, 2 CRT
     std::string renderer = "auto";  // PS4 display: auto, gl or sdl
     bool debug = false;         // PS4 only: FPS/profiler overlay (--debug)
+    // PS4 diagnostic: leave straight after the main loop, before any teardown.
+    // Bisects a quit crash between "our cleanup" and "kernel process exit".
+    bool ps4_quit_raw = false;  // [debug] quit_raw
     int stereo = 0;             // --stereo MODE: 0 off, 1 interlaced, 2 SBS
     int stereo_depth = 2;       // --stereo-depth N: eye separation in pixels
     int stereo_convergence = 0; // --stereo-convergence N: pull both eyes inward
@@ -69,6 +73,8 @@ struct Options {
     bool pc_speaker = false;    // --pc-speaker: 1-bit square-wave effects
     int pad_deadzone = 25;      // [controls] deadzone: 0..50 percent of full tilt
     int hud_font_scale = 100;   // [hud] font_scale: 50..200 percent
+    bool hud_damage_flash = true;   // [gameplay] hud_flash: red panel flash
+    bool jill_damage_flash = false; // [gameplay] jill_flash: red sprite stipple
     int midi_device = -1;       // --midi N: system MIDI out, -1 = OPL2
     bool list_midi = false;     // --list-midi: print devices and exit
     std::string dump_music;     // --dump-music FILE: render a CMF to WAV
@@ -77,6 +83,7 @@ struct Options {
     double music_seconds = 10.0;  // --music-seconds N
     bool fullscreen = false;    // legacy alias for window_mode = 1
     bool hud_classic = false;   // --hud: use the original HUD panel art
+    bool hud_hidden = false;    // --no-hud: hide the HUD entirely
     bool hud_portrait = true;   // --no-portrait: hide the dialog portrait
     bool invincible = false;    // --invincible: debug no-damage mode
     int super_jump = 0;         // --super-jump N: cheat, minimum feather count (0..15)

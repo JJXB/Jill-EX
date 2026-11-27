@@ -15,6 +15,7 @@
 #include <cstring>
 
 #include "../src/platform_paths.h"
+#include "../src/scaler.h"
 
 namespace {
 
@@ -159,21 +160,37 @@ public:
         const int off_x = (width_ - out_w) / 2;
         const int off_y = (height_ - out_h) / 2;
 
-        for (int sy = 0; sy < h; ++sy) {
-            const uint32_t* src = argb + static_cast<size_t>(sy) * w;
-            for (int sx = 0; sx < w; ++sx) {
-                const uint32_t c = src[sx];
+        if (scale_mode_ != jill_scale::kInteger) {
+            const jill_scale::Fit fit =
+                jill_scale::compute_fit(w, h, width_, height_, scale_mode_);
+            scaler_.setup(w, h, fit.w, fit.h, scale_mode_);
+            scaler_.blit(argb, [&](int x, int y, uint32_t c) {
                 const uint32_t r = (c >> 16) & 0xFFu;
                 const uint32_t g = (c >> 8) & 0xFFu;
                 const uint32_t b = c & 0xFFu;
-                const uint32_t v = 0xFF000000u | (b << 16) | (g << 8) | r;
-                for (int dy = 0; dy < scale; ++dy) {
-                    uint32_t* row =
-                        reinterpret_cast<uint32_t*>(dst_base) +
-                        static_cast<size_t>(off_y + sy * scale + dy) * width_;
-                    uint32_t* out = row + (off_x + sx * scale);
-                    for (int dx = 0; dx < scale; ++dx) {
-                        out[dx] = v;
+                uint32_t* row =
+                    reinterpret_cast<uint32_t*>(dst_base) +
+                    static_cast<size_t>(fit.y + y) * width_;
+                row[fit.x + x] = 0xFF000000u | (b << 16) | (g << 8) | r;
+            });
+        } else {
+            for (int sy = 0; sy < h; ++sy) {
+                const uint32_t* src = argb + static_cast<size_t>(sy) * w;
+                for (int sx = 0; sx < w; ++sx) {
+                    const uint32_t c = src[sx];
+                    const uint32_t r = (c >> 16) & 0xFFu;
+                    const uint32_t g = (c >> 8) & 0xFFu;
+                    const uint32_t b = c & 0xFFu;
+                    const uint32_t v = 0xFF000000u | (b << 16) | (g << 8) | r;
+                    for (int dy = 0; dy < scale; ++dy) {
+                        uint32_t* row =
+                            reinterpret_cast<uint32_t*>(dst_base) +
+                            static_cast<size_t>(off_y + sy * scale + dy) *
+                                width_;
+                        uint32_t* out = row + (off_x + sx * scale);
+                        for (int dx = 0; dx < scale; ++dx) {
+                            out[dx] = v;
+                        }
                     }
                 }
             }
@@ -204,6 +221,13 @@ public:
     }
 
     void set_title(const char* title) override { (void)title; }
+
+    void set_scale_mode(int mode) override {
+        if (mode < jill_scale::kInteger || mode > jill_scale::kFull) {
+            mode = jill_scale::kInteger;
+        }
+        scale_mode_ = mode;
+    }
 
     void shutdown() override {
         if (shut_down_) {
@@ -358,6 +382,8 @@ private:
     bool flip_error_logged_ = false;
     bool first_frame_logged_ = false;
     bool shut_down_ = false;
+    int scale_mode_ = jill_scale::kInteger;
+    jill_scale::Scaler scaler_;
 };
 
 }  // namespace

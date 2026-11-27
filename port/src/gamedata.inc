@@ -95,7 +95,7 @@ static const uint16_t kItemIcons1[] = {
 
 static const HandlerTables kHandlerTables1 = {
     {0, 1, 2, 1},
-    {1, 2, 1, 0},
+    {1, 2, 1, 0, -1, -2, -1, 0},
     {0, 1, 2, 3, 2, 1, 9, 9},
     {4, 4, 4, 4, 4, 4, -1, -1},
     {0, 1, 2, 3, 2, 1},
@@ -239,7 +239,7 @@ static const uint16_t kItemIcons2[] = {
 
 static const HandlerTables kHandlerTables2 = {
     {0, 1, 2, 1},
-    {1, 2, 1, 0},
+    {1, 2, 1, 0, -1, -2, -1, 0},
     {0, 1, 2, 3, 2, 1, 9, 9},
     {4, 4, 4, 4, 4, 4, -1, -1},
     {0, 1, 2, 3, 2, 1},
@@ -383,7 +383,7 @@ static const uint16_t kItemIcons3[] = {
 
 static const HandlerTables kHandlerTables3 = {
     {0, 1, 2, 1},
-    {1, 2, 1, 0},
+    {1, 2, 1, 0, -1, -2, -1, 0},
     {0, 1, 2, 3, 2, 1, 9, 9},
     {4, 4, 4, 4, 4, 4, -1, -1},
     {0, 1, 2, 3, 2, 1},

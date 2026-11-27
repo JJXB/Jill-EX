@@ -7,7 +7,7 @@ rem Independent of build.cmd / build32.cmd / build_ps4.cmd / build_vita.cmd: it
 rem never touches their outputs.  It produces
 rem   port\xbox\build\default.xbe        the game executable
 rem   port\xbox\build\data\             jill.ini, games/, profiles/ (for the disc)
-rem   JillEX-Xbox-data.zip               the same data, zipped (repo root)
+rem   Releases\JillEX-Xbox.zip           the whole install bundle, zipped
 rem
 rem Usage:  build_xbox.cmd            compile + link + default.xbe + data
 rem         build_xbox.cmd clean      remove port\xbox\build
@@ -20,6 +20,7 @@ set ROOT=%~dp0
 set PORT=%ROOT%port
 set XBOX=%PORT%\xbox
 set OUT=%XBOX%\build
+set "RELEASES=%ROOT%Releases"
 
 if /I "%~1"=="clean" (
     if exist "%OUT%" rmdir /s /q "%OUT%"
@@ -127,11 +128,14 @@ echo [bundle] JillEX-Xbox.zip
 if exist "%OUT%\JillEX-Xbox.zip" del /q "%OUT%\JillEX-Xbox.zip"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -Path '%DATADIR%\*' -DestinationPath '%OUT%\JillEX-Xbox.zip' -Force"
 if errorlevel 1 goto :fail
-copy /y "%OUT%\JillEX-Xbox.zip" "%ROOT%" >nul
+if not exist "%RELEASES%" mkdir "%RELEASES%"
+if errorlevel 1 goto :fail
+copy /y "%OUT%\JillEX-Xbox.zip" "%RELEASES%\JillEX-Xbox.zip" >nul
+if errorlevel 1 goto :fail
 
 echo.
 echo Built %OUT%\default.xbe
-echo Built %OUT%\JillEX-Xbox.zip (install bundle, copy at %ROOT%JillEX-Xbox.zip)
+echo Built %OUT%\JillEX-Xbox.zip (install bundle, copy at %RELEASES%\JillEX-Xbox.zip)
 echo.
 echo Deploying:
 echo   - Extract JillEX-Xbox.zip into one folder on the console ^(for example

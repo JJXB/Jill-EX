@@ -689,7 +689,7 @@ const HudLayout* ExternalVisuals::layout(const std::string& name) const {
     }
     const std::string want = lower(name);
     for (const HudLayout& layout : layouts_) {
-        if (layout.name == want) {
+        if (lower(layout.name) == want) {
             return &layout;
         }
     }
@@ -1151,7 +1151,7 @@ std::vector<int> layout_list(const std::string& value) {
 }
 
 std::string layout_stem(const std::string& rel) {
-    const size_t slash = rel.find_last_of('/');
+    const size_t slash = rel.find_last_of("/\\");
     std::string name = slash == std::string::npos ? rel
                                                   : rel.substr(slash + 1);
     const size_t dot = name.find_last_of('.');

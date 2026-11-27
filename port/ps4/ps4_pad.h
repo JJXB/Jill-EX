@@ -22,12 +22,19 @@ struct Ps4PadState {
     bool l3 = false;
     bool r3 = false;
     bool touch = false;
-    // Left stick, -1..+1 (0 when centred).
+    // Sticks, -1..+1 (0 when centred).
     float stick_x = 0.0f;
     float stick_y = 0.0f;
+    float right_stick_x = 0.0f;
+    float right_stick_y = 0.0f;
     bool connected = false;
 };
 
 bool ps4_pad_init();
 void ps4_pad_poll(Ps4PadState& out);
 void ps4_pad_shutdown();
+
+// Ask the system service to close this title (the same guest shutdown path
+// used by retail apps).  Returns only if the service call fails; callers should
+// still fall back to _exit().
+void ps4_request_quit();

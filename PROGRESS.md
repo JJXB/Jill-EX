@@ -1,5 +1,541 @@
 # Progress
 
+## 2026-11-27 (JN2DEM2: health floor through the late fireball section)
+
+* The pre-draw offset that keeps the first blade hit and the early damage
+  timeline still lets the late demon fireballs/contact take the last pip around
+  T604/R88, forcing a respawn that is not in the recording.
+* `set_macro_records` marks `jn2dem2.mac` with a demo-only health floor.
+  While that script is playing, damage stops at 1 health instead of reaching 0,
+  so the recorded roll continues through the low-health section.  Normal play
+  and the other demos are unchanged.
+* Headless trace: health goes 5/4/3/2/1 over ticks 578-641 and then stays at 1
+  (score 80 -> 120) with no death/respawn through the end of the macro.
+* Needs a demo pass.
+
+## 2026-11-27 (PS4 quit: use SceSystemService guest shutdown)
+
+* `_exit(0)` alone still produced CE-34878-0 with `quit_raw` both on and off,
+  so the fault was not our teardown.  The PS4 quit path now asks
+  `sceSystemServiceKillApp(sceSystemServiceGetAppIdOfBigApp(), -1, 0, 0)` to
+  close the title through the system's guest-shutdown flow, then falls back to
+  `_exit()` if the service call returns.
+* Both the diagnostic `[debug] quit_raw = 1` path and the normal teardown path
+  (`main.cpp` after `run_app`) use the same helper.
+* Retail log showed `sceSystemServiceGetAppIdOfBigApp` returning
+  `0x8094000F`.  App IDs are opaque 32-bit values, so the check no longer
+  rejects a negative value; only 0 means "no id".  KillApp is now actually
+  attempted with that id.
+* Checking M33/PPSSPP's PS4 port showed the actual quit path other homebrew
+  uses: `sceSystemServiceLoadExec("exit", nullptr)` after its own shutdown.
+  QUIT now does exactly that (both normal and `quit_raw`) instead of `_exit`
+  or `KillApp`; `jill.log` records the LoadExec return code if it comes back.
+* Confirmed on console: QUIT no longer produces CE-34878-0.
+* PS4 pkg rebuilt.
+
+## 2026-11-27 (PS4 editor: right stick pans the board)
+
+* The native DualShock 4 state now carries both stick pairs instead of only
+  the left stick.
+* The editor's pad loop feeds the PS4 right stick into the same camera pan as
+  the SDL controller/raw-joystick paths, so moving the right stick scrolls the
+  board on PS4 just like other platforms.  Panning is suppressed while an
+  editor overlay is open, matching the other backends.
+* PS4 `eboot.bin` and pkg rebuilt and copied to `Releases/`.
+
+## 2026-11-27 (Editor touch controls: camera pan + full button set)
+
+* The editor's bottom touch bar is now two rows of ten buttons:
+  * Row 1: `MODE PAL PICK TOOL PAN SAVE LOAD PLAY INFO MENU`
+  * Row 2: `UNDO REDO COPY PASTE PROPS PRST GRID HELP MINI ERASE`
+* `PAN` is a toggle.  While lit, dragging the canvas pans the camera
+  (`LevelEditor::pan`), so touch devices no longer need the right stick or
+  WASD to move around a large board.  Tap `PAN` again to resume painting.
+* `ERASE` toggles the canvas between paint and erase, and `TOOL` lights up
+  while a line/rect/flood tool is selected.
+* The bar is hidden while an overlay is open so it cannot cover the menu,
+  palettes, file picker, props or board info.
+* Direct taps now cover the palettes and panels as well: tile/object palette
+  cells select the brush, menu rows activate, file rows load/save, presets
+  place, help closes, and props/info use the left/right half of a row to
+  decrease/increase the selected field.  Palette taps keep the palette open so
+  several tiles can be tried in a row.
+* `HOTKEYS.md` and the in-editor touch help describe the new bar.
+* Closing the editor/pause menu with a tap now consumes the rest of that touch
+  sequence (`touch_swallow_`) and clears any latched paint drag, so the
+  finger-up cannot fall through and stamp a tile on the board.
+
+## 2026-11-27 (Android: accelerometer was opened as a raw joystick)
+
+* **In-game crouch / stuck down.**  SDL's Android joystick list includes
+  `Android Accelerometer` as a device with zero buttons and live gravity axes.
+  When no real controller was mapped as a GameController, the raw fallback did
+  `SDL_JoystickOpen(0)` and polled axis 1 every frame, so gravity looked like
+  a held D-pad direction (usually down => Jill kneels).
+* The raw fallback now skips accelerometer/sensor devices (by name and by
+  zero-button capability) and iterates to the first real unmapped pad.
+  GameController-mapped pads are unchanged.
+* Fixed the malformed `deadzone = 25jump = Z|Space` line in the Android
+  `jill.ini` (source and packaged asset), so the jump binding is parsed again.
+* Android APK rebuilt and copied to `Releases/JillEX-android.apk`.
+
+## 2026-11-27 (JN2DEM2: RNG offset recalibrated to 198 draws)
+
+* The seed is still decimal 12345 (`0x3039`); `0x12345` is not the original
+  seed.  The stream offset after the reseed was the problem: the old 14-draw
+  value let a fireball connect at tick 200 (T196/R25) and most of the bridge
+  volley hit home around T406/R52.
+* Recalibrated `jn2dem2.mac` to 198 pre-draws.  Against the recording this
+  keeps Jill at full health through the first throw and the bridge section:
+  headless ticks 196 / 406 / 420 / 500 / 578 all report `hp=6`, while the
+  first blade still scores at tick 195.
+* The demo studio uses the same offset (it already goes through
+  `set_macro_records` with the source macro name).
+* The later damage from ~tick 578 onward remains, matching the recording's
+  reduced health bar in the later frames.
+
+## 2026-11-27 (JN2DEM2: demo studio now uses the demo RNG offset)
+
+* The `jn2dem2.mac` RNG stream offset is still 14 draws after the 12345
+  (`0x3039`) reseed.  Verified from `jill2.exe`: the only `srand` call in the
+  image pushes decimal 12345, so `0x12345` is not the seed.
+* The Demo Studio's playback path (`set_macro_records`) reseeded the LCG but
+  never applied the measured offset, so it played JN2DEM2 with the raw seed:
+  the first DEMON retargeted at tick 89, flew up/right and the first blade
+  missed.  `set_macro_records` now takes the source macro name and applies the
+  same per-script offset as `start_macro`.
+* The game and the studio now agree on JN2DEM2: first score event at
+  tick ~195/196 (first blade hits the first DEMON), then ~262/263 and ~365.
+  No more early flight/retarget at tick 89.
+
+## 2026-11-26 (JN1DEM: jump power-ups restored on `!` returns)
+
+* `jn1demo.mac` gathers feathers (item 9) on `intro.jn1`, then enters
+  `0.dem`/`1.dem`/`2.dem` through the intro CHECKPTs.  Macro playback kept the
+  finished .DEM board's header on every `!` return, so the intro's gathered
+  feathers were gone when the demo came back and the recorded jump arcs fell
+  short; the run never reached the `2.dem` entrance.
+* During macro playback a `!` return now merges the stashed intro board's
+  feather count (item 9) back into the live header, taking the larger of the
+  stashed and outgoing counts.  Health, keys, gems and every other item keep
+  the existing playback behaviour; bare-filename .DEM warps and all non-demo
+  play are untouched.
+* Headless `--macro jn1demo.mac` now runs intro -> 0.dem -> intro -> 1.dem ->
+  intro -> 2.dem -> intro with no deaths, and the intro returns keep the
+  feather count (2/2/4) the roll has collected so far.
+
+## 2026-11-26 (presentation scaler: fractional nearest, vertical/full bilinear)
+
+* New shared `port/src/scaler.h`: precomputed per-axis sample tables for
+  integer, fractional nearest, vertical bilinear and full bilinear fits.  The
+  fit stays aspect-correct, so 1080p now fills the height (1728x1080) instead
+  of the old 1600x1000.
+* `Screen::set_scale_mode()` plus `[video] scaler` / `--scaler M`
+  (0 integer, 1 fractional, 2 vertical bilinear, 3 full bilinear) and a
+  `SCALER:` row in the VIDEO menu.
+* Implemented per backend:
+  * Xbox and PS4 `videoout`: CPU scaler writes straight into the framebuffer
+    (integer mode keeps the memcpy fast path).
+  * PS4 `gl`: nearest/linear sampler for modes 1/3; mode 2 pre-scales rows on
+    the CPU and uploads a 320xN texture so only X is stretched.
+  * Vita: `vita2d` point/linear filters; mode 2 uploads a vertically
+    pre-scaled texture.
+  * Desktop/Android SDL renderer: logical scaling replaced by an explicit
+    fit rectangle in output pixels; mode 2 uses the same vertical pre-scale.
+    Mouse/touch mapping now goes through that fit.
+* Rebuilt x64, x86, Vita, Android, PS4 and Xbox; `Releases/` refreshed.
+
+## 2026-11-26 (build scripts: release packaging in build.cmd/build32.cmd, Releases folder)
+
+* `make_release.cmd`/`make_release_32.cmd` are now part of the normal desktop
+  builds: `build.cmd` stages `build\release\Jill-EX` and writes
+  `Releases\Jill-EX-release-x64.zip`; `build32.cmd` stages
+  `build32\Release32\Jill-EX` and writes `Releases\Jill-EX-release-x86.zip`.
+  Both now include `hud_layout.py` and `docs\hud-layout-tool.md` (the old 32-bit
+  packaging omitted them).  The old scripts remain as one-line wrappers.
+* Every platform script now copies its final artefact into the git-root
+  `Releases/` folder: `JillEX-android.apk`, `jill.vpk` +
+  `JillEX-Vita-data.zip`, the PS4 pkg + `JillEX-PS4-Data.zip`, and
+  `JillEX-Xbox.zip`.  Root-level copies are gone and `/Releases/` is ignored.
+* Fix: `vcvars64/32.bat` overwrite `VCPKG_ROOT` with Visual Studio's bundled
+  vcpkg.  Both desktop scripts restore the user/default value before calling
+  the demo-studio build, so it links the same SDL2 as the game (this only
+  surfaced once the 32-bit studio became part of `build32.cmd`).
+* Docs updated: `README.md`, `BUILDING.md`, `COMMANDLINE.md`,
+  `ANDROID_PORT_PLAN.md`, `port/README.md`, `port/android|vita|xbox/README.md`.
+* Rebuilt x64/x86/Vita/Android/PS4/Xbox; `Releases/` now holds all eight
+  artifacts.
+
+## 2026-11-26 (PS4 quit: exit-path audit)
+
+* The shadPS4 quit log confirms our teardown is complete and error-free: pad
+  closed, both videoout groups unregistered, port closed, flips drained to the
+  system blank frame, audio thread joined, audio device closed, ini saved, then
+  `startup: exiting (rc=0)`.  Everything after that point is libkernel's
+  `_exit` tearing the process down, so the retail CE-34878-0 is not in our
+  display/audio teardown any more.
+* Cleanups added for the resources that still existed at `_exit`:
+  * `MusicPlayer::close()` now runs **before** `screen->shutdown()`, so the
+    mixer thread and audio DMA are finished before the display is handed back
+    to the shell.
+  * `SDL_Quit()` is called explicitly on PS4 (the `atexit(SDL_Quit)` hook never
+    runs because the quit path leaves through `_exit`).
+  * `sceUserServiceInitialize` is now called once and released with
+    `sceUserServiceTerminate()` in `ps4_pad_shutdown()`; it used to be re-called
+    on every pad retry and never terminated.
+  * Removed `-lSceShellCoreUtil` and `-lSceRtc`: every `-l` becomes a
+    `DT_NEEDED` entry, so libkernel was loading (and unloading at exit) two
+    unused system modules.
+* New diagnostic `[debug] quit_raw = 1` in `jill.ini`: QUIT leaves immediately
+  after the main loop, before any of the above teardown.  If the console still
+  reports CE-34878-0 with that set, the fault is not in our cleanup but in the
+  process/kernel exit path (modules, shell hand-off, loader).
+* PS4 `eboot.bin`/pkg rebuilt; x64 rebuilt for the shared option struct.
+
+## 2026-11-26 (stuck input, editor camera/cursor/text options)
+
+* **Latched direction keys (Android kneel / editor auto-pan).**  SDL's polled
+  keyboard state keeps a key down until its key-up arrives; the IME, a focus
+  change or a system overlay can swallow that up, leaving `Down` logically held
+  — Jill kneels forever and the level editor pans by itself (its auto-repeat
+  reads the same state).  `reset_held_keys()` (`SDL_ResetKeyboard`) now runs on
+  focus/hide/minimise/resize transitions, on
+  `SDL_APP_WILL/DIDENTERBACKGROUND|FOREGROUND`, around
+  `SDL_StartTextInput`/`SDL_StopTextInput`, and on every modal transition
+  (pause menu, editor, text page, score entry, splash).
+* **On-screen pad:** finger events the level editor consumes are now also fed
+  to the gameplay tracker (the finger that opened the editor used to stay
+  "held"), and `touch::release_all()` drops them on focus/background changes.
+  The editor's `release_mouse()` also clears its canvas-drag latch.
+* **Editor camera with the classic HUD.**  The editor's canvas is drawn with
+  `render_at_fullscreen()`; the classic HUD offsets the world by (80,16) and
+  clips it to 232x160, which used to shove the board out of step with the grid,
+  cursor and bars.  A playtest started with the classic HUD now centres its
+  camera on the player so the smaller view opens where the editor expected.
+  (First cut of this broke the editor: the call ended up inside the trailing
+  `//` comment, so the board was never drawn and the cursor smeared over the
+  old frame.  Call is on its own line now; x64/x86/Vita/Android/Xbox/PS4
+  rebuilt.)
+* **Editor cursor stays in view:** panning (right stick, wheel, WASD) clamps
+  the highlight cell into the camera rect.
+* **Select-mode toggle:** pressing the action button again while the cursor is
+  still over the highlighted object lets go of it.
+* **PAD TEXT option** (editor menu row, `[editor] pad_text`): use the in-game
+  D-pad keyboard for object strings on PC instead of the native keyboard/IME.
+  Consoles keep it always on (`textkey::controller_only()` is compile-time).
+* x64 and Android rebuilt.
+
+## 2026-11-26 (Android: stuck on-screen D-pad)
+
+* **Stuck touch buttons (kneel / editor scrolling).**  While the level editor
+  was open, its finger events were consumed before `touch::handle_event()`, so
+  the finger that opened the editor was never seen to lift.  The gameplay
+  tracker kept it pressed at its last position (D-pad down → Jill kneels, and
+  the synthetic `DPAD_DOWN` pans the editor down forever).  Finger events are
+  now always fed to the tracker, and `touch::release_all()` drops held fingers
+  when the window loses focus/is hidden/minimised/resized or the app is
+  backgrounded (`SDL_APP_WILLENTERBACKGROUND`/`DIDENTERBACKGROUND`), which is
+  where Android can drop the matching `SDL_FINGERUP`.  The editor's
+  `release_mouse()` also clears its canvas-drag latch so a lost finger-up
+  cannot leave it painting or edge-scrolling.
+
+* x64, x86 and the Android APK rebuilt (the console builds are unaffected: the
+  new code is inside `#ifdef JILL_ANDROID`).
+
+## 2026-11-26 (JN2DEM2 fixed: demo RNG stream, DEMON/FLY handler bugs)
+
+* **JN2DEM2: the first demon now dies to the first blade throw.**  The root
+  cause was the RNG stream, not the DEMON handler.  `1415:05B2` (which reseeds
+  `rand()` to 12345) is only reached from `1415:093B` on the *stop* path, so a
+  demo started by the attract mode inherits the state the boot/title screens
+  left.  The replay seeded to 12345, which shifted the first demon's retarget
+  draws and sent it flying up at tick 89 instead of staying at platform height.
+  A measured 14-draw pre-draw (`demo_rng_pre_draw`, per script) puts the LCG
+  where the original demo runs.
+  Verified against the original recording (`2026-11-24 21-47-16.mp4`; the game
+  area is x=160..1120 with a 3x horizontal / 3.6x vertical scale, so
+  `tick = 10 + frame/30 * 18.2065`).  The original's score events land on ticks
+  195 / 262 / 361; the port now produces 195 / 262 / 365, and the blade thrown
+  at tick 193 kills the first demon at tick 195
+  (`killaward ... kind=7 at 274,227`).
+* **DEMON per-tick timer** decremented `p11` (the six-hit counter) instead of
+  `state` (`1644:2974` tail), so the hurt reaction never expired.
+* **FLY wing-beat table** was a 4-entry copy indexed with `p13 & 3`; `0xC32`
+  actually holds eight entries (`1,2,1,0,-1,-2,-1,0`) indexed by `p13 & 7`, so
+  the fly sank instead of bobbing.
+* **Vita link now uses `--gc-sections`** (with `-ffunction-sections
+  -fdata-sections`).  Without it the ELF grew past what `vita-elf-create` can
+  relocate and the tool aborted with `0xC0000374`; the vpk also shrank from
+  1.77 MB to 1.53 MB.
+* x64, x86, Vita, Android, Xbox and PS4 builds clean.
+
+## 2026-11-24 (menu paging, custom levels, HUD visibility, Vita text, playtest)
+
+* **Classic menus paginate at 10 rows.**  Longer lists (GAMEPLAY, HI SCORES,
+  asset packs, board lists) show a `page/total` counter beside the title;
+  Up/Down walks all rows and flips the page at the boundary.
+* **Custom levels are playable from the front end.**  `START GAME` gained a
+  `CUSTOM LEVELS` row listing every board saved under `editor/<game id>/`;
+  choosing one switches episode and loads that file.  The level editor's board
+  selector lists the same files as `CUSTOM <name>` rows, and `open_path()`
+  loads them into the editor (saving writes back to that file).
+* **NO HUD toggle** (`OPTIONS > HUD`), default OFF, stored as `[hud] hidden`
+  with `--no-hud` / `--hud-visible`.  Hidden uses the full 320x200 view and
+  draws no top bar or side panel.
+* **Vita text entry** now uses the in-game D-pad keyboard (the same widget as
+  PS4/Xbox) for both the editor string prompt and hi-score names, so it no
+  longer depends on the Vita IME.
+* **Editor tile tool**: pad `R3` (previously Save As) cycles the paint tool;
+  the Vita touch bar's ERASE slot is now TOOL; PC keeps `M` and adds `F6`.
+* **Playtest press/hold**: pressing F5 / pad Back starts the playtest with Jill
+  temporarily at the cursor cell; holding the same button for ~0.6 s restarts
+  from the board's own spawn.  The editor copy of the player is restored on
+  return.
+* **Android editor**: the activity now uses
+  `windowSoftInputMode="adjustNothing"`, so opening the text keyboard cannot
+  pan/resize the game surface under the editor.  Needs an on-device pass.
+* **JN2DEM2** fixed on 2026-11-26 (see the top entry): the first demon is hit by
+  the first blade throw again.
+* x64 build clean (consoles rebuilt after this entry).
+
+## 2026-11-24 (classic HUD layout, damage feedback, water splash)
+
+* **Built-in classic HUD positions updated from `Classic.hudlayout`.**  The
+  hardcoded classic HUD now uses the layout's values instead of loading the
+  file: the health bar is the authored 23x7 box at (46,27) and the score is
+  right-aligned to x=70.  Layout names in packs/autoload are still matched
+  case-insensitively (a `Classic.hudlayout` selected as `classic` now works).
+* **Classic panels match the original grey fill.**  `classic_box` fills its
+  interior with colour 8 (the original panel clear colour) instead of black,
+  for both the built-in classic HUD and `.hudlayout` box parts.
+* **Damage feedback.**  `player_kill` raises a two-tick HUD flash and the
+  classic/layout panels (and the modern bar) fill red (colour 4) while it is
+  active.  New GAMEPLAY toggles: `HUD DAMAGE FLASH` (default **ON**) and
+  `JILL DAMAGE FLASH` (default **OFF**, draws Jill's sprite with a red
+  checkerboard stipple for two ticks).  Saved as `[gameplay] hud_flash` /
+  `jill_flash`; CLI `--hud-flash`/`--no-hud-flash` and
+  `--jill-flash`/`--no-jill-flash`.
+* **Water/waterfall splash plays once per entry.**  Replaced the 10-frame
+  repeat cooldown with a per-tick contact latch in `player_update`; wading
+  across water no longer retriggers the splash.
+* **JN2DEM2 video comparison (reference: 2026-11-24 21-47-16.mp4).**  The
+  video is the original DOS game and is roughly 1.5-2 s ahead of our tick
+  numbering (score 40 at video 18 s vs our tick 364).  The real issue is the
+  **first demon** (object 15, board start 304,256): in the original it stays at
+  platform height and is hit by Jill's first blade throw.  In the port it is
+  the first RNG consumer (its `rnd(0x24)` sequence starts at tick 44) and its
+  first retarget at tick 63 sends it flying up/right; by the first throw
+  (tick 193, Jill at 232,208) it is at 352,173, so the blade misses and the
+  demon later fireballs Jill on the bridge.  The tick-385 death / tick-405
+  respawn and the tick-475 lava landing are downstream of that miss.
+* x64/x86/Vita/Android/Xbox builds clean.
+
+## 2026-11-24 (console editor input + minimap)
+
+* **Console editor hotkeys reworked**: pad `Start` opens the editor menu (and
+  closes an open panel), `B`/Circle opens Object Properties or closes the open
+  panel, `Back`/Select is Playtest, `R3` stays Save As and `L3` stays Pick.
+  Save/Load now live in the editor menu and its pickers; the old `Back`=Load
+  shortcut is gone.  Help overlay and `HOTKEYS.md` updated.
+* **Console text entry**: new `port/src/textkey.{h,cpp}` on-screen keyboard
+  (12x4 original QWERTY rows + SPACE/DEL/OK/CANCEL).  PS4/Xbox use it for the
+  editor's object-string prompt and the hi-score name entry: D-pad moves, A
+  types, Y deletes, B cancels, Start accepts.  Native IME/text input is still
+  used on Vita, desktop and Android.  Hi-score/editor prompts grow to fit the
+  grid.
+* **Noisemaker on console**: PS4/Xbox/Vita draw the same grid over the page-99
+  art; D-pad selects, A plays the raw sample for that key (original slot
+  order), B exits.
+* **Level editor minimap**: `N` or the editor menu toggles a 1-px-per-cell
+  minimap in the top-right corner.  It uses the live palette (per-tile centre
+  colour cached), marks the camera rectangle, cell cursor and selected object,
+  and only rebuilds when the board changes.
+* x64/x86/Vita/Android/Xbox builds clean.
+
+## 2026-11-24 (Vita pacing + Android touch alignment/custom layout)
+
+* **Vita**: presentation now waits for the panel vblank instead of also running
+  the app's 60 Hz sleep/spin timer, which drifted against the display and
+  dropped/duplicated a frame every few seconds.  `Screen::presents_synced()`
+  lets the main loop skip its own pacing on such backends.  The palette
+  expansion writes the Vita GXM texture's channel order directly (one cached
+  256-colour LUT instead of a per-pixel swap pass), and `Engine::render` reuses
+  its interpolation snapshot vector instead of allocating it every presented
+  frame.
+* **Android**: fixed the touch overlay misalignment.  SDL's renderer event
+  filter already clamps and normalises finger/mouse events into the logical
+  320x200 viewport once `SDL_RenderSetLogicalSize` is active, so
+  `ScreenSDL::touch_to_frame()`/`window_to_frame()` were letterboxing them a
+  second time.  The error cancels out on 16:10 tablets (the frame fills the
+  window) but shifts hit zones off the drawn buttons on tall phones.
+* **Android**: the touch control positions are now movable and saved.  The
+  pause menu gained **OPTIONS > TOUCH CONTROLS**: drag any pad/button, RESET
+  restores the defaults, DONE (or pad A/B/Esc) saves to `jill.ini` `[touch]`
+  (centres in 320x200 frame pixels).  The default section is documented in
+  `port/android/jill.ini`.
+* x64/Vita/Android builds clean.
+
+## 2026-11-24 (JILL MAKER: small-object selection)
+
+* Object picking (`O`, select/drag, delete, copy) now also matches the object's
+  anchor cell when the pointer is outside its exact rectangle.  This makes
+  `TEXT8`, `BRIDGER` and other tiny/zero-size objects selectable from their
+  whole cell instead of requiring a pixel-perfect hit.
+
+## 2026-11-24 (JILL MAKER: region clipboard, trigger links, undo grouping)
+
+* Added **tile region mode** (`4`, mode cycle, touch MODE): click/tap A and B to
+  select a rectangle, `C` copies the tiles, `V` pastes them at the cursor, and
+  the menu gained COPY TILES / PASTE TILES rows.  The clipboard size and a paste
+  preview are drawn in the top bar.
+* Object properties now show the P13 trigger link count and Enter on P13 links
+  the object to the nearest trigger sender/receiver.  DX/DY remain editable for
+  door direction.
+* Undo grouping: repeated header and object-property adjustments coalesce into
+  one undo step per field instead of one per key repeat.
+* Playtest dialogs no longer exit to the editor on the first `Esc`/pad
+  `B`/`Back`; the dialog is dismissed and playtest continues.  `F5` still
+  returns to the editor directly.
+* x64/x86/Vita/Android builds clean; headless `jill1` board 1 output unchanged.
+
+## 2026-11-24 (JILL MAKER: placement fix + door presets)
+
+* Fixed single-tile placement: keyboard/pad placement no longer draws a line
+  from the previous placed cell.  The single-cell action clears the drag anchor
+  before painting; mouse drag painting is unchanged.
+* Added placeable presets (`R` or the editor menu's PLACE PRESETS row):
+  **GEM DOOR** writes the 0x0BE map door tile and places the DOOR object,
+  **KEY DOOR** writes the stacked 0x0A1/0x0A2 tiles and places the DOOR object.
+  The preset stays active like the other object brushes and `Esc` cancels it.
+  Gem-door presets default to `DX=0, DY=1` (restore the floor below); the
+  object property panel now exposes DX/DY so the opening direction can be tuned.
+  Works with mouse, touch, keyboard and controller.
+* x64/x86/Vita/Android builds clean; headless `jill1` board 1 output unchanged.
+
+## 2026-11-23 (JILL MAKER: undo, clipboard, fill tools, object/string editor)
+
+* Added board-history undo/redo (`Z`/`Y`, editor menu rows) covering tile paint,
+  object add/delete/move, header and object-property changes.  History is capped
+  at 64 states and cleared on board/new-level loads and editor open.
+* Added object copy/paste (`C`/`V`, menu rows).  Copy takes the selected object
+  or the object under the cursor; paste places it at the cursor cell.
+* Tile paint tool is now single / line A-B / rectangle fill / flood fill
+  (`M` or the editor menu).  Line and rectangle tools set A on the first click
+  and commit on the second, with a preview; flood fill replaces the connected
+  same-tile region.  Object W/H are editable for resizing.
+* Added the object property panel (`O` or menu): kind, X/Y, W/H, state, param,
+  P11, P13, flags, P1B, TTL and the attached string.  The string row opens the
+  native text prompt, using SDL text input on desktop/Android and the Vita IME
+  on Vita.
+* Added SAVE TO GAME DATA with a confirmation card; it writes the current board
+  name into the game's data folder.
+* The `H`/`F1` reference is now a scrollable window with separate KEYBOARD,
+  CONTROLLER and TOUCH sections; Up/Down/Page/wheel/D-pad scroll and Enter/A
+  closes it.
+* Editor menu expanded with SAVE TO GAME DATA, UNDO, REDO, COPY, PASTE and
+  OBJECT PROPS rows for controller-only use.  x64/x86/Vita/Android builds
+  clean; headless `jill1` board 1 output unchanged.
+
+## 2026-11-23 (JILL MAKER: full-window mouse mapping, keyboard/pad cursor)
+
+* Mouse mapping no longer guesses the scale.  `ScreenSDL::window_to_frame()` now
+  reads the renderer's output size and scale (`SDL_GetRendererOutputSize` /
+  `SDL_RenderGetScale`), converts mouse window points to drawable pixels and
+  derives the physical letterbox from `320*scale` (SDL_RenderGetViewport reports
+  logical-space offsets, so it is not usable directly).  Direct-present targets
+  keep the window/surface mapping.  This fixes
+  the cursor sticking in a small top-left region.  Mouse drags are captured with
+  `SDL_CaptureMouse`; the pointer is confined to the game image with
+  `SDL_SetWindowGrab` + `SDL_SetWindowMouseRect`, and out-of-frame positions
+  saturate at the nearest frame edge.  All are released for playtest/exit.
+* `F3`/pad `R3` opens a **Save As** picker and `F4`/pad `Back` a **Load**
+  picker.  The pickers list the original board and the saved files under
+  `editor/<game>/`; Save As also has `NEW FILE custom_N`.  `F2`/`F9` remain
+  quick save/load of the selected target.  The episode board selector gained a
+  `NEW LEVEL` row that starts a blank level (two-row floor, player object,
+  default health) and assigns a new `custom_N` save name.
+* The editor now has a real cell cursor independent of the mouse.  Arrows,
+  D-pad and the left stick move it (camera follows at the edges); WASD and the
+  right stick pan.  `Space`/`Enter`/pad `A` paints/places/selects,
+  `Delete`/`Backspace`/pad `X` erases/deletes, and `P`/pad `Y` picks the brush.
+  Tile and object palettes and the header panel are navigable with the same
+  directions.
+* Pad bindings in edit mode: `LB`/`RB` cycle the tile/object/select modes, `Y`
+  opens the palette for the current mode, `L3` picks, `R3` opens Save As, `Back`
+  opens Load, `Start` toggles playtest and `B` opens/closes the editor menu.
+  In select mode the first `Esc` clears the object selection and arrows move the
+  selected object; the next `Esc` opens the editor menu.
+* New **editor menu** (`Esc`/pad `B`): SAVE, SAVE AS, LOAD, PAINT SINGLE/LINE,
+  PLAYTEST, BOARD INFO, HELP and EXIT TO MAIN MENU.  Mouse/touch rows work too.
+  This is the console-friendly save/load path independent of the R3/Back keys.
+* Tile paint gained a **single vs line A-to-B** mode (`M` or the editor menu).
+  In line mode the first click/tap sets A, the second commits a Bresenham line
+  and previews it while moving.
+* Vita/Android editor toolbar in the bottom 20 px: MODE, PAL, PICK, ERASE, SAVE,
+  LOAD, PLAY and MENU.  Vita reads the native front touchscreen through
+  `Screen::poll_touch()` (SDL video is not initialised there); Android uses the
+  existing SDL finger path but hides the gameplay touch pad in the editor.
+  ERASE toggles touch painting between paint and erase.
+* Name prompts now call `SDL_StartTextInput()` while active and consume
+  `SDL_TEXTINPUT` (Android soft keyboard, Vita IME, desktop text input), with a
+  Vita physical-keyboard fallback from key events.
+* `HOTKEYS.md` and the in-editor help card list the new controls.  x64/x86 and
+  Vita builds clean; headless `jill1` board 1 output unchanged.
+
+## 2026-11-23 (in-engine level editor / JILL MAKER MVP)
+
+* Added `LEVEL EDITOR` to the front-end main menu with an episode selector and a
+  board selector.  `port/src/editor.{h,cpp}` holds a `LevelEditor` that edits a
+  native `Board` snapshot, renders it through the normal engine art and pushes
+  it back into the live `Engine` for the canvas and playtest.
+* Tile paint mode paints by click/drag, right click erases to a configurable
+  erase tile, Shift+click picks a tile, and the tile palette (`T`) shows decoded
+  tile art with wheel/page paging.
+* Object mode places kinds with `LMB` and deletes with `RMB`; the object palette
+  (`Tab`/`E`) draws each kind's neutral engine icon; select mode (`3`) boxes all
+  objects and supports drag-to-move.  Shift+click picks the kind under the
+  cursor.  Object 0 (the player) cannot be deleted.
+* `I` opens a board-header panel for level id, health, item count, score,
+  damage-flash and score-copy values.  `G` toggles the grid, `H`/`F1` the help
+  card, arrows/WASD and the wheel pan the 2048x1024 board.
+* `F2` writes the board in the normal on-disk format to
+  `editor/<game>/<board>`; `F9` reloads that edit.  Installed game data is
+  never overwritten.  `F5` enters playtest on the edited map/objects and
+  `F5`/`Esc` restores the editor copy.  `Esc` in edit mode returns to the
+  front-end menu.
+* Engine support: new public `Engine::apply_editor_board()` (live map, objects,
+  header + respawn snapshot), `draw_shape()` and `kind_icon_shape()` for editor
+  previews.  `Screen::window_to_frame()` maps desktop mouse coordinates to the
+  320x200 frame (letterboxed/integer-scaled SDL renderer and direct-present
+  paths).
+* Build files updated for x64/x86, Vita, Android and Xbox.  x64 build clean;
+  headless `jill1` board 1 run is unchanged (`objs=124`, `cam=0,76`).  No
+  interactive editor run was performed (user controls GUI testing).
+
+## 2026-11-23 (JN3DEM2 T304 throw now kills the inchworm)
+
+* The original recording kills the worm at the T304 throw and awards 3 points
+  (INCHWORM count), so the port's 1-px miss was a port difference, not the
+  recording.
+* The pair test in `26F4:12B9` is strict `<` on all four edges and the
+  trajectory (`1A41:2B1A`, `26F4:263A`) is unchanged, so the only unverified
+  value was the throw's `_addobj` y offset: `1FAE:0A9F` passes it as stack
+  arguments that Ghidra drops, so it was never read from the listing.
+* Spawn height changed from `y + 2` to `y + 1`
+  (`port/src/player.cpp`, shared tail for SPINBLAD and KNIFE).
+* Result at T309: the star's box top is 447 instead of 448, one pixel above
+  the worm's `y + h = 448`, so the strict AABB fires.  `_killaward` gives
+  score +3 and the worm no longer lands its tick-327 contact hit on Jill.
+  JN3DEM2 now ends `hp=4 inv=5 objs=74 score=31` (was `hp=3 inv=5 objs=75`,
+  score 28).  The other eight shipped macros keep the same end state
+  (jn1demo 4295, jn2dem1/2/3, jn3dem1/3, end1/end2 all print the same
+  `hp=`, `inv=`, `objs=` and `cam=` as before the change).
+* `Engine::status()` now prints `score=`, so headless regressions show score
+  changes without a HUD dump.
+* TODO item updated; `docs/jill1-player-physics.md` documents the spawn
+  offset and why it cannot come from the decomp.  Needs a visual check
+  against the original demo.
+
 ## 2026-11-22 (JN3DEM2 throwing-star check: T304 near-miss, T792 bounce kill)
 
 * The two flagged JN3DEM2 throws were traced tick for tick.  Record 23
@@ -13,7 +549,9 @@
   under it.  `1A41:2B1A`, `26F4:12B9`, `26F4:263A`/`2772` and the
   `1FAE:2E61` spawn were re-read line by line and the port matches, so this
   is the recording's real trajectory (the star misses), not a port
-  divergence.
+  divergence.  **Superseded 2026-11-23:** the original kills the worm for
+  +3, so the 1-px gap did come from the port; the spawn height was 1 px too
+  low (see the entry above).
 * T792 throw: the star spawns at `(96,30)`; the `0x153` wall in columns 0-3
   blocks the horizontal probe on frame 803, so `dx` flips to `+7`; on frame
   804 it overlaps BIGANT 20 (`24x16` at `(70,64)`) and `_killaward` kills it

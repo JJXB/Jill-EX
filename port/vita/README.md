@@ -49,6 +49,8 @@ Outputs:
 | `port/vita/build/jill.vpk` | installable bubble (title id `JILLEX001`) |
 | `port/vita/build/jill.self` | the SELF inside the VPK |
 | `port/vita/build/JillEX-Vita-data.zip` | `jill.ini`, `games/`, `profiles/` |
+| `Releases/jill.vpk` | the same VPK, copied to the git-root `Releases/` |
+| `Releases/JillEX-Vita-data.zip` | the same companion data zip |
 
 Equivalent manual commands:
 

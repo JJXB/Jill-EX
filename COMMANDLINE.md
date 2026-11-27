@@ -44,6 +44,7 @@ run.cmd [options]
 | `--high-fps N` | Presentation rate: `0` (18.2 Hz), 60, 90, 120 or 144 |
 | `--no-interpolate` | Disable high-framerate sprite smoothing |
 | `--filter NAME` | `0`/none, `1`/smooth, `2`/crt |
+| `--scaler M` | `0`/integer, `1`/fractional nearest, `2`/vertical bilinear, `3`/full bilinear |
 | `--fullscreen` | Exclusive fullscreen |
 | `--windowed` | Windowed (default) |
 | `--borderless` | Borderless fullscreen |
@@ -54,6 +55,11 @@ run.cmd [options]
 | Option | Meaning |
 | --- | --- |
 | `--hud` | Start with the CLASSIC HUD (F2 toggles) |
+| `--no-hud` | Hide the HUD and use the full 320x200 view |
+| `--hud-visible` | Force the HUD back on (overrides `[hud] hidden`) |
+| `--no-hud-flash` | Disable the red HUD panel flash on damage (on by default) |
+| `--jill-flash` | Also flash Jill's sprite red on damage (off by default) |
+| `--no-jill-flash` | Force the Jill sprite flash off |
 | `--no-portrait` | Hide the character portrait beside level-title dialogs |
 | `--portrait` | Show the portrait (default) |
 | `--menu-frame N` | Menu border source: -1 = THEME, 0 = current game, N = installed game N, above the game list = external border |
@@ -139,12 +145,13 @@ jill.exe --game jill2 --board 1 --ticks 40 --dump frame.ppm --dump-objects objec
 
 | Command | Meaning |
 | --- | --- |
-| `build.cmd` | Configure/build the 64-bit Release executable |
+| `build.cmd` | Configure/build the 64-bit Release and package `Releases\Jill-EX-release-x64.zip` |
 | `build.cmd install` | Install `sdl2:x64-windows` through vcpkg first |
-| `build32.cmd` | Configure/build the 32-bit Release into `port\build32\Release32` |
+| `build32.cmd` | Configure/build the 32-bit Release into `port\build32\Release32` and package `Releases\Jill-EX-release-x86.zip` |
 | `build32.cmd install` | Install `sdl2:x86-windows` through vcpkg first |
 | `run32.cmd` | Run the 32-bit build |
-| `make_release.cmd [zip]` | Stage a release folder and write a zip |
+| `make_release.cmd` | Compatibility wrapper for `build.cmd` |
+| `make_release_32.cmd` | Compatibility wrapper for `build32.cmd` |
 | `copy.cmd` | Local developer copy to `D:\Games\JillEX` |
 
 `build.cmd` uses `VCVARS` (default Visual Studio 2022 Community) and

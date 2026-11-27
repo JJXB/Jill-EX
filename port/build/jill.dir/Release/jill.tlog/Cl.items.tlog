@@ -1,6 +1,8 @@
 C:\Users\jjxb_\GIT\Jill-EX\port\src\main.cpp;C:\Users\jjxb_\GIT\Jill-EX\port\build\jill.dir\Release\main.obj
 C:\Users\jjxb_\GIT\Jill-EX\port\src\app.cpp;C:\Users\jjxb_\GIT\Jill-EX\port\build\jill.dir\Release\app.obj
 C:\Users\jjxb_\GIT\Jill-EX\port\src\engine.cpp;C:\Users\jjxb_\GIT\Jill-EX\port\build\jill.dir\Release\engine.obj
+C:\Users\jjxb_\GIT\Jill-EX\port\src\editor.cpp;C:\Users\jjxb_\GIT\Jill-EX\port\build\jill.dir\Release\editor.obj
+C:\Users\jjxb_\GIT\Jill-EX\port\src\textkey.cpp;C:\Users\jjxb_\GIT\Jill-EX\port\build\jill.dir\Release\textkey.obj
 C:\Users\jjxb_\GIT\Jill-EX\port\src\macro.cpp;C:\Users\jjxb_\GIT\Jill-EX\port\build\jill.dir\Release\macro.obj
 C:\Users\jjxb_\GIT\Jill-EX\port\src\player.cpp;C:\Users\jjxb_\GIT\Jill-EX\port\build\jill.dir\Release\player.obj
 C:\Users\jjxb_\GIT\Jill-EX\port\src\board.cpp;C:\Users\jjxb_\GIT\Jill-EX\port\build\jill.dir\Release\board.obj

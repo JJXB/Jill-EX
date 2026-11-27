@@ -3,6 +3,7 @@
 #include "config.h"
 
 #include <algorithm>
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -10,19 +11,23 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
 #include "audio.h"
+#include "editor.h"
 #include "engine.h"
 #include "extaudio.h"
 #include "external.h"
 #include "framebuffer.h"
 #include "game.h"
 #include "platform_except.h"
+#include "platform_fs.h"
 #include "platform_paths.h"
 #include "profile.h"
 #include "screen.h"
+#include "textkey.h"
 #include "timing.h"
 
 #ifdef JILL_XBOX
@@ -35,6 +40,12 @@
 
 #ifdef JILL_PS4
 #include "../ps4/ps4_pad.h"
+
+#include <unistd.h>
+#endif
+
+#ifdef JILL_VITA
+#include "../vita/vita_ime.h"
 #endif
 
 #ifdef JILL_ANDROID
@@ -117,6 +128,23 @@ void draw_debug_overlay(Framebuffer& fb, Engine& engine, const PerfStats& p,
 // classic title strip (titles are centred, so the space is free) or just under
 // the modern top bar; a black shadow keeps it readable over the patterned
 // frame.  The value is the measured presentation rate, not the world tick rate.
+#ifdef JILL_ANDROID
+// Calibration bar for the Android touch layout editor: drawn into the indexed
+// frame so the game font can label the DONE/RESET hit boxes touch.cpp reports.
+void draw_touch_layout_bar(Framebuffer& fb, Engine& engine) {
+    fb.fill_rect(40, 90, 240, 20, 0);
+    fb.fill_rect(touch::kEditResetX, touch::kEditResetY, touch::kEditResetW,
+                 touch::kEditResetH, 8);
+    fb.fill_rect(touch::kEditDoneX, touch::kEditDoneY, touch::kEditDoneW,
+                 touch::kEditDoneH, 8);
+    engine.draw_text(fb, touch::kEditResetX + 5, touch::kEditResetY + 4, 15,
+                     "RESET");
+    engine.draw_text(fb, touch::kEditDoneX + 5, touch::kEditDoneY + 4, 15,
+                     "DONE");
+    engine.draw_text(fb, 98, 96, 15, "DRAG TO MOVE");
+}
+#endif
+
 void draw_fps_counter(Framebuffer& fb, Engine& engine, double fps) {
     if (fps < 0.5) {
         return;  // first frame, no interval measured yet
@@ -150,6 +178,22 @@ int noisemaker_slot(SDL_Scancode sc) {
     for (int i = 0; i < static_cast<int>(sizeof(kKeys) / sizeof(kKeys[0]));
          ++i) {
         if (kKeys[i] == sc) {
+            return i + 1;
+        }
+    }
+    return 0;
+}
+
+// Noisemaker character -> raw sound slot.  The grid order matches the original
+// QWERTY page so this is a direct index into the same bank.
+int noisemaker_slot_char(char ch) {
+    if (ch >= 'a' && ch <= 'z') {
+        ch = static_cast<char>(ch - 'a' + 'A');
+    }
+    static const char kOrder[] =
+        "1234567890-=QWERTYUIOP[]ASDFGHJKL;'ZXCVBNM,./";
+    for (int i = 0; kOrder[i] != '\0'; ++i) {
+        if (kOrder[i] == ch) {
             return i + 1;
         }
     }
@@ -276,6 +320,35 @@ void filter_crt(std::vector<uint32_t>& argb, int w, int h) {
             }
             argb[row + x] = out;
         }
+    }
+}
+
+// Expand the 8-bit frame with a cached 256-colour lookup table.  The old loop
+// did three palette reads and shifts per pixel; this rebuilds a table only
+// when the palette itself changes (board loads, story pages, splash art).
+// `bgr` writes the channel order the Vita's GXM texture expects directly,
+// which removes a second full-frame pass from its presenter.
+void expand_palette(const uint8_t* pal, const std::vector<uint8_t>& px,
+                    std::vector<uint32_t>& argb, bool bgr) {
+    static uint32_t lut[256];
+    static uint8_t cached[768];
+    static bool cached_bgr = false;
+    static bool valid = false;
+    if (!valid || cached_bgr != bgr ||
+        std::memcmp(cached, pal, sizeof(cached)) != 0) {
+        for (int i = 0; i < 256; ++i) {
+            const uint32_t r = pal[i * 3 + 0];
+            const uint32_t g = pal[i * 3 + 1];
+            const uint32_t b = pal[i * 3 + 2];
+            lut[i] = 0xFF000000u | (bgr ? ((b << 16) | (g << 8) | r)
+                                        : ((r << 16) | (g << 8) | b));
+        }
+        std::memcpy(cached, pal, sizeof(cached));
+        cached_bgr = bgr;
+        valid = true;
+    }
+    for (size_t i = 0; i < px.size(); ++i) {
+        argb[i] = lut[px[i]];
     }
 }
 
@@ -643,9 +716,54 @@ void ps4_pad_emit(const Ps4PadState& prev, const Ps4PadState& now) {
 }
 #endif
 
-bool pad_button(SDL_GameController* gc, const Bindings& b, int action) {    return gc && b.pad[action] >= 0 &&
+bool pad_button(SDL_GameController* gc, const Bindings& b, int action) {
+    return gc && b.pad[action] >= 0 &&
            SDL_GameControllerGetButton(
                gc, static_cast<SDL_GameControllerButton>(b.pad[action])) != 0;
+}
+
+// Android's SDL joystick list includes the accelerometer as a device with zero
+// buttons and live gravity axes.  Opening it with the raw-joystick fallback
+// feeds a constant Y axis into the D-pad, which shows up as Jill walking or
+// kneeling by herself.  Skip sensor-only devices; real unmapped pads always
+// have at least one button.
+bool joystick_is_sensor(int index) {
+    const char* name = SDL_JoystickNameForIndex(index);
+    if (!name) {
+        return false;
+    }
+    return std::strstr(name, "Accelerometer") != nullptr ||
+           std::strstr(name, "accelerometer") != nullptr;
+}
+
+bool joystick_is_sensor(SDL_Joystick* joy) {
+    if (!joy) {
+        return true;
+    }
+    if (SDL_JoystickNumButtons(joy) <= 0) {
+        return true;
+    }
+    const char* name = SDL_JoystickName(joy);
+    return name && (std::strstr(name, "Accelerometer") != nullptr ||
+                    std::strstr(name, "accelerometer") != nullptr);
+}
+
+// SDL keeps its polled keyboard state latched until the matching key-up
+// arrives.  A key-up can be eaten by the IME / soft keyboard, by a focus
+// change or by a system overlay, and then the game believes the key is still
+// held: Jill kneels forever and the level editor pans by itself (the editor's
+// auto-repeat reads the same polled state).  Drop the latched state whenever
+// the input context changes; a key that really is still down re-registers on
+// its next event/auto-repeat.  Bound keys don't auto-repeat on Android, so
+// prefer clearing over guessing.
+//
+// The bundled SDL2 headers on Xbox (NXDK) and PS4 predate/omit
+// SDL_ResetKeyboard, and neither target has an IME or a focusable desktop
+// window that can swallow a key-up, so the reset is a no-op there.
+void reset_held_keys() {
+#if !defined(JILL_XBOX) && !defined(JILL_PS4)
+    SDL_ResetKeyboard();
+#endif
 }
 
 // XInput pads arrive through SDL_GameController; DirectInput / HID pads that
@@ -901,9 +1019,12 @@ bool apply_selection(Engine& engine, const std::vector<GameDef>& games,
     const std::string font_name = engine.font_name();
     const int menu_border_ext = engine.menu_border_ext();
     const bool turtle = engine.turtle();
+    const bool hud_hidden = engine.hud_hidden();
     const int respawn_mode = engine.respawn_mode();
     const bool phoenix_water = engine.phoenix_water_death();
     const bool throw_vines = engine.throw_from_vines();
+    const bool hud_flash = engine.hud_damage_flash();
+    const bool jill_flash = engine.jill_damage_flash();
     std::string err;
     if (engine.game().id != g.id) {
         std::unique_ptr<Engine> fresh_storage(new Engine());
@@ -922,6 +1043,7 @@ bool apply_selection(Engine& engine, const std::vector<GameDef>& games,
     engine.set_turtle(turtle);
     engine.set_fast_dialogs(fast_dialogs);
     engine.set_hud_classic(hud);  // camera centre depends on the HUD style
+    engine.set_hud_hidden(hud_hidden);
     if (!engine.load_board(g.board(sel.board), err)) {
         std::fprintf(stderr, "load %s: %s\n", g.board(sel.board).c_str(),
                      err.c_str());
@@ -947,6 +1069,8 @@ bool apply_selection(Engine& engine, const std::vector<GameDef>& games,
     engine.set_phoenix_water_death(phoenix_water);
     engine.set_throw_from_vines(throw_vines);
     engine.set_center_fish_shot(center_fish);
+    engine.set_hud_damage_flash(hud_flash);
+    engine.set_jill_damage_flash(jill_flash);
     apply_player_look(engine, games, player_look, player_suit);
     apply_hud_frame(engine, games, hud_frame);
     apply_theme_frame(engine, games, menu_theme);
@@ -1173,11 +1297,89 @@ std::vector<int> demo_games(const std::vector<GameDef>& games) {
     return out;
 }
 
+// Custom levels saved by JILL MAKER live under editor/<game id>/<name>.<ext>.
+struct CustomLevelEntry {
+    int game = -1;
+    std::string path;
+    std::string stem;
+};
+
+std::vector<CustomLevelEntry> custom_levels(const std::vector<GameDef>& games,
+                                            int only_game) {
+    // The menu asks every frame; a one-second cache keeps the directory scan
+    // off the per-frame path on Vita/Android storage.
+    static std::vector<CustomLevelEntry> cache;
+    static uint32_t cache_ms = 0;
+    static bool cache_valid = false;
+    const uint32_t now = SDL_GetTicks();
+    if (!cache_valid || now < cache_ms || now - cache_ms >= 1000) {
+        cache.clear();
+        for (int gi = 0; gi < static_cast<int>(games.size()); ++gi) {
+            const GameDef& g = games[static_cast<size_t>(gi)];
+            std::string ext = g.board_ext;
+            for (char& c : ext) {
+                if (c >= 'A' && c <= 'Z') {
+                    c = static_cast<char>(c - 'A' + 'a');
+                }
+            }
+            const std::string dir = jill_paths::resolve("editor/" + g.id);
+            std::error_code ec;
+            jill_fs::directory_iterator it(jill_fs::path(dir), ec);
+            if (ec) {
+                continue;
+            }
+            for (const auto& entry : it) {
+                std::error_code file_ec;
+                if (!entry.is_regular_file(file_ec) || file_ec) {
+                    continue;
+                }
+                const std::string name = entry.path().filename().string();
+                std::string lower = name;
+                for (char& c : lower) {
+                    if (c >= 'A' && c <= 'Z') {
+                        c = static_cast<char>(c - 'A' + 'a');
+                    }
+                }
+                if (ext.empty() || lower.size() <= ext.size() ||
+                    lower.compare(lower.size() - ext.size(), ext.size(),
+                                  ext) != 0) {
+                    continue;
+                }
+                CustomLevelEntry e;
+                e.game = gi;
+                e.path = jill_paths::resolve("editor/" + g.id + "/" + name);
+                e.stem = name.substr(0, name.size() - ext.size());
+                cache.push_back(std::move(e));
+            }
+        }
+        std::sort(cache.begin(), cache.end(),
+                  [](const CustomLevelEntry& a, const CustomLevelEntry& b) {
+                      if (a.game != b.game) {
+                          return a.game < b.game;
+                      }
+                      return a.stem < b.stem;
+                  });
+        cache_ms = now;
+        cache_valid = true;
+    }
+    if (only_game < 0) {
+        return cache;
+    }
+    std::vector<CustomLevelEntry> out;
+    for (const CustomLevelEntry& e : cache) {
+        if (e.game == only_game) {
+            out.push_back(e);
+        }
+    }
+    return out;
+}
+
 // Front end: main menu -> episode select / options -> controls/enhancements.
 enum class MenuScreen {
     Closed,
     Main,
     Episodes,
+    CustomLevels,  // play a board saved by JILL MAKER
     DemoSelect,   // choose an installed game that ships attract demos
     DemoChoice,   // choose which recorded demo of that game to play
     StorySelect,  // choose which installed game's story to read
@@ -1196,7 +1398,9 @@ enum class MenuScreen {
     NoisemakerSelect,  // choose which episode's board noisemaker to open
     Noisemaker,        // original board page 99 "NOISE BLASTER" screen
     SoundTest,         // OPTIONS > SOUND raw-slot audition screen
-    Assets
+    Assets,
+    EditorSelect,      // choose which installed game to edit
+    EditorBoards       // choose which board of that game to edit
 };
 
 struct Menu {
@@ -1209,6 +1413,7 @@ struct Menu {
     std::string menu_font;  // external font set ("" = game font)
     int main_sel = 0;
     int ep_sel = 0;
+    int custom_sel = 0;   // row on the CUSTOM LEVELS screen
     int demo_game = -1;   // chosen game index (into `games`)
     int demo_game_sel = 0;  // row on the game selector
     int demo_sel = 0;     // which recorded demo of that game
@@ -1240,6 +1445,9 @@ struct Menu {
     int nm_sel = 0;          // NOISEMAKER episode selector
     int nm_game = 0;         // episode whose board page 99 is open
     int assets_sel = 0;      // external pack row
+    int editor_sel = 0;      // game row on the LEVEL EDITOR selector
+    int editor_game = -1;    // chosen game for EditorBoards
+    int editor_board_sel = 0;  // board row on EditorBoards
     int noise_set = 0;       // installed game whose .vcl is auditioned
     int noise_sound = 1;     // raw sample slot 0..49
     bool noise_loaded = false;  // bank matches noise_set
@@ -1280,10 +1488,21 @@ void ensure_load_labels(Menu& m, const std::vector<GameDef>& games,
 
 bool menu_open(const Menu& m) { return m.screen != MenuScreen::Closed; }
 
+// OPTIONS row indices.  The touch layout row only exists on Android, where the
+// on-screen controls are drawn at all.
+#ifdef JILL_ANDROID
+constexpr int kOptionsTouchRow = 8;
+constexpr int kOptionsBackRow = 9;
+#else
+constexpr int kOptionsBackRow = 8;
+#endif
+
 int& menu_sel(Menu& m) {
     switch (m.screen) {
         case MenuScreen::Episodes:
             return m.ep_sel;
+        case MenuScreen::CustomLevels:
+            return m.custom_sel;
         case MenuScreen::DemoSelect:
             return m.demo_game_sel;
         case MenuScreen::DemoChoice:
@@ -1320,6 +1539,10 @@ int& menu_sel(Menu& m) {
             return m.noise_sel;
         case MenuScreen::Assets:
             return m.assets_sel;
+        case MenuScreen::EditorSelect:
+            return m.editor_sel;
+        case MenuScreen::EditorBoards:
+            return m.editor_board_sel;
         default:
             return m.main_sel;
     }
@@ -1468,6 +1691,7 @@ struct VideoSettings {
     bool interpolate = true;  // high-framerate smoothing (needs high_fps > 0)
     bool fps_counter = false; // frame-rate counter overlay
     int filter = 0;      // 0 none, 1 smooth (light blur), 2 CRT
+    int scaler = 0;      // 0 integer, 1 fractional, 2 vertical, 3 bilinear
     int stereo = 0;      // 0 off, 1 row-interlaced, 2 half-width SBS
     int stereo_depth = 2;  // per-eye horizontal separation in source pixels
     int stereo_convergence = 0;  // common inward pull for both eyes
@@ -1495,6 +1719,15 @@ const char* filter_name(int filter) {
 }
 
 int filter_next(int filter) { return (filter + 1) % 3; }
+
+const char* scaler_name(int scaler) {
+    switch (scaler) {
+        case 1: return "FRACTIONAL NEAREST";
+        case 2: return "VERTICAL BILINEAR";
+        case 3: return "FULL BILINEAR";
+        default: return "INTEGER";
+    }
+}
 
 struct ResolutionOption {
     const char* label;
@@ -1727,8 +1960,23 @@ std::string hud_layout_next(const ExternalVisuals* ext,
         }
     }
     int idx = -1;
+    auto same_name = [](const std::string& a, const std::string& b) {
+        if (a.size() != b.size()) {
+            return false;
+        }
+        for (size_t i = 0; i < a.size(); ++i) {
+            char ca = a[i];
+            char cb = b[i];
+            if (ca >= 'A' && ca <= 'Z') ca = static_cast<char>(ca - 'A' + 'a');
+            if (cb >= 'A' && cb <= 'Z') cb = static_cast<char>(cb - 'A' + 'a');
+            if (ca != cb) {
+                return false;
+            }
+        }
+        return true;
+    };
     for (size_t i = 0; i < names.size(); ++i) {
-        if (names[i] == current) {
+        if (same_name(names[i], current)) {
             idx = static_cast<int>(i);
             break;
         }
@@ -1852,8 +2100,49 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                 v.push_back("HIGH SCORES");
                 v.push_back("OPTIONS");
                 v.push_back("NOISEMAKER");
+                v.push_back("LEVEL EDITOR");
                 v.push_back("QUIT");
             }
+            return v;
+        }
+        case MenuScreen::EditorSelect: {
+            std::vector<std::string> v;
+            for (const GameDef& g : games) {
+                v.push_back(upper_ascii(g.title.c_str()));
+            }
+            v.push_back("BACK");
+            return v;
+        }
+        case MenuScreen::EditorBoards: {
+            std::vector<std::string> v;
+            if (m.editor_game >= 0 &&
+                m.editor_game < static_cast<int>(games.size())) {
+                const GameDef& g = games[static_cast<size_t>(m.editor_game)];
+                for (int i = 0; i < g.board_count(); ++i) {
+                    v.push_back("BOARD " + upper_ascii(g.board(i).c_str()));
+                }
+            }
+            v.push_back("NEW LEVEL");
+            if (m.editor_game >= 0) {
+                for (const CustomLevelEntry& c :
+                     custom_levels(games, m.editor_game)) {
+                    v.push_back("CUSTOM " + upper_ascii(c.stem.c_str()));
+                }
+            }
+            v.push_back("BACK");
+            return v;
+        }
+        case MenuScreen::CustomLevels: {
+            std::vector<std::string> v;
+            for (const CustomLevelEntry& c : custom_levels(games, -1)) {
+                if (c.game < 0 || c.game >= static_cast<int>(games.size())) {
+                    continue;
+                }
+                v.push_back(upper_ascii(
+                                games[static_cast<size_t>(c.game)].title.c_str()) +
+                            ": " + upper_ascii(c.stem.c_str()));
+            }
+            v.push_back("BACK");
             return v;
         }
         case MenuScreen::NoisemakerSelect: {
@@ -1871,6 +2160,7 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
             for (const GameDef& g : games) {
                 v.push_back(upper_ascii(g.title.c_str()));
             }
+            v.push_back("CUSTOM LEVELS");
             v.push_back("BACK");
             return v;
         }
@@ -1906,8 +2196,13 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
         case MenuScreen::Story:
             return {};
         case MenuScreen::Options:
+#ifdef JILL_ANDROID
+            return {"HUD", "VIDEO", "SOUND", "CHEATS", "CONTROLS", "MENUS",
+                    "GAMEPLAY", "ASSETS", "TOUCH CONTROLS", "BACK"};
+#else
             return {"HUD", "VIDEO", "SOUND", "CHEATS", "CONTROLS", "MENUS",
                     "GAMEPLAY", "ASSETS", "BACK"};
+#endif
         case MenuScreen::Video: {
             char size[64];
             if (video.resolution) {
@@ -1930,6 +2225,7 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                              ? "N/A (HIGH FRAMERATE OFF)"
                              : (video.interpolate ? "ON" : "OFF")),
                     std::string("FILTER: ") + filter_name(video.filter),
+                    std::string("SCALER: ") + scaler_name(video.scaler),
                     std::string("FPS COUNTER: ") +
                         (video.fps_counter ? "ON" : "OFF"),
                     "BACK"};
@@ -1967,6 +2263,8 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                                         m.hud_layout),
                     std::string("FONT SIZE: ") +
                         ui_scale_name(engine.hud_font_scale()),
+                    std::string("NO HUD: ") +
+                        (engine.hud_hidden() ? "ON" : "OFF"),
                     "BACK"};
         case MenuScreen::Menus:
             return {std::string("BORDER: ") +
@@ -2094,6 +2392,10 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                         (engine.phoenix_water_death() ? "ON" : "OFF"),
                     std::string("THROW FROM VINES: ") +
                         (engine.throw_from_vines() ? "ON" : "OFF"),
+                    std::string("HUD DAMAGE FLASH: ") +
+                        (engine.hud_damage_flash() ? "ON" : "OFF"),
+                    std::string("JILL DAMAGE FLASH: ") +
+                        (engine.jill_damage_flash() ? "ON" : "OFF"),
                     "BACK"};
         case MenuScreen::SoundTest: {
             std::string set = "SET: ";
@@ -2631,6 +2933,22 @@ void draw_classic_menu(Framebuffer& fb, Engine& engine, const Menu& m,
     for (const std::string& item : items) {
         maxlen = std::max(maxlen, static_cast<int>(item.size()));
     }
+    // At most 10 rows per page; the page follows the selection.
+    constexpr int kMenuPageSize = 10;
+    const int page_count =
+        std::max(1, (static_cast<int>(items.size()) + kMenuPageSize - 1) /
+                        kMenuPageSize);
+    int page = sel / kMenuPageSize;
+    if (page >= page_count) {
+        page = page_count - 1;
+    }
+    if (page < 0) {
+        page = 0;
+    }
+    const int first_item = page * kMenuPageSize;
+    const int last_item =
+        std::min(first_item + kMenuPageSize, static_cast<int>(items.size()));
+    const int shown_items = std::max(0, last_item - first_item);
     const int S = m.menu_scale;
     int T = std::max(50, std::min(300, S * m.menu_font_scale / 100));
     const int padx = 32 * S / 100;
@@ -2642,20 +2960,11 @@ void draw_classic_menu(Framebuffer& fb, Engine& engine, const Menu& m,
         T = std::min(T, std::max(100, max_adv * 100 / 6));
     }
     const int adv = Engine::text_advance_pct(6, T);
-    int line_h = std::max((items.size() > 12 ? 9 : 10) * S / 100,
-                          std::max(8, (8 * T + 99) / 100));
+    int line_h = std::max(10 * S / 100, std::max(8, (8 * T + 99) / 100));
     int boxw = std::max(168 * S / 100, padx + (maxlen + 2) * adv);
     boxw = std::min(boxw, avail);
     boxw = ((boxw + 7) / 8) * 8;
-    int boxh = 20 * S / 100 + static_cast<int>(items.size()) * line_h +
-               8 * S / 100;
-    if (boxh > 152 && !items.empty()) {
-        const int room = (152 - 28 * S / 100) /
-                         static_cast<int>(items.size());
-        line_h = std::max(4, std::min(line_h, room));
-        boxh = 20 * S / 100 + static_cast<int>(items.size()) * line_h +
-               8 * S / 100;
-    }
+    int boxh = 20 * S / 100 + shown_items * line_h + 8 * S / 100;
     boxh = std::min(boxh, 152);
     boxh = ((boxh + 7) / 8) * 8;
 
@@ -2668,9 +2977,18 @@ void draw_classic_menu(Framebuffer& fb, Engine& engine, const Menu& m,
         (m.screen == MenuScreen::Main) ? "PICK A CHOICE:" : sub;
     engine.draw_text_pct(fb, bx + 12 * S / 100, by + 10 * S / 100, 15,
                          header, T);
+    if (page_count > 1) {
+        char page_text[16];
+        std::snprintf(page_text, sizeof(page_text), "%d/%d", page + 1,
+                      page_count);
+        const int pw = Engine::text_advance_pct(6, T) *
+                       static_cast<int>(std::strlen(page_text));
+        engine.draw_text_pct(fb, bx + boxw - pw - 8 * S / 100,
+                             by + 10 * S / 100, 14, page_text, T);
+    }
 
     int y = by + 20 * S / 100;
-    for (int i = 0; i < static_cast<int>(items.size()); ++i) {
+    for (int i = first_item; i < last_item; ++i) {
         char line[96];
         std::snprintf(line, sizeof(line), "%c %s",
                       i == sel ? '>' : ' ',
@@ -2688,7 +3006,9 @@ void draw_classic_menu(Framebuffer& fb, Engine& engine, const Menu& m,
         y += line_h;
     }
 
-    const char* hint = "UP/DOWN MOVE   ENTER SELECT   ESC BACK";
+    const char* hint = page_count > 1
+                           ? "UP/DOWN MOVE (PAGES)   ENTER SELECT   ESC BACK"
+                           : "UP/DOWN MOVE   ENTER SELECT   ESC BACK";
     if (m.rebind_action >= 0) {
         hint = "PRESS A KEY OR PAD BUTTON   ESC CANCEL";
     } else if (m.screen == MenuScreen::SoundTest) {
@@ -2737,6 +3057,7 @@ void draw_menu(Framebuffer& fb, Engine& engine, Menu& m, bool started,
     const char* sub = "MAIN MENU";
     switch (m.screen) {
         case MenuScreen::Episodes: sub = "SELECT EPISODE"; break;
+        case MenuScreen::CustomLevels: sub = "CUSTOM LEVELS"; break;
         case MenuScreen::DemoSelect: sub = "SELECT EPISODE"; break;
         case MenuScreen::DemoChoice: sub = "SELECT DEMO"; break;
         case MenuScreen::StorySelect: sub = "SELECT STORY"; break;
@@ -2755,6 +3076,8 @@ void draw_menu(Framebuffer& fb, Engine& engine, Menu& m, bool started,
         case MenuScreen::SoundTest: sub = "SOUND TEST"; break;
         case MenuScreen::NoisemakerSelect: sub = "NOISEMAKER"; break;
         case MenuScreen::Assets: sub = "EXTERNAL ASSETS"; break;
+        case MenuScreen::EditorSelect: sub = "SELECT EPISODE"; break;
+        case MenuScreen::EditorBoards: sub = "LEVEL EDITOR"; break;
         default: break;
     }
 
@@ -2859,8 +3182,28 @@ void commit_hiscore_entry(ScoreEntryPrompt& p, HiScores& hi) {
 }
 
 void draw_hiscore_entry(Framebuffer& fb, Engine& engine,
-                        const ScoreEntryPrompt& p) {
+                        const ScoreEntryPrompt& p, const TextKeyboard* kb) {
     if (!p.active) {
+        return;
+    }
+    if (kb && kb->active()) {
+        const int x = 6;
+        const int y = 10;
+        const int w = 308;
+        const int h = 172;
+        fb.fill_rect(x, y, w, h, 8);
+        fb.fill_rect(x + 1, y + 1, w - 2, h - 2, 0);
+        engine.draw_text(fb, x + 10, y + 8, 15, "NEW HIGH SCORE");
+        char line[96];
+        std::snprintf(line, sizeof(line), "SCORE: %lu",
+                      static_cast<unsigned long>(p.score));
+        engine.draw_text(fb, x + 10, y + 20, 14, line);
+        std::string shown = p.name.empty() ? std::string("_") : (p.name + "_");
+        engine.draw_text(fb, x + 10, y + 32, 7, "NAME:");
+        engine.draw_text(fb, x + 58, y + 32, 15, shown.c_str());
+        kb->draw(fb, engine, x + (w - TextKeyboard::kWidth) / 2, y + 46);
+        engine.draw_text(fb, x + 10, y + h - 10, 11,
+                         "D-PAD MOVE  A TYPE  Y DELETE  START ACCEPT  B DEFAULT");
         return;
     }
     const int x = 46;
@@ -3077,9 +3420,12 @@ bool start_game(Engine& engine, const std::vector<GameDef>& games, int index,
     const std::string font_name = engine.font_name();
     const int menu_border_ext = engine.menu_border_ext();
     const bool turtle = engine.turtle();
+    const bool hud_hidden = engine.hud_hidden();
     const int respawn_mode = engine.respawn_mode();
     const bool phoenix_water = engine.phoenix_water_death();
     const bool throw_vines = engine.throw_from_vines();
+    const bool hud_flash = engine.hud_damage_flash();
+    const bool jill_flash = engine.jill_damage_flash();
     std::string err;
     if (engine.game().id != g.id) {
         std::unique_ptr<Engine> fresh_storage(new Engine());
@@ -3098,6 +3444,7 @@ bool start_game(Engine& engine, const std::vector<GameDef>& games, int index,
     engine.set_turtle(turtle);
     engine.set_fast_dialogs(fast_dialogs);
     engine.set_hud_classic(hud);  // camera centre depends on the HUD style
+    engine.set_hud_hidden(hud_hidden);
     engine.reset_gems();          // a new game starts with no gems
     const std::string& start_board = board.empty() ? g.first_board : board;
     if (!engine.load_board(start_board, err, level)) {
@@ -3136,6 +3483,8 @@ bool start_game(Engine& engine, const std::vector<GameDef>& games, int index,
     engine.set_phoenix_water_death(phoenix_water);
     engine.set_throw_from_vines(throw_vines);
     engine.set_center_fish_shot(center_fish);
+    engine.set_hud_damage_flash(hud_flash);
+    engine.set_jill_damage_flash(jill_flash);
     apply_player_look(engine, games, player_look, player_suit);
     apply_hud_frame(engine, games, hud_frame);
     apply_theme_frame(engine, games, menu_theme);
@@ -3276,6 +3625,7 @@ int run_sdl(const Options& opt, Engine& engine,
     video.interpolate = opt.interpolate;
     video.fps_counter = opt.fps_counter;
     video.filter = opt.filter;
+    video.scaler = opt.scaler;
     video.stereo = kStereoEnabled && opt.stereo == 1 ? 1 : 0;
     video.stereo_depth = opt.stereo_depth;
     video.stereo_convergence = opt.stereo_convergence;
@@ -3365,6 +3715,13 @@ int run_sdl(const Options& opt, Engine& engine,
     LevelSelect select;
     EndingViewer ending;
     ScoreEntryPrompt score_entry;
+    // Controller keyboard for PS4/Xbox hi-score names (native text input is
+    // used on desktop/Android and Vita's IME).
+    TextKeyboard score_keyboard;
+    // Controller grid for the QWERTY Noisemaker page (all targets: a pad has
+    // no keys, and it replaces the page's keyboard art with a usable grid).
+    TextKeyboard noisemaker_keyboard;
+    LevelEditor editor;
     std::unique_ptr<Engine> noisemaker_engine;
     int noisemaker_cam_x = 0;
     int noisemaker_cam_y = 0;
@@ -3378,6 +3735,9 @@ int run_sdl(const Options& opt, Engine& engine,
     engine.set_hud_layout(menu.hud_layout);
     engine.set_font_name(menu.menu_font);
     engine.set_turtle(opt.turtle);
+    engine.set_hud_hidden(opt.hud_hidden);
+    engine.set_hud_damage_flash(opt.hud_damage_flash);
+    engine.set_jill_damage_flash(opt.jill_damage_flash);
     menu.music_on = opt.music;
     menu.music_volume = std::max(0, std::min(100, opt.music_volume));
     menu.sfx_on = opt.sfx;
@@ -3503,6 +3863,27 @@ int run_sdl(const Options& opt, Engine& engine,
     int page_axis_y = 0;  // text-page stick edge latch
 #ifdef JILL_ANDROID
     touch::State touch_prev;
+    // Set when a window/focus change may have swallowed SDL_FINGERUP events;
+    // the next touch block drops the tracked fingers and emits the releases.
+    bool touch_release_pending = false;
+    // TOUCH CONTROLS calibration mode: normal pad input is suppressed and the
+    // fingers drag the overlay buttons; the layout is written to jill.ini.
+    bool touch_layout_open = false;
+    auto save_touch_layout = [&]() {
+        IniFile ini;
+        std::string ini_err;
+        if (ini.load(jill_paths::resolve("jill.ini"), ini_err)) {
+            touch::save_ini(ini);
+            ini.save(jill_paths::resolve("jill.ini"));
+        }
+    };
+    auto finish_touch_layout = [&]() {
+        touch_layout_open = false;
+        touch::edit_end();
+        save_touch_layout();
+        menu.screen = MenuScreen::Options;
+        menu.opt_sel = kOptionsTouchRow;
+    };
 #endif
     // -1 = auto: show the splash for the game being started.  0 disables it.
     int splash_index = video.splash;
@@ -3532,6 +3913,7 @@ int run_sdl(const Options& opt, Engine& engine,
             video.resolution ? kResolutions[video.resolution].w : 0;
         const int display_h =
             video.resolution ? kResolutions[video.resolution].h : 0;
+        screen->set_scale_mode(video.scaler);
         screen->apply(window_width(video), window_height(video), video.mode,
                       display_w, display_h);
     };
@@ -3547,6 +3929,20 @@ int run_sdl(const Options& opt, Engine& engine,
     double fps_display = 0.0;
     uint64_t fps_last = SDL_GetPerformanceCounter();
     uint32_t title_timer = SDL_GetTicks();
+    // Editor: held-direction repeat for the gamepad cursor.
+    int editor_pad_dx = 0;
+    int editor_pad_dy = 0;
+    uint32_t editor_pad_next = 0;
+    bool editor_mouse_grabbed = false;
+    bool native_touch_down = false;
+    int native_touch_x = 0;
+    int native_touch_y = 0;
+    bool hiscore_text_active = false;
+    bool editor_text_active = false;
+    // Press = test from the cursor; keeping the playtest button held for this
+    // long restarts the playtest from the board's own spawn point.
+    bool playtest_hold_armed = false;
+    uint32_t playtest_hold_at = 0;
 
     // Bindings: `[controls]` is the base; `[controls.<game id>]` overrides it
     // for one installed game.  Editing in the Controls menu changes the active
@@ -3566,6 +3962,9 @@ int run_sdl(const Options& opt, Engine& engine,
                 ini.get_int("menus", "scale", menu.menu_scale));
             menu.menu_font_scale = clamp_ui_scale(
                 ini.get_int("menus", "font_scale", menu.menu_font_scale));
+#ifdef JILL_ANDROID
+            touch::load_ini(ini);
+#endif
             for (const std::string& sec : ini.sections()) {
                 static const std::string kPrefix = "controls.";
                 if (sec.compare(0, kPrefix.size(), kPrefix) == 0 &&
@@ -3634,12 +4033,24 @@ int run_sdl(const Options& opt, Engine& engine,
                 }
             }
         }
-        if (SDL_NumJoysticks() > 0) {
-            joystick = SDL_JoystickOpen(0);
+        for (int i = 0; i < SDL_NumJoysticks(); ++i) {
+            if (SDL_IsGameController(i) || joystick_is_sensor(i)) {
+                continue;
+            }
+            SDL_Joystick* js = SDL_JoystickOpen(i);
+            if (!js) {
+                continue;
+            }
+            if (joystick_is_sensor(js)) {
+                SDL_JoystickClose(js);
+                continue;
+            }
+            joystick = js;
 #ifdef JILL_VITA
             jill_paths::trace("pad: opened raw joystick %s",
-                              joystick ? SDL_JoystickName(joystick) : "(null)");
+                              SDL_JoystickName(joystick));
 #endif
+            break;
         }
     };
     open_pads();
@@ -3731,6 +4142,9 @@ int run_sdl(const Options& opt, Engine& engine,
         menu.nm_game = index;
         select_noise_set(index);
         menu.screen = MenuScreen::Noisemaker;
+        if (textkey::pad_noisemaker()) {
+            noisemaker_keyboard.open(nullptr, 0);
+        }
     };
 
     // Build the pack's effect overrides (raw 0..49 slots).  Called whenever the
@@ -3971,6 +4385,10 @@ int run_sdl(const Options& opt, Engine& engine,
                 engine.set_phoenix_water_death(!engine.phoenix_water_death());
             } else if (menu.screen == MenuScreen::Enhancements && sel == 13) {
                 engine.set_throw_from_vines(!engine.throw_from_vines());
+            } else if (menu.screen == MenuScreen::Enhancements && sel == 14) {
+                engine.set_hud_damage_flash(!engine.hud_damage_flash());
+            } else if (menu.screen == MenuScreen::Enhancements && sel == 15) {
+                engine.set_jill_damage_flash(!engine.jill_damage_flash());
             }
         };
         auto video_step = [&](int delta) {
@@ -3992,6 +4410,8 @@ int run_sdl(const Options& opt, Engine& engine,
                 i = (i + kHighFpsCount + delta) % kHighFpsCount;
                 video.high_fps = kHighFps[i];
                 return;  // presentation rate only; no window change
+            } else if (sel == 6) {
+                video.scaler = (video.scaler + 4 + delta) % 4;
             } else {
                 return;  // FILTERS is a placeholder
             }
@@ -4030,11 +4450,19 @@ int run_sdl(const Options& opt, Engine& engine,
             } else if (menu.screen == MenuScreen::Story) {
                 menu.screen = MenuScreen::StorySelect;
                 menu.story_page = 0;
+            } else if (menu.screen == MenuScreen::CustomLevels) {
+                menu.screen = MenuScreen::Episodes;
+                menu.ep_sel = 0;
             } else if (menu.screen == MenuScreen::StorySelect) {
                 menu.screen = MenuScreen::Main;
                 menu.main_sel = 3;
             } else if (menu.screen == MenuScreen::DemoChoice) {
                 menu.screen = MenuScreen::DemoSelect;
+            } else if (menu.screen == MenuScreen::EditorBoards) {
+                menu.screen = MenuScreen::EditorSelect;
+            } else if (menu.screen == MenuScreen::EditorSelect) {
+                menu.screen = MenuScreen::Main;
+                menu.main_sel = 7;
             } else {
                 menu.screen = MenuScreen::Main;
             }
@@ -4198,6 +4626,12 @@ int run_sdl(const Options& opt, Engine& engine,
                             menu.screen = MenuScreen::NoisemakerSelect;
                             break;
                         }
+                        case 7: {
+                            int idx = game_index_for_id(games, engine.game().id);
+                            menu.editor_sel = idx < 0 ? 0 : idx;
+                            menu.screen = MenuScreen::EditorSelect;
+                            break;
+                        }
                         default: running = false; break;
                     }
                 }
@@ -4217,8 +4651,36 @@ int run_sdl(const Options& opt, Engine& engine,
                             "Reminder",
                             "YOU CAN PRESS F1 AT ANY TIME TO GET HELP.");
                     }
+                } else if (sel == count) {
+                    menu.custom_sel = 0;
+                    menu.screen = MenuScreen::CustomLevels;
                 } else {
                     menu.screen = MenuScreen::Main;
+                }
+                break;
+            }
+            case MenuScreen::CustomLevels: {
+                const std::vector<CustomLevelEntry> list =
+                    custom_levels(games, -1);
+                if (nav == 5 && sel < static_cast<int>(list.size())) {
+                    const CustomLevelEntry& c =
+                        list[static_cast<size_t>(sel)];
+                    std::string err;
+                    if (start_game(engine, games, c.game, menu.hud_frame,
+                                   menu.menu_frame)) {
+                        if (engine.load_board_file(c.path, err)) {
+                            game_started = true;
+                            menu.screen = MenuScreen::Closed;
+                            engine.show_message_box(
+                                "CUSTOM LEVEL",
+                                "PRESS F1 AT ANY TIME TO GET HELP.");
+                        } else {
+                            std::fprintf(stderr, "custom level: %s\n",
+                                         err.c_str());
+                        }
+                    }
+                } else if (nav == 5) {
+                    menu.screen = MenuScreen::Episodes;
                 }
                 break;
             }
@@ -4334,7 +4796,15 @@ int run_sdl(const Options& opt, Engine& engine,
                 } else if (nav == 5 && sel == 7) {
                     menu.assets_sel = 0;
                     menu.screen = MenuScreen::Assets;
-                } else if (nav == 5 && sel == 8) {
+#ifdef JILL_ANDROID
+                } else if (nav == 5 && sel == kOptionsTouchRow) {
+                    // Drag the on-screen pad/buttons into place; DONE saves
+                    // the layout to jill.ini and returns to OPTIONS.
+                    touch::edit_begin();
+                    touch_layout_open = true;
+                    menu.screen = MenuScreen::Closed;
+#endif
+                } else if (nav == 5 && sel == kOptionsBackRow) {
                     menu.screen = MenuScreen::Main;
                 } else {
                     toggle_option();
@@ -4434,7 +4904,7 @@ int run_sdl(const Options& opt, Engine& engine,
                 break;
             }
             case MenuScreen::Video:
-                if (nav == 5 && sel == 7) {
+                if (nav == 5 && sel == 8) {
                     menu.screen = MenuScreen::Options;
                 } else if (sel == 4) {
                     if (nav == 5 || nav == 3 || nav == 4) {
@@ -4444,7 +4914,7 @@ int run_sdl(const Options& opt, Engine& engine,
                     if (nav == 5 || nav == 3 || nav == 4) {
                         video.filter = filter_next(video.filter);
                     }
-                } else if (sel == 6) {
+                } else if (sel == 7) {
                     if (nav == 5 || nav == 3 || nav == 4) {
                         video.fps_counter = !video.fps_counter;
                     }
@@ -4455,8 +4925,10 @@ int run_sdl(const Options& opt, Engine& engine,
                 }
                 break;
             case MenuScreen::Hud:
-                if (nav == 5 && sel == 9) {
+                if (nav == 5 && sel == 10) {
                     menu.screen = MenuScreen::Options;
+                } else if (sel == 9) {
+                    engine.set_hud_hidden(!engine.hud_hidden());
                 } else if (sel == 8) {
                     if (nav == 3 || nav == 4 || nav == 5) {
                         engine.set_hud_font_scale(ui_scale_step(
@@ -4648,6 +5120,98 @@ int run_sdl(const Options& opt, Engine& engine,
                 }
                 break;
             }
+            case MenuScreen::EditorSelect: {
+                if (nav != 5) {
+                    break;
+                }
+                if (sel >= static_cast<int>(games.size())) {
+                    menu.screen = MenuScreen::Main;
+                    menu.main_sel = 7;
+                    break;
+                }
+                menu.editor_game = sel;
+                menu.editor_board_sel = 0;
+                menu.screen = MenuScreen::EditorBoards;
+                break;
+            }
+            case MenuScreen::EditorBoards: {
+                if (nav != 5) {
+                    break;
+                }
+                const bool valid_game =
+                    menu.editor_game >= 0 &&
+                    menu.editor_game < static_cast<int>(games.size());
+                const GameDef* eg = valid_game
+                                        ? &games[static_cast<size_t>(menu.editor_game)]
+                                        : nullptr;
+                if (!eg) {
+                    menu.screen = MenuScreen::EditorSelect;
+                    break;
+                }
+                const int boards = eg->board_count();
+                const std::vector<CustomLevelEntry> custom =
+                    custom_levels(games, menu.editor_game);
+                const int custom_first = boards + 1;
+                const int back_row = custom_first +
+                                     static_cast<int>(custom.size());
+                if (sel > back_row) {
+                    break;
+                }
+                if (sel == back_row) {  // BACK
+                    menu.screen = MenuScreen::EditorSelect;
+                    break;
+                }
+                const bool custom_row = sel >= custom_first;
+                const bool making_new = sel == boards;
+                std::string template_board;
+                if (making_new || custom_row) {
+                    if (boards > 0) {
+                        template_board = eg->board(0);
+                    }
+                    if (template_board.empty()) {
+                        template_board = eg->first_board;
+                    }
+                } else if (sel >= 0 && sel < boards) {
+                    template_board = eg->board(sel);
+                }
+                if (template_board.empty()) {
+                    break;
+                }
+                std::string err;
+                if (!start_game(engine, games, menu.editor_game, menu.hud_frame,
+                                menu.menu_frame, template_board)) {
+                    break;
+                }
+                bool opened = false;
+                if (custom_row) {
+                    const CustomLevelEntry& c =
+                        custom[static_cast<size_t>(sel - custom_first)];
+                    opened = editor.open_path(engine, c.path, c.stem, err);
+                } else {
+                    opened = editor.open(engine, engine.board_name(), err);
+                }
+                if (!opened) {
+                    std::fprintf(stderr, "editor: %s\n", err.c_str());
+                    menu.screen = MenuScreen::EditorBoards;
+                    break;
+                }
+                if (making_new && !editor.new_level(engine, err)) {
+                    std::fprintf(stderr, "editor: new level: %s\n", err.c_str());
+                    editor.close();
+                    menu.screen = MenuScreen::EditorBoards;
+                    break;
+                }
+#if defined(JILL_VITA) || defined(JILL_ANDROID)
+                editor.set_touch_controls(true);
+#else
+                editor.set_touch_controls(SDL_GetNumTouchDevices() > 0);
+#endif
+                SDL_ShowCursor(SDL_ENABLE);
+                SDL_CaptureMouse(SDL_FALSE);
+                game_started = false;
+                menu.screen = MenuScreen::Closed;
+                break;
+            }
             case MenuScreen::HighScores: {
                 const int count = static_cast<int>(games.size());
                 if (nav == 3 || nav == 4) {
@@ -4722,8 +5286,136 @@ int run_sdl(const Options& opt, Engine& engine,
             g_ps4_pad = pad_now;
         }
 #endif
+        auto leave_editor = [&]() {
+            SDL_CaptureMouse(SDL_FALSE);
+            SDL_ShowCursor(SDL_ENABLE);
+            if (screen) {
+                screen->set_mouse_grab(false);
+            }
+            editor_mouse_grabbed = false;
+            menu.screen = MenuScreen::Main;
+            menu.main_sel = 7;
+            game_started = false;
+            front_end_music();
+        };
+        if (score_entry.active != hiscore_text_active) {
+            hiscore_text_active = score_entry.active;
+            if (hiscore_text_active) {
+                if (textkey::controller_only()) {
+                    score_keyboard.open(&score_entry.name, 9);
+                } else {
+#ifdef JILL_VITA
+                    // SDL video is off on Vita; the IME is only a fallback.
+                    vita_ime::start("");
+#else
+                    // Native text entry: Android soft keyboard / desktop text
+                    // input arrives as SDL_TEXTINPUT.
+                    SDL_StartTextInput();
+                    reset_held_keys();
+#endif
+                }
+            } else {
+                score_keyboard.close();
+                if (!textkey::controller_only()) {
+#ifdef JILL_VITA
+                    vita_ime::close();
+#else
+                    SDL_StopTextInput();
+                    reset_held_keys();
+#endif
+                }
+            }
+        }
+        {
+            const bool want_editor_text =
+                editor.active() && !editor.playtest() &&
+                editor.text_input_active();
+            if (want_editor_text != editor_text_active) {
+                editor_text_active = want_editor_text;
+                if (editor_text_active) {
+                    if (textkey::controller_only()) {
+                        // The editor prompt draws its own D-pad keyboard.
+                    } else {
+#ifdef JILL_VITA
+                        vita_ime::start("");
+#else
+                        SDL_StartTextInput();
+                        reset_held_keys();
+#endif
+                    }
+                } else {
+                    if (!textkey::controller_only()) {
+#ifdef JILL_VITA
+                        vita_ime::close();
+#else
+                        SDL_StopTextInput();
+                        reset_held_keys();
+#endif
+                    }
+                }
+            }
+        }
+#ifdef JILL_VITA
+        if (score_entry.active || editor.text_input_active()) {
+            std::string ime_text;
+            int ime_result = 0;
+            if (vita_ime::poll(ime_text, ime_result)) {
+                if (ime_result == 1) {
+                    if (!ime_text.empty()) {
+                        SDL_Event text_event{};
+                        text_event.type = SDL_TEXTINPUT;
+                        std::snprintf(text_event.text.text,
+                                      sizeof(text_event.text.text), "%s",
+                                      ime_text.c_str());
+                        SDL_PushEvent(&text_event);
+                    }
+                    SDL_Event key_event{};
+                    key_event.type = SDL_KEYDOWN;
+                    key_event.key.keysym.scancode = SDL_SCANCODE_RETURN;
+                    key_event.key.keysym.sym = SDLK_RETURN;
+                    SDL_PushEvent(&key_event);
+                } else {
+                    SDL_Event key_event{};
+                    key_event.type = SDL_KEYDOWN;
+                    key_event.key.keysym.scancode = SDL_SCANCODE_ESCAPE;
+                    key_event.key.keysym.sym = SDLK_ESCAPE;
+                    SDL_PushEvent(&key_event);
+                }
+            }
+        }
+#endif
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
+            if (editor.active() && !editor.playtest() &&
+                editor.touch_controls() &&
+                (ev.type == SDL_FINGERDOWN ||
+                 ev.type == SDL_FINGERMOTION || ev.type == SDL_FINGERUP)) {
+#ifdef JILL_ANDROID
+                // The editor takes these events, but the gameplay tracker still
+                // has to see the ups: otherwise the finger that opened the
+                // editor stays "held" and the pad comes back stuck (the D-pad
+                // down arrow scrolling the editor / kneeling in a playtest).
+                touch::handle_event(ev);
+#endif
+                int tx = 0;
+                int ty = 0;
+                if (screen && screen->touch_to_frame(ev.tfinger.x, ev.tfinger.y,
+                                                     tx, ty)) {
+                    if (ev.type == SDL_FINGERDOWN) {
+                        editor.touch_down(tx, ty, engine);
+                    } else if (ev.type == SDL_FINGERMOTION) {
+                        editor.touch_move(tx, ty, engine);
+                    } else {
+                        editor.touch_up(engine);
+                    }
+                } else if (ev.type == SDL_FINGERUP) {
+                    editor.touch_up(engine);
+                }
+                if (!editor.active()) {
+                    leave_editor();
+                }
+                continue;
+            }
 #ifdef JILL_ANDROID
             if (ev.type == SDL_FINGERDOWN || ev.type == SDL_FINGERMOTION ||
                 ev.type == SDL_FINGERUP) {
@@ -4731,14 +5423,415 @@ int run_sdl(const Options& opt, Engine& engine,
                 continue;
             }
 #endif
+#ifdef JILL_ANDROID
+            if (touch_layout_open && ev.type != SDL_QUIT) {
+                // The layout editor is modal: fingers move the buttons and
+                // Esc/Enter/pad A/B leaves and saves.
+                if (ev.type == SDL_KEYDOWN &&
+                    (ev.key.keysym.scancode == SDL_SCANCODE_ESCAPE ||
+                     ev.key.keysym.scancode == SDL_SCANCODE_AC_BACK ||
+                     ev.key.keysym.scancode == SDL_SCANCODE_RETURN ||
+                     ev.key.keysym.scancode == SDL_SCANCODE_KP_ENTER)) {
+                    finish_touch_layout();
+                } else if (ev.type == SDL_CONTROLLERBUTTONDOWN &&
+                           (ev.cbutton.button == SDL_CONTROLLER_BUTTON_A ||
+                            ev.cbutton.button == SDL_CONTROLLER_BUTTON_B ||
+                            ev.cbutton.button ==
+                                SDL_CONTROLLER_BUTTON_START)) {
+                    finish_touch_layout();
+                }
+                continue;
+            }
+#endif
             if (ev.type == SDL_QUIT) {
                 running = false;
+            } else if (ev.type == SDL_APP_WILLENTERBACKGROUND ||
+                       ev.type == SDL_APP_DIDENTERBACKGROUND ||
+                       ev.type == SDL_APP_WILLENTERFOREGROUND ||
+                       ev.type == SDL_APP_DIDENTERFOREGROUND ||
+                       ev.type == SDL_APP_TERMINATING) {
+                // The OS may stop delivering key/touch ups while the app is
+                // away; forget the latched state so the pad is not stuck when
+                // it returns.
+                reset_held_keys();
+#ifdef JILL_ANDROID
+                touch_release_pending = true;
+#endif
+            } else if (editor.active() && !editor.playtest()) {
+                if (editor.text_input_active()) {
+                    if (ev.type == SDL_TEXTINPUT) {
+                        editor.text_input_text(ev.text.text);
+                    } else if (ev.type == SDL_KEYDOWN && !ev.key.repeat) {
+                        const SDL_Scancode sc = ev.key.keysym.scancode;
+                        if (sc == SDL_SCANCODE_ESCAPE) {
+                            editor.text_input_cancel();
+                        } else if (sc == SDL_SCANCODE_RETURN ||
+                                   sc == SDL_SCANCODE_KP_ENTER) {
+                            editor.text_input_commit(engine);
+                        } else if (sc == SDL_SCANCODE_BACKSPACE ||
+                                   sc == SDL_SCANCODE_DELETE) {
+                            editor.text_input_backspace();
+                        }
+                    }
+                    if (ev.type == SDL_TEXTINPUT || ev.type == SDL_KEYDOWN ||
+                        ev.type == SDL_KEYUP) {
+                        continue;
+                    }
+                }
+                bool consumed = true;
+                const SDL_Scancode edit_sc =
+                    ev.type == SDL_KEYDOWN ? ev.key.keysym.scancode
+                                           : SDL_SCANCODE_UNKNOWN;
+                const bool edit_arrow =
+                    edit_sc == SDL_SCANCODE_UP ||
+                    edit_sc == SDL_SCANCODE_DOWN ||
+                    edit_sc == SDL_SCANCODE_LEFT ||
+                    edit_sc == SDL_SCANCODE_RIGHT;
+                if (ev.type == SDL_KEYDOWN &&
+                    (!ev.key.repeat || edit_arrow)) {
+                    LevelEditor::Key key = LevelEditor::Key::None;
+                    switch (ev.key.keysym.scancode) {
+                        case SDL_SCANCODE_ESCAPE:
+                            key = LevelEditor::Key::Escape;
+                            break;
+                        case SDL_SCANCODE_UP:
+                            key = LevelEditor::Key::Up;
+                            break;
+                        case SDL_SCANCODE_DOWN:
+                            key = LevelEditor::Key::Down;
+                            break;
+                        case SDL_SCANCODE_LEFT:
+                            key = LevelEditor::Key::Left;
+                            break;
+                        case SDL_SCANCODE_RIGHT:
+                            key = LevelEditor::Key::Right;
+                            break;
+                        case SDL_SCANCODE_1:
+                        case SDL_SCANCODE_KP_1:
+                            key = LevelEditor::Key::ModeTile;
+                            break;
+                        case SDL_SCANCODE_2:
+                        case SDL_SCANCODE_KP_2:
+                            key = LevelEditor::Key::ModeObject;
+                            break;
+                        case SDL_SCANCODE_3:
+                        case SDL_SCANCODE_KP_3:
+                            key = LevelEditor::Key::ModeSelect;
+                            break;
+                        case SDL_SCANCODE_4:
+                        case SDL_SCANCODE_KP_4:
+                            key = LevelEditor::Key::ModeRegion;
+                            break;
+                        case SDL_SCANCODE_T:
+                            key = LevelEditor::Key::TilePalette;
+                            break;
+                        case SDL_SCANCODE_E:
+                        case SDL_SCANCODE_TAB:
+                            key = LevelEditor::Key::ObjectPalette;
+                            break;
+                        case SDL_SCANCODE_H:
+                        case SDL_SCANCODE_F1:
+                            key = LevelEditor::Key::Help;
+                            break;
+                        case SDL_SCANCODE_G:
+                            key = LevelEditor::Key::Grid;
+                            break;
+                        case SDL_SCANCODE_N:
+                            key = LevelEditor::Key::Minimap;
+                            break;
+                        case SDL_SCANCODE_M:
+                            key = LevelEditor::Key::PaintMode;
+                            break;
+                        case SDL_SCANCODE_F6:
+                            key = LevelEditor::Key::PaintMode;
+                            break;
+                        case SDL_SCANCODE_Z:
+                            key = LevelEditor::Key::Undo;
+                            break;
+                        case SDL_SCANCODE_Y:
+                            key = LevelEditor::Key::Redo;
+                            break;
+                        case SDL_SCANCODE_C:
+                            key = LevelEditor::Key::Copy;
+                            break;
+                        case SDL_SCANCODE_V:
+                            key = LevelEditor::Key::Paste;
+                            break;
+                        case SDL_SCANCODE_O:
+                            key = LevelEditor::Key::ObjectProps;
+                            break;
+                        case SDL_SCANCODE_R:
+                            key = LevelEditor::Key::Presets;
+                            break;
+                        case SDL_SCANCODE_F2:
+                            key = LevelEditor::Key::Save;
+                            break;
+                        case SDL_SCANCODE_F3:
+                            key = LevelEditor::Key::SaveAs;
+                            break;
+                        case SDL_SCANCODE_F4:
+                            key = LevelEditor::Key::LoadPick;
+                            break;
+                        case SDL_SCANCODE_F5:
+                            key = LevelEditor::Key::Playtest;
+                            break;
+                        case SDL_SCANCODE_F9:
+                            key = LevelEditor::Key::LoadSaved;
+                            break;
+                        case SDL_SCANCODE_I:
+                            key = LevelEditor::Key::Info;
+                            break;
+                        case SDL_SCANCODE_PAGEUP:
+                        case SDL_SCANCODE_LEFTBRACKET:
+                            key = LevelEditor::Key::PageUp;
+                            break;
+                        case SDL_SCANCODE_PAGEDOWN:
+                        case SDL_SCANCODE_RIGHTBRACKET:
+                            key = LevelEditor::Key::PageDown;
+                            break;
+                        case SDL_SCANCODE_RETURN:
+                        case SDL_SCANCODE_KP_ENTER:
+                        case SDL_SCANCODE_SPACE:
+                        case SDL_SCANCODE_KP_5:
+                            key = LevelEditor::Key::Confirm;
+                            break;
+                        case SDL_SCANCODE_BACKSPACE:
+                        case SDL_SCANCODE_DELETE:
+                            key = LevelEditor::Key::Erase;
+                            break;
+                        case SDL_SCANCODE_P:
+                            key = LevelEditor::Key::Pick;
+                            break;
+                        default:
+                            break;
+                    }
+                    if (key != LevelEditor::Key::None &&
+                        editor.handle_key(key, engine)) {
+                        leave_editor();
+                    }
+                    if (key == LevelEditor::Key::Playtest &&
+                        editor.playtest()) {
+                        playtest_hold_at = SDL_GetTicks();
+                        playtest_hold_armed = true;
+                    }
+                } else if (ev.type == SDL_MOUSEMOTION) {
+                    int fx = 0;
+                    int fy = 0;
+                    if (screen && screen->window_to_frame(
+                                      ev.motion.x, ev.motion.y, fx, fy)) {
+                        editor.set_mouse(fx, fy, engine);
+                    }
+                } else if (ev.type == SDL_MOUSEBUTTONDOWN ||
+                           ev.type == SDL_MOUSEBUTTONUP) {
+                    int fx = 0;
+                    int fy = 0;
+                    const bool inside =
+                        screen &&
+                        screen->window_to_frame(ev.button.x, ev.button.y, fx,
+                                                fy);
+                    const bool down = ev.type == SDL_MOUSEBUTTONDOWN;
+                    if (down) {
+                        if (inside) {
+                            SDL_CaptureMouse(SDL_TRUE);
+                        }
+                    } else {
+                        SDL_CaptureMouse(SDL_FALSE);
+                    }
+                    if (inside) {
+                        const Uint16 mod = SDL_GetModState();
+                        editor.mouse_button(
+                            ev.button.button, down, fx, fy,
+                            (mod & KMOD_SHIFT) != 0, (mod & KMOD_CTRL) != 0,
+                            engine);
+                        if (!editor.active()) {
+                            leave_editor();
+                        }
+                    } else if (!down) {
+                        // The button was released outside the visible frame:
+                        // stop dragging/painting without painting at (0,0).
+                        editor.release_mouse();
+                    }
+                } else if (ev.type == SDL_WINDOWEVENT) {
+                    if (ev.window.event == SDL_WINDOWEVENT_LEAVE ||
+                        ev.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+                        editor.release_mouse();
+                        SDL_CaptureMouse(SDL_FALSE);
+                    }
+                    if (ev.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+                        if (screen) {
+                            screen->set_mouse_grab(false);
+                        }
+                        editor_mouse_grabbed = false;
+                    }
+                    // Focus/hide transitions are where a key-up gets lost; the
+                    // latched key would otherwise keep the D-pad direction
+                    // held (kneel in game, auto-repeat pan in the editor).
+                    if (ev.window.event == SDL_WINDOWEVENT_FOCUS_LOST ||
+                        ev.window.event == SDL_WINDOWEVENT_FOCUS_GAINED ||
+                        ev.window.event == SDL_WINDOWEVENT_LEAVE ||
+                        ev.window.event == SDL_WINDOWEVENT_HIDDEN ||
+                        ev.window.event == SDL_WINDOWEVENT_MINIMIZED ||
+                        ev.window.event == SDL_WINDOWEVENT_RESTORED) {
+                        reset_held_keys();
+                    }
+#ifdef JILL_ANDROID
+                    // Hiding/minimising or losing focus can drop the pending
+                    // SDL_FINGERUP events, which used to leave the on-screen
+                    // pad held down after returning to the game.
+                    if (ev.window.event == SDL_WINDOWEVENT_LEAVE ||
+                        ev.window.event == SDL_WINDOWEVENT_FOCUS_LOST ||
+                        ev.window.event == SDL_WINDOWEVENT_HIDDEN ||
+                        ev.window.event == SDL_WINDOWEVENT_MINIMIZED ||
+                        ev.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
+                        touch_release_pending = true;
+                    }
+#endif
+                } else if (ev.type == SDL_MOUSEWHEEL) {
+                    editor.wheel(ev.wheel.y,
+                                 (SDL_GetModState() & KMOD_SHIFT) != 0);
+                } else if (ev.type == SDL_CONTROLLERBUTTONDOWN) {
+                    const int b = ev.cbutton.button;
+                    // Text entry is a grid driven by the D-pad; A presses the
+                    // highlighted key and B cancels the prompt.
+                    if (editor.text_input_active()) {
+                        LevelEditor::Key key = LevelEditor::Key::None;
+                        switch (b) {
+                            case SDL_CONTROLLER_BUTTON_DPAD_UP:
+                                key = LevelEditor::Key::Up;
+                                break;
+                            case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+                                key = LevelEditor::Key::Down;
+                                break;
+                            case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+                                key = LevelEditor::Key::Left;
+                                break;
+                            case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+                                key = LevelEditor::Key::Right;
+                                break;
+                            case SDL_CONTROLLER_BUTTON_A:
+                                key = LevelEditor::Key::Confirm;
+                                break;
+                            case SDL_CONTROLLER_BUTTON_B:
+                                key = LevelEditor::Key::Escape;
+                                break;
+                            case SDL_CONTROLLER_BUTTON_Y:
+                                editor.text_input_backspace();
+                                continue;
+                            default:
+                                break;
+                        }
+                        if (key != LevelEditor::Key::None) {
+                            editor.handle_key(key, engine);
+                        }
+                        continue;
+                    }
+                    LevelEditor::Key key = LevelEditor::Key::None;
+                    switch (b) {
+                        case SDL_CONTROLLER_BUTTON_A:
+                            key = LevelEditor::Key::Confirm;
+                            break;
+                        case SDL_CONTROLLER_BUTTON_X:
+                            key = LevelEditor::Key::Erase;
+                            break;
+                        case SDL_CONTROLLER_BUTTON_Y:
+                            key = LevelEditor::Key::Palette;
+                            break;
+                        case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
+                            key = LevelEditor::Key::ModePrev;
+                            break;
+                        case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
+                            key = LevelEditor::Key::ModeNext;
+                            break;
+                        case SDL_CONTROLLER_BUTTON_LEFTSTICK:
+                            key = LevelEditor::Key::Pick;
+                            break;
+                        case SDL_CONTROLLER_BUTTON_RIGHTSTICK:
+                            key = LevelEditor::Key::PaintMode;
+                            break;
+                        case SDL_CONTROLLER_BUTTON_BACK:
+                            key = LevelEditor::Key::Playtest;
+                            break;
+                        case SDL_CONTROLLER_BUTTON_START:
+                            key = LevelEditor::Key::Menu;
+                            break;
+                        case SDL_CONTROLLER_BUTTON_B:
+                            // Circle/B opens the selected object's properties;
+                            // with a panel open it closes that panel instead.
+                            key = editor.overlay_open()
+                                      ? LevelEditor::Key::Escape
+                                      : LevelEditor::Key::ObjectProps;
+                            break;
+                        default:
+                            break;
+                    }
+                    if (key != LevelEditor::Key::None &&
+                        editor.handle_key(key, engine)) {
+                        leave_editor();
+                    }
+                    if (key == LevelEditor::Key::Playtest &&
+                        editor.playtest()) {
+                        playtest_hold_at = SDL_GetTicks();
+                        playtest_hold_armed = true;
+                    }
+                } else if (ev.type == SDL_CONTROLLERDEVICEADDED ||
+                           ev.type == SDL_CONTROLLERDEVICEREMOVED ||
+                           ev.type == SDL_JOYDEVICEADDED ||
+                           ev.type == SDL_JOYDEVICEREMOVED) {
+                    consumed = false;
+                }
+                if (consumed) {
+                    continue;
+                }
+            } else if (editor.active() && editor.playtest()) {
+                bool consumed = false;
+                if (ev.type == SDL_KEYDOWN && !ev.key.repeat) {
+                    const SDL_Scancode sc = ev.key.keysym.scancode;
+                    if (sc == SDL_SCANCODE_F5) {
+                        editor.handle_key(LevelEditor::Key::Playtest, engine);
+                        consumed = true;
+                    } else if (sc == SDL_SCANCODE_ESCAPE) {
+                        editor.handle_key(LevelEditor::Key::Escape, engine);
+                        consumed = true;
+                    }
+                } else if (ev.type == SDL_CONTROLLERBUTTONDOWN) {
+                    const int b = ev.cbutton.button;
+                    if (b == SDL_CONTROLLER_BUTTON_B ||
+                        b == SDL_CONTROLLER_BUTTON_BACK ||
+                        b == SDL_CONTROLLER_BUTTON_START) {
+                        editor.handle_key(LevelEditor::Key::Escape, engine);
+                        consumed = true;
+                    }
+                }
+                if (consumed) {
+                    continue;
+                }
             } else if (score_entry.active &&
-                       (ev.type == SDL_KEYDOWN ||
+                       (ev.type == SDL_KEYDOWN || ev.type == SDL_TEXTINPUT ||
                         ev.type == SDL_CONTROLLERBUTTONDOWN)) {
                 bool commit = false;
                 bool use_default = false;
-                if (ev.type == SDL_KEYDOWN && !ev.key.repeat) {
+                auto append_name = [&](const char* text) {
+                    for (const char* p = text; p != nullptr && *p != '\0';
+                         ++p) {
+                        if (score_entry.name.size() >= 9) {
+                            break;
+                        }
+                        const unsigned char uc =
+                            static_cast<unsigned char>(*p);
+                        if (uc >= 32 && uc < 127) {
+                            char c = static_cast<char>(uc);
+                            if (c >= 'a' && c <= 'z') {
+                                c = static_cast<char>(c - 'a' + 'A');
+                            }
+                            score_entry.name.push_back(c);
+                        }
+                    }
+                };
+                if (ev.type == SDL_TEXTINPUT) {
+                    // Native text entry (Android soft keyboard, Vita IME,
+                    // desktop text input).
+                    append_name(ev.text.text);
+                } else if (ev.type == SDL_KEYDOWN && !ev.key.repeat) {
                     const SDL_Scancode sc = ev.key.keysym.scancode;
                     if (sc == SDL_SCANCODE_RETURN ||
                         sc == SDL_SCANCODE_KP_ENTER) {
@@ -4751,18 +5844,62 @@ int run_sdl(const Options& opt, Engine& engine,
                         }
                     } else {
                         const SDL_Keycode k = ev.key.keysym.sym;
-                        if (k >= 32 && k < 127 && score_entry.name.size() < 9) {
-                            char c = static_cast<char>(k);
-                            if (c >= 'a' && c <= 'z') {
-                                c = static_cast<char>(c - 'a' + 'A');
-                            }
-                            score_entry.name.push_back(c);
+#ifdef JILL_VITA
+                        // Vita physical keyboards report key events without a
+                        // text event; the IME reports SDL_TEXTINPUT.
+                        if (k >= 32 && k < 127) {
+                            const char tmp[2] = {static_cast<char>(k), 0};
+                            append_name(tmp);
                         }
+#else
+                        // Text-input platforms (desktop/Android) deliver the
+                        // character through SDL_TEXTINPUT.
+                        if (!SDL_IsTextInputActive() && k >= 32 && k < 127) {
+                            const char tmp[2] = {static_cast<char>(k), 0};
+                            append_name(tmp);
+                        }
+#endif
                     }
                 } else if (ev.type == SDL_CONTROLLERBUTTONDOWN) {
                     const int b = ev.cbutton.button;
-                    if (b == SDL_CONTROLLER_BUTTON_A ||
-                        b == SDL_CONTROLLER_BUTTON_START) {
+                    if (score_keyboard.active()) {
+                        switch (b) {
+                            case SDL_CONTROLLER_BUTTON_DPAD_UP:
+                                score_keyboard.move(0, -1);
+                                break;
+                            case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+                                score_keyboard.move(0, 1);
+                                break;
+                            case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+                                score_keyboard.move(-1, 0);
+                                break;
+                            case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+                                score_keyboard.move(1, 0);
+                                break;
+                            case SDL_CONTROLLER_BUTTON_A:
+                                if (score_keyboard.press()) {
+                                    if (score_keyboard.cancelled()) {
+                                        use_default = true;
+                                    } else {
+                                        commit = true;
+                                    }
+                                }
+                                break;
+                            case SDL_CONTROLLER_BUTTON_Y:
+                                score_keyboard.backspace();
+                                break;
+                            case SDL_CONTROLLER_BUTTON_START:
+                                commit = true;
+                                break;
+                            case SDL_CONTROLLER_BUTTON_B:
+                            case SDL_CONTROLLER_BUTTON_BACK:
+                                use_default = true;
+                                break;
+                            default:
+                                break;
+                        }
+                    } else if (b == SDL_CONTROLLER_BUTTON_A ||
+                               b == SDL_CONTROLLER_BUTTON_START) {
                         commit = true;
                     } else if (b == SDL_CONTROLLER_BUTTON_B ||
                                b == SDL_CONTROLLER_BUTTON_BACK) {
@@ -4770,6 +5907,7 @@ int run_sdl(const Options& opt, Engine& engine,
                     }
                 }
                 if (commit || use_default) {
+                    score_keyboard.close();
                     if (use_default) {
                         score_entry.name.clear();
                     }
@@ -4854,6 +5992,27 @@ int run_sdl(const Options& opt, Engine& engine,
                         noisemaker_engine.reset();
                         menu.screen = MenuScreen::Main;
                         menu.main_sel = 6;
+                    } else if (b == SDL_CONTROLLER_BUTTON_A) {
+                        const char ch = noisemaker_keyboard.selected_char();
+                        const int slot =
+                            ch != '\0' ? noisemaker_slot_char(ch) : 0;
+                        if (slot > 0) {
+                            music_player.play_sfx_sample(6, slot);
+                        } else if (noisemaker_keyboard.selected_action() ==
+                                   TextKeyboard::Action::Cancel) {
+                            restore_game_sfx();
+                            noisemaker_engine.reset();
+                            menu.screen = MenuScreen::Main;
+                            menu.main_sel = 6;
+                        }
+                    } else if (b == SDL_CONTROLLER_BUTTON_DPAD_UP) {
+                        noisemaker_keyboard.move(0, -1);
+                    } else if (b == SDL_CONTROLLER_BUTTON_DPAD_DOWN) {
+                        noisemaker_keyboard.move(0, 1);
+                    } else if (b == SDL_CONTROLLER_BUTTON_DPAD_LEFT) {
+                        noisemaker_keyboard.move(-1, 0);
+                    } else if (b == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) {
+                        noisemaker_keyboard.move(1, 0);
                     }
                     continue;
                 }
@@ -5093,8 +6252,26 @@ int run_sdl(const Options& opt, Engine& engine,
 
 #ifdef JILL_ANDROID
         {
+            if (touch_release_pending) {
+                // Drop any finger whose FINGERUP was lost with the focus, then
+                // let the emit below push the matching button-up events.
+                touch_release_pending = false;
+                touch::release_all();
+            }
             touch::State touch_now;
-            touch::update(*screen, touch_now);
+            if (touch_layout_open) {
+                // Drag mode: the fingers position the overlay; no synthetic
+                // pad events (DONE/RESET are handled inside edit_update).
+                if (!touch::edit_update(*screen)) {
+                    finish_touch_layout();
+                }
+            } else if (editor.active() && !editor.playtest()) {
+                // The editor draws its own toolbar and consumes its finger
+                // events, so hide/release the gameplay pad.
+                touch_now = touch::State{};
+            } else {
+                touch::update(*screen, touch_now);
+            }
             touch::emit(touch_prev, touch_now);
             touch::publish(touch_now);
             touch_prev = touch_now;
@@ -5106,12 +6283,192 @@ int run_sdl(const Options& opt, Engine& engine,
         if (!keys) {
             keys = kNoKeys;  // PS4 has no keyboard subsystem
         }
+        if (playtest_hold_armed) {
+            if (!editor.active() || !editor.playtest()) {
+                playtest_hold_armed = false;
+            } else {
+                bool held = keys[SDL_SCANCODE_F5] != 0;
+                if (!held && controller) {
+                    held = SDL_GameControllerGetButton(
+                               controller, SDL_CONTROLLER_BUTTON_BACK) != 0;
+                }
+#ifdef JILL_PS4
+                if (!held) {
+                    held = g_ps4_pad.touch;
+                }
+#endif
+                if (!held) {
+                    playtest_hold_armed = false;
+                } else if (SDL_GetTicks() - playtest_hold_at >= 600) {
+                    // Keep holding: restart the playtest from the board spawn.
+                    editor.stop_playtest(engine);
+                    editor.start_playtest(engine);
+                    playtest_hold_armed = false;
+                }
+            }
+        }
         if (!engine.text_page_open()) {
             page_axis_y = 0;
         }
-        const bool paused = splash_active || select.open || menu_open(menu) ||
-                            engine.text_page_open() || ending.active ||
-                            score_entry.active;
+        {
+            // Hold the pointer inside the window while the editor is being
+            // used; playtest gives the mouse back.
+            const bool want_grab = editor.active() && !editor.playtest();
+            if (want_grab != editor_mouse_grabbed) {
+                if (screen) {
+                    screen->set_mouse_grab(want_grab);
+                }
+                if (!want_grab) {
+                    SDL_CaptureMouse(SDL_FALSE);
+                }
+                editor_mouse_grabbed = want_grab;
+            }
+            if (want_grab && screen) {
+                screen->refresh_mouse_rect();
+            }
+        }
+        if (editor.active() && !editor.playtest() && editor.touch_controls() &&
+            screen) {
+            int tx = 0;
+            int ty = 0;
+            bool down = false;
+            if (screen->poll_touch(tx, ty, down)) {
+                if (down && !native_touch_down) {
+                    editor.touch_down(tx, ty, engine);
+                } else if (down && native_touch_down &&
+                           (tx != native_touch_x || ty != native_touch_y)) {
+                    editor.touch_move(tx, ty, engine);
+                } else if (!down && native_touch_down) {
+                    editor.touch_up(engine);
+                }
+                native_touch_down = down;
+                native_touch_x = tx;
+                native_touch_y = ty;
+            }
+        }
+        if (editor.active() && !editor.playtest()) {
+            // WASD pans the board; arrows drive the cell cursor (see the key
+            // event handler above).
+            const int dx = keys[SDL_SCANCODE_A] ? -1
+                           : (keys[SDL_SCANCODE_D] ? 1 : 0);
+            const int dy = keys[SDL_SCANCODE_W] ? -1
+                           : (keys[SDL_SCANCODE_S] ? 1 : 0);
+            if (dx != 0 || dy != 0) {
+                editor.pan(dx * 4, dy * 4);
+            }
+
+            // Gamepad: left stick/D-pad navigates the cursor or an open panel,
+            // right stick pans the board.  The repeat timer gives D-pad-style
+            // stepping while a direction is held.
+            int cdx = 0;
+            int cdy = 0;
+            int pdx = 0;
+            int pdy = 0;
+            const int pad_dz = menu.deadzone * 32767 / 100;
+            if (controller) {
+                const int ax = SDL_GameControllerGetAxis(
+                    controller, SDL_CONTROLLER_AXIS_LEFTX);
+                const int ay = SDL_GameControllerGetAxis(
+                    controller, SDL_CONTROLLER_AXIS_LEFTY);
+                const int rx = SDL_GameControllerGetAxis(
+                    controller, SDL_CONTROLLER_AXIS_RIGHTX);
+                const int ry = SDL_GameControllerGetAxis(
+                    controller, SDL_CONTROLLER_AXIS_RIGHTY);
+                if (ax < -pad_dz) --cdx;
+                else if (ax > pad_dz) ++cdx;
+                if (ay < -pad_dz) --cdy;
+                else if (ay > pad_dz) ++cdy;
+                if (SDL_GameControllerGetButton(
+                        controller, SDL_CONTROLLER_BUTTON_DPAD_LEFT)) --cdx;
+                if (SDL_GameControllerGetButton(
+                        controller, SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) ++cdx;
+                if (SDL_GameControllerGetButton(
+                        controller, SDL_CONTROLLER_BUTTON_DPAD_UP)) --cdy;
+                if (SDL_GameControllerGetButton(
+                        controller, SDL_CONTROLLER_BUTTON_DPAD_DOWN)) ++cdy;
+                if (!editor.overlay_open()) {
+                    if (rx < -pad_dz) --pdx;
+                    else if (rx > pad_dz) ++pdx;
+                    if (ry < -pad_dz) --pdy;
+                    else if (ry > pad_dz) ++pdy;
+                }
+            } else if (joystick) {
+                const int ax = SDL_JoystickGetAxis(joystick, 0);
+                const int ay = SDL_JoystickGetAxis(joystick, 1);
+                if (ax < -pad_dz) --cdx;
+                else if (ax > pad_dz) ++cdx;
+                if (ay < -pad_dz) --cdy;
+                else if (ay > pad_dz) ++cdy;
+                const Uint8 hat = SDL_JoystickGetHat(joystick, 0);
+                if (hat & SDL_HAT_LEFT) --cdx;
+                if (hat & SDL_HAT_RIGHT) ++cdx;
+                if (hat & SDL_HAT_UP) --cdy;
+                if (hat & SDL_HAT_DOWN) ++cdy;
+                if (!editor.overlay_open() && SDL_JoystickNumAxes(joystick) >= 4) {
+                    const int rx = SDL_JoystickGetAxis(joystick, 2);
+                    const int ry = SDL_JoystickGetAxis(joystick, 3);
+                    if (rx < -pad_dz) --pdx;
+                    else if (rx > pad_dz) ++pdx;
+                    if (ry < -pad_dz) --pdy;
+                    else if (ry > pad_dz) ++pdy;
+                }
+            }
+#ifdef JILL_PS4
+            {
+                const float dzf =
+                    static_cast<float>(menu.deadzone) / 100.0f;
+                if (g_ps4_pad.left || g_ps4_pad.stick_x < -dzf) --cdx;
+                if (g_ps4_pad.right || g_ps4_pad.stick_x > dzf) ++cdx;
+                if (g_ps4_pad.up || g_ps4_pad.stick_y < -dzf) --cdy;
+                if (g_ps4_pad.down || g_ps4_pad.stick_y > dzf) ++cdy;
+                if (!editor.overlay_open()) {
+                    if (g_ps4_pad.right_stick_x < -dzf) --pdx;
+                    else if (g_ps4_pad.right_stick_x > dzf) ++pdx;
+                    if (g_ps4_pad.right_stick_y < -dzf) --pdy;
+                    else if (g_ps4_pad.right_stick_y > dzf) ++pdy;
+                }
+            }
+#endif
+            if (pdx != 0 || pdy != 0) {
+                editor.pan(pdx * 8, pdy * 8);
+            }
+            cdx = cdx < -1 ? -1 : (cdx > 1 ? 1 : cdx);
+            cdy = cdy < -1 ? -1 : (cdy > 1 ? 1 : cdy);
+            const uint32_t pad_now = SDL_GetTicks();
+            if (cdx != 0 || cdy != 0) {
+                if (cdx != editor_pad_dx || cdy != editor_pad_dy) {
+                    editor.navigate(cdx, cdy, engine);
+                    editor_pad_dx = cdx;
+                    editor_pad_dy = cdy;
+                    editor_pad_next = pad_now + 220;
+                } else if (pad_now >= editor_pad_next) {
+                    editor.navigate(cdx, cdy, engine);
+                    editor_pad_next = pad_now + 90;
+                }
+            } else {
+                editor_pad_dx = 0;
+                editor_pad_dy = 0;
+            }
+        }
+        bool paused = splash_active || select.open || menu_open(menu) ||
+                      engine.text_page_open() || ending.active ||
+                      score_entry.active ||
+                      (editor.active() && !editor.playtest());
+#ifdef JILL_ANDROID
+        paused = paused || touch_layout_open;
+#endif
+        // Every modal transition is a chance for a key-up to be swallowed by
+        // the other surface (a menu page, the editor, the IME), which leaves a
+        // direction latched: Jill keeps kneeling and the editor pans by itself.
+        // Drop the latched keys on each transition; a key that is really still
+        // held re-registers on its next event.
+        {
+            static bool last_paused = false;
+            if (paused != last_paused) {
+                reset_held_keys();
+                last_paused = paused;
+            }
+        }
 #ifdef JILL_VITA
         {
             static bool last_paused = false;
@@ -5260,6 +6617,13 @@ int run_sdl(const Options& opt, Engine& engine,
                 (!paused && video.interpolate && video.high_fps > 0)
                     ? static_cast<float>(accumulator / step)
                     : 1.0f;
+            if (editor.active()) {
+                editor.render(fb, engine, alpha);
+                if (menu_open(menu)) {
+                    draw_menu(fb, engine, menu, game_started, video, bindings,
+                              theme_backdrop, games, music_player, ext_assets);
+                }
+            } else {
             // Menus, the level-select panel and the save-name prompt are 2D
             // overlays; render them on the normal frame instead of splitting
             // them across the eyes.
@@ -5303,13 +6667,30 @@ int run_sdl(const Options& opt, Engine& engine,
             } else if (menu.screen == MenuScreen::Noisemaker && noisemaker_engine) {
                 noisemaker_engine->render_at(fb, noisemaker_cam_x,
                                              noisemaker_cam_y, false);
+                // Controller grid over the page's keyboard art: D-pad picks a
+                // key, A plays its raw sample (same slot order as the PC keys).
+                if (textkey::pad_noisemaker() && noisemaker_keyboard.active()) {
+                    fb.fill_rect(8, 100, 304, 98, 0);
+                    fb.fill_rect(8, 100, 304, 1, 8);
+                    fb.fill_rect(8, 197, 304, 1, 8);
+                    engine.draw_text(fb, 12, 102, 15,
+                                     "NOISE KEYBOARD  A PLAY  B BACK");
+                    noisemaker_keyboard.draw(fb, engine, 16, 114);
+                }
             } else if (menu_open(menu)) {
                 draw_menu(fb, engine, menu, game_started, video, bindings,
                           theme_backdrop, games, music_player, ext_assets);
             }
+            }
         }
+#ifdef JILL_ANDROID
+        if (touch_layout_open) {
+            draw_touch_layout_bar(fb, engine);
+        }
+#endif
         if (score_entry.active) {
-            draw_hiscore_entry(fb, engine, score_entry);
+            draw_hiscore_entry(fb, engine, score_entry,
+                               &score_keyboard);
         }
         if (video.fps_counter) {
             draw_fps_counter(fb, engine, fps_display);
@@ -5327,13 +6708,7 @@ int run_sdl(const Options& opt, Engine& engine,
         } else if (splash_active && splash_image.palette_ready) {
             out_pal = splash_image.palette;
         }
-        for (size_t i = 0; i < fb.px.size(); ++i) {
-            const uint8_t c = fb.px[i];
-            const uint32_t r = out_pal[c * 3 + 0];
-            const uint32_t g = out_pal[c * 3 + 1];
-            const uint32_t b = out_pal[c * 3 + 2];
-            argb[i] = 0xFF000000u | (r << 16) | (g << 8) | b;
-        }
+        expand_palette(out_pal, fb.px, argb, screen->native_frame_order_bgr());
         if (video.filter == 1) {
             filter_smooth(argb, Framebuffer::W, Framebuffer::H);
         } else if (video.filter == 2) {
@@ -5341,9 +6716,15 @@ int run_sdl(const Options& opt, Engine& engine,
         }
 #ifdef JILL_ANDROID
         // On-screen controls are an overlay on the presented frame, so they
-        // scale with the game and line up with the touch hit-testing.
-        touch::draw(argb.data(), Framebuffer::W, Framebuffer::H,
-                    touch::current());
+        // scale with the game and line up with the touch hit-testing.  The
+        // editor has its own toolbar instead.
+        if (touch_layout_open) {
+            // Calibration: every button gets a highlight and can be dragged.
+            touch::draw_editor(argb.data(), Framebuffer::W, Framebuffer::H);
+        } else if (!(editor.active() && !editor.playtest())) {
+            touch::draw(argb.data(), Framebuffer::W, Framebuffer::H,
+                        touch::current());
+        }
 #endif
 #ifdef JILL_PS4
         // First-frame diagnostic: prove whether the game frame itself is black
@@ -5482,23 +6863,42 @@ int run_sdl(const Options& opt, Engine& engine,
             }
         }
 #else
-        const double spent =
-            static_cast<double>(SDL_GetPerformanceCounter() - frame_start) / freq;
-        const double remain = present_time - spent;
-        if (remain >= 0.001) {
-            const double remain_ms = remain * 1000.0;
-            if (remain_ms > 1.0) {
-                SDL_Delay(static_cast<Uint32>(remain_ms - 0.5));
-            }
-            // Coarse sleep, then a short spin so SDL_Delay's millisecond
-            // quantisation does not drag the rate below the chosen value.
-            while (static_cast<double>(
-                       SDL_GetPerformanceCounter() - frame_start) /
-                       freq < present_time) {
+        // Vita: present() blocks on the panel's vblank (presents_synced), so
+        // its cadence already matches the display.  Sleeping here as well
+        // would let the software timer drift against the panel and produce
+        // the occasional dropped/duplicated frame.  The low-rate "HIGH
+        // FRAMERATE OFF" mode still uses the timer to save power.
+        if (!screen->presents_synced() || present_hz < 55.0) {
+            const double spent =
+                static_cast<double>(SDL_GetPerformanceCounter() - frame_start) /
+                freq;
+            const double remain = present_time - spent;
+            if (remain >= 0.001) {
+                const double remain_ms = remain * 1000.0;
+                if (remain_ms > 1.0) {
+                    SDL_Delay(static_cast<Uint32>(remain_ms - 0.5));
+                }
+                // Coarse sleep, then a short spin so SDL_Delay's millisecond
+                // quantisation does not drag the rate below the chosen value.
+                while (static_cast<double>(
+                           SDL_GetPerformanceCounter() - frame_start) /
+                           freq < present_time) {
+                }
             }
         }
 #endif
     }
+
+#ifdef JILL_PS4
+    if (opt.ps4_quit_raw) {
+        // Diagnostic only ([debug] quit_raw = 1 in jill.ini): stop right after
+        // the loop, with every device still open.  If the console still reports
+        // CE-34878-0 the fault is not in our teardown.
+        jill_paths::trace("startup: raw exit (diagnostic, no teardown)");
+        ps4_request_quit();
+        return 0;
+    }
+#endif
 
     if (opt.save_slot >= 0) {
         std::string save_err;
@@ -5532,6 +6932,7 @@ int run_sdl(const Options& opt, Engine& engine,
         ini.set_bool("video", "interpolate", video.interpolate);
         ini.set_bool("video", "fps_counter", video.fps_counter);
         ini.set_int("video", "filter", video.filter);
+        ini.set_int("video", "scaler", video.scaler);
         ini.set_bool("audio", "music", menu.music_on);
         ini.set_int("audio", "volume", menu.music_volume);
         ini.set_bool("audio", "sfx", menu.sfx_on);
@@ -5540,6 +6941,7 @@ int run_sdl(const Options& opt, Engine& engine,
         ini.set_int("audio", "midi_device", music_player.midi_device());
         ini.set_int("audio", "opl_core", music_player.opl_core());
         ini.set_bool("hud", "classic", engine.hud_classic());
+        ini.set_bool("hud", "hidden", engine.hud_hidden());
         ini.set_bool("hud", "portrait", engine.hud_portrait());
         ini.set_int("hud", "frame", menu.hud_frame);
         ini.set("hud", "panel", engine.hud_panel());
@@ -5566,12 +6968,15 @@ int run_sdl(const Options& opt, Engine& engine,
         ini.set_bool("gameplay", "fast_dialogs", engine.fast_dialogs());
         ini.set_bool("gameplay", "air_jump_buffer", engine.air_jump_buffer());
         ini.set_bool("gameplay", "minimap", engine.minimap());
+        ini.set_bool("editor", "pad_text", textkey::pad_keyboard_enabled());
         ini.set_bool("gameplay", "animated_water", engine.animated_water());
         ini.set_bool("gameplay", "center_fish_shot", engine.center_fish_shot());
         ini.set_int("gameplay", "respawn_mode", engine.respawn_mode());
         ini.set_bool("gameplay", "phoenix_water_death",
                      engine.phoenix_water_death());
         ini.set_bool("gameplay", "throw_from_vines", engine.throw_from_vines());
+        ini.set_bool("gameplay", "hud_flash", engine.hud_damage_flash());
+        ini.set_bool("gameplay", "jill_flash", engine.jill_damage_flash());
         ini.set_bool("gameplay", "turtle", engine.turtle());
         ini.set_int("gameplay", "player_look", engine.player_look());
         ini.set_int("gameplay", "player_suit", engine.player_suit());
@@ -5580,6 +6985,9 @@ int run_sdl(const Options& opt, Engine& engine,
         ini.set("menus", "font", engine.font_name());
         ini.set_int("menus", "scale", menu.menu_scale);
         ini.set_int("menus", "font_scale", menu.menu_font_scale);
+#ifdef JILL_ANDROID
+        touch::save_ini(ini);
+#endif
         ini.set_int("hud", "font_scale", engine.hud_font_scale());
         game_bindings[bindings_game] = bindings;
         ini.set_int("controls", "deadzone", menu.deadzone);
@@ -5595,12 +7003,25 @@ int run_sdl(const Options& opt, Engine& engine,
         ini.save(jill_paths::resolve("jill.ini"));
     }
 
+    // PS4: stop the audio device before the display is handed back to the
+    // system.  The mixer thread's buffers must not be live while the videoout
+    // port is being torn down.
+#ifdef JILL_PS4
+    music_player.close();
+    jill_paths::trace("shutdown: audio closed");
+#endif
     close_pads();
 #ifdef JILL_PS4
     ps4_pad_shutdown();
 #endif
     jill_paths::trace("shutdown: closing display");
     screen->shutdown();
+#ifdef JILL_PS4
+    // Quit SDL explicitly while the display/audio objects still exist.  The
+    // atexit(SDL_Quit) handler then runs on a clean, already-shut-down SDL.
+    SDL_Quit();
+    jill_paths::trace("shutdown: SDL quit");
+#endif
     jill_paths::trace("startup: main loop exited");
     return 0;
 }
@@ -5782,6 +7203,7 @@ int run_app(const Options& opt) {
     // Display/dialog options first: load_board derives the caption timing from
     // the dialog speed.
     engine.set_hud_classic(opt.hud_classic);
+    engine.set_hud_hidden(opt.hud_hidden);
     engine.set_hud_portrait(opt.hud_portrait);
     engine.set_invincible(opt.invincible);
     engine.set_super_jump(opt.super_jump);
@@ -5809,6 +7231,8 @@ int run_app(const Options& opt) {
     engine.set_hud_layout(run_opt.hud_layout);
     engine.set_font_name(run_opt.menu_font);
     engine.set_turtle(run_opt.turtle);
+    engine.set_hud_damage_flash(opt.hud_damage_flash);
+    engine.set_jill_damage_flash(opt.jill_damage_flash);
     jill_paths::trace("startup: options applied");
     // External art (pack + autoload) must be mounted before the menu border
     // selection is resolved; headless --dump then uses the same overrides.
@@ -5921,3 +7345,4 @@ int run_app(const Options& opt) {
     return 3;
 #endif
 }
+

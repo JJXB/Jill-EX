@@ -1,6 +1,7 @@
 #include "ps4_pad.h"
 
 #include <orbis/Pad.h>
+#include <orbis/SystemService.h>
 #include <orbis/UserService.h>
 
 #include <cstdint>
@@ -11,12 +12,20 @@ namespace {
 
 int32_t g_handle = -1;
 bool g_initialised = false;
+// sceUserServiceInitialize is reference-counted; call it once and release it on
+// shutdown so no user-service client outlives the process.
+bool g_user_service = false;
+bool g_user_service_done = false;
 unsigned g_retry = 0;
 bool g_read_error_logged = false;
 
 int32_t open_pad() {
     int32_t user = 1000;  // shadPS4 and most consoles use user 1000.
-    if (sceUserServiceInitialize(nullptr) == 0) {
+    if (!g_user_service_done) {
+        g_user_service_done = true;
+        g_user_service = sceUserServiceInitialize(nullptr) == 0;
+    }
+    if (g_user_service) {
         int32_t initial = -1;
         if (sceUserServiceGetInitialUser(&initial) == 0 && initial >= 0) {
             user = initial;
@@ -86,6 +95,8 @@ void ps4_pad_poll(Ps4PadState& out) {
     // Sticks report 0..255 with 128 centred.
     out.stick_x = (static_cast<int>(data.leftStick.x) - 128) / 127.0f;
     out.stick_y = (static_cast<int>(data.leftStick.y) - 128) / 127.0f;
+    out.right_stick_x = (static_cast<int>(data.rightStick.x) - 128) / 127.0f;
+    out.right_stick_y = (static_cast<int>(data.rightStick.y) - 128) / 127.0f;
 }
 
 void ps4_pad_shutdown() {
@@ -94,4 +105,18 @@ void ps4_pad_shutdown() {
         g_handle = -1;
         jill_paths::trace("pad: close rc=0x%x", rc);
     }
+    if (g_user_service) {
+        g_user_service = false;
+        const int32_t rc = sceUserServiceTerminate();
+        jill_paths::trace("pad: user service terminate rc=0x%x", rc);
+    }
+}
+
+void ps4_request_quit() {
+    // Other retail homebrew (M33/PPSSPP) exits through the system service's
+    // LoadExec path with the special "exit" target.  A plain _exit() or a
+    // KillApp request does not run the loader's guest-shutdown handshake and
+    // leaves the console reporting CE-34878-0.
+    const int32_t rc = sceSystemServiceLoadExec("exit", nullptr);
+    jill_paths::trace("quit: sceSystemServiceLoadExec(exit) rc=0x%x", rc);
 }

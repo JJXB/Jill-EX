@@ -7,6 +7,8 @@ rem This script is independent of build.cmd/build32.cmd: it never touches the
 rem desktop CMake build or its outputs.  It produces
 rem   port\ps4\build\eboot.bin
 rem   port\ps4\build\<CONTENT_ID>.pkg   (fake-signed installable package)
+rem   Releases\<CONTENT_ID>.pkg          the same package, in the git root
+rem   Releases\JillEX-PS4-Data.zip        companion data for /data/JillEX
 rem and copies the default jill.ini template beside them.
 rem
 rem Usage:  build_ps4.cmd            compile + link + eboot + pkg
@@ -16,6 +18,7 @@ rem         build_ps4.cmd clean      remove port\ps4\build
 set ROOT=%~dp0
 set PORT=%ROOT%port
 set OUT=%PORT%\ps4\build
+set "RELEASES=%ROOT%Releases"
 set BUILD_PKG=1
 if /I "%~1"=="nopkg" set BUILD_PKG=0
 
@@ -89,7 +92,12 @@ rem --- link ----------------------------------------------------------------
 set OBJS=
 for %%f in ("%OUT%\*.o") do set OBJS=!OBJS! "%%~ff"
 
-set LIBS=-lc -lkernel -lc++ -lSDL2 -lScePigletv2VSH -lScePrecompiledShaders -lSceSysmodule -lSceSystemService -lSceUserService -lSceAudioOut -lScePad -lSceVideoOut -lSceShellCoreUtil -lSceRtc
+rem Every -l here becomes a DT_NEEDED entry, so libkernel loads (and unloads)
+rem that module in the process.  Only list modules the binary really uses:
+rem SceShellCoreUtil and SceRtc used to be linked without a single reference.
+rem Piglet/PrecompiledShaders/Sysmodule/SystemService are still needed by the
+rem GL backend and by SDL2's PS4 video driver.
+set LIBS=-lc -lkernel -lc++ -lSDL2 -lScePigletv2VSH -lScePrecompiledShaders -lSceSysmodule -lSceSystemService -lSceUserService -lSceAudioOut -lScePad -lSceVideoOut
 
 echo [ld ] jill.elf
 ld.lld -m elf_x86_64 -pie --script "%TC%\link.x" --eh-frame-hdr -o "%OUT%\jill.elf" "-L%TC%\lib" %LIBS% "%TC%\lib\crt1.o" %OBJS%
@@ -120,9 +128,11 @@ if exist "%OUT%\JillEX-PS4-Data.zip" del /q "%OUT%\JillEX-PS4-Data.zip"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -Path '%DATADIR%\*' -DestinationPath '%OUT%\JillEX-PS4-Data.zip' -Force"
 if errorlevel 1 goto :fail
 rmdir /s /q "%DATADIR%"
-copy /y "%OUT%\JillEX-PS4-Data.zip" "%ROOT%" >nul
+if not exist "%RELEASES%" mkdir "%RELEASES%"
 if errorlevel 1 goto :fail
-echo Built %OUT%\JillEX-PS4-Data.zip (copy at %ROOT%JillEX-PS4-Data.zip)
+copy /y "%OUT%\JillEX-PS4-Data.zip" "%RELEASES%\JillEX-PS4-Data.zip" >nul
+if errorlevel 1 goto :fail
+echo Built %OUT%\JillEX-PS4-Data.zip (copy at %RELEASES%\JillEX-PS4-Data.zip)
 
 rem --- package (fake-signed .pkg) -------------------------------------------
 if "%BUILD_PKG%"=="0" (
@@ -207,13 +217,13 @@ popd
 
 copy /y "%PKGDIR%\%PKG_CONTENT_ID%.pkg" "%OUT%\" >nul
 if errorlevel 1 goto :fail
-copy /y "%PKGDIR%\%PKG_CONTENT_ID%.pkg" "%ROOT%" >nul
+copy /y "%PKGDIR%\%PKG_CONTENT_ID%.pkg" "%RELEASES%\%PKG_CONTENT_ID%.pkg" >nul
 if errorlevel 1 goto :fail
 
 :done
 echo.
 echo Built %OUT%\eboot.bin
-if "%BUILD_PKG%"=="1" echo Built %OUT%\%PKG_CONTENT_ID%.pkg (copy at %ROOT%%PKG_CONTENT_ID%.pkg)
+if "%BUILD_PKG%"=="1" echo Built %OUT%\%PKG_CONTENT_ID%.pkg (copy at %RELEASES%\%PKG_CONTENT_ID%.pkg)
 echo.
 echo Installing:
 echo   - PKG: install %PKG_CONTENT_ID%.pkg on the console (GoldHEN/debug settings).

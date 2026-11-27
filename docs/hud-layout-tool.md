@@ -180,6 +180,7 @@ Save the layout and copy the `.hudlayout` into `external\autoload\` (or
 external layer is scanned, then choose it in **OPTIONS > HUD > LAYOUT**
 (switch **STYLE** to CLASSIC first).  The selection is stored as
 `[hud] layout = <file stem>` and can be started with `--hud-layout <stem>`.
+Names are matched case-insensitively.
 
 The port draws the layout's frame tiles with the **running game's** shape
 bank; the `sha` paths in the file are only used by the editor, so the layout is

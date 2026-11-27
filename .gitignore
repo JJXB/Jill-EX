@@ -1,14 +1,8 @@
-# PS4 build artifacts copied to the repository root for quick transfer to
-# the console (see build_ps4.cmd).  Remove these lines if you want to commit
-# release builds to the repository.
-/IV0000-BREW00199_00-JILLEXPS40000000.pkg
-/JillEX-data.zip
-/JillEX-PS4-Data.zip
-/JillEX-Xbox.zip
+# Final release artifacts: every build_*.cmd copies its distributable output
+# here (zip/vpk/pkg/apk) for quick transfer to a console or device.  Remove the
+# /Releases/ line if you want to commit release builds to the repository.
+/Releases/
 /port/xbox/build/
-#PC Builds
-/Jill-EX-release-x86.zip
-/Jill-EX-release-x64.zip
 
 # Reverse-engineering artifacts derived from the original game binaries.
 # They are kept locally for development but must not be redistributed:
@@ -33,12 +27,11 @@
 # Screenshot/render of the game with the original artwork.
 /hiscores_panel.png
 
-# Android build output, machine-specific SDK paths, staged assets and the APK
-# copied to the repository root for quick sideloading (see build_android.cmd).
+# Android build output, machine-specific SDK paths and staged assets.  The APK
+# is copied to Releases/ (see build_android.cmd).
 /port/android/.gradle/
 /port/android/build/
 /port/android/app/build/
 /port/android/app/.cxx/
 /port/android/local.properties
 /port/android/app/src/main/assets/
-/JillEX-android.apk

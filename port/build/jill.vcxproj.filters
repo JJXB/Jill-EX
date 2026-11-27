@@ -10,6 +10,12 @@
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\engine.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\editor.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\textkey.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="C:\Users\jjxb_\GIT\Jill-EX\port\src\macro.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

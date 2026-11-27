@@ -57,7 +57,7 @@ Outputs:
 | File | What it is |
 | --- | --- |
 | `port/android/app/build/outputs/apk/debug/app-debug.apk` | installable debug APK |
-| `JillEX-android.apk` | the same APK copied to the repository root (git-ignored) |
+| `Releases/JillEX-android.apk` | the same APK copied to the git-root `Releases/` (git-ignored) |
 
 The script stages `jill.ini`, `games/*.game`, `profiles/*.profile|*.pal`,
 `README.txt` and `DISCLAIMER.txt` into `app/src/main/assets/` before Gradle
@@ -131,6 +131,15 @@ driver and any native signal (`fatal: native signal N`).
   at the top corners.  It is drawn into the 320x200 ARGB frame and hit-tested
   through `Screen::touch_to_frame()`, so it scales and letterboxes exactly with
   the game.
+* The positions are adjustable: **OPTIONS > TOUCH CONTROLS** puts the overlay
+  into drag mode (grab any button, move it; RESET restores the defaults; DONE
+  or pad A/B saves).  Positions are stored in `jill.ini` under `[touch]`, as
+  centres in 320x200 frame pixels.
+* SDL's renderer already maps finger/mouse events into the logical 320x200
+  space once `SDL_RenderSetLogicalSize` is active; `touch_to_frame()` must not
+  letterbox them a second time.  It previously did, which pushed the hit zones
+  away from the drawn buttons on phones (tall 20:9 screens) while 16:10
+  tablets happened to line up.
 * Touch buttons feed `poll_input()` directly for gameplay and synthesise
   `SDL_CONTROLLERBUTTONDOWN/UP` events for the existing menu, pause, text-page
   and demo code.

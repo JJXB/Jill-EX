@@ -68,7 +68,9 @@
 
 &#x20;  The executable is written to `port\\build\\Release\\jill.exe` (with
 
-&#x20;  `SDL2.dll` beside it).
+&#x20;  `SDL2.dll` beside it), and the same command stages and zips the
+
+&#x20;  distributable package as `Releases\\Jill-EX-release-x64.zip`.
 
 5\. Run:
 
@@ -129,10 +131,11 @@ cmd /c tools\build_demo_studio.cmd       REM x64  -> tools\demo_studio\build\jil
 cmd /c tools\build_demo_studio32.cmd     REM Win32 -> tools\demo_studio\build32\jill_demo_studio.exe
 ```
 
-`make_release.cmd` and `make_release_32.cmd` build and copy the matching studio
-executable into `Jill-EX-release-x64.zip` / `Jill-EX-release-x86.zip`.  It uses
+`build.cmd` and `build32.cmd` build and copy the matching studio
+executable into `Releases\Jill-EX-release-x64.zip` / `Releases\Jill-EX-release-x86.zip`.  It uses
 the same `SDL2.dll`, `games/`, `profiles/` and `jill.ini` as the game.  See
-`docs\demo-studio.md`.
+`docs\demo-studio.md`.  (`make_release.cmd` / `make_release_32.cmd` remain as
+thin wrappers that just run the matching build script.)
 
 ### PS4 build (OpenOrbis)
 
@@ -159,7 +162,7 @@ This produces both:
   `profiles/` and a README; extract its contents into `/data/JillEX`)
 
 For convenience the `.pkg` and `JillEX-PS4-Data.zip` are also copied to the
-repository root after a successful build (and are listed in `.gitignore`).
+git-root `Releases/` folder after a successful build (which is git-ignored).
 
 Packaging artwork (all optional except `icon0.png`):
 
@@ -235,7 +238,7 @@ cmd /c build_android.cmd clean    :: remove app/build and app/.cxx
 Outputs:
 
 * `port\android\app\build\outputs\apk\debug\app-debug.apk` (installable debug APK)
-* `JillEX-android.apk` in the repository root (git-ignored)
+* `Releases/JillEX-android.apk` (the same APK, git-ignored)
 
 The APK is universal: `arm64-v8a`, `armeabi-v7a`, `x86_64` and `x86` (~6 MB).
 Native libraries are linked with 16 KiB page alignment for Android 15+ devices;
@@ -284,7 +287,7 @@ Outputs:
 * `port\xbox\build\default.xbe` (the game executable)
 * `port\xbox\build\data\` (`default.xbe`, `jill.ini`, `games\`, `profiles\`,
   `external\`)
-* `JillEX-Xbox.zip` in the repository root (the complete install bundle)
+* `Releases/JillEX-Xbox.zip` (the complete install bundle, git-ignored)
 
 NXDK's prebuilt `libc++.lib`/`libSDL2.lib` are not required: both libraries are
 compiled from the SDK's checked-out sources by the project.  The first build

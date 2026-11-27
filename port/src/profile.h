@@ -18,7 +18,7 @@ struct KindInfo {
 // episode (re/gen_port_data.py emits them from docs/profiles.json).
 struct HandlerTables {
     int16_t fly_frame[4];
-    int16_t fly_y[4];
+    int16_t fly_y[8];
     int16_t phoenix_frame[8];
     int16_t phoenix_mirror[8];
     int16_t demon_frame[6];

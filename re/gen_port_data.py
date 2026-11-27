@@ -23,7 +23,7 @@ FIELDS = ("width", "height", "flags", "tileset", "default_count")
 # Entry counts of the per-kind handler tables in docs/profiles.json.
 HANDLER_FIELD_SIZES = {
     "fly_frame": 4,
-    "fly_y": 4,
+    "fly_y": 8,
     "phoenix_frame": 8,
     "phoenix_mirror": 8,
     "demon_frame": 6,

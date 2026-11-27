@@ -19,7 +19,8 @@ build.cmd            build (Release)
 build.cmd install    first time: install sdl2:x64-windows, then build
 ```
 
-Output: `port\build\Release\jill.exe` (SDL2.dll is copied next to it).
+Output: `port\build\Release\jill.exe` (SDL2.dll is copied next to it), plus the
+packaged `Releases\Jill-EX-release-x64.zip`.
 
 `build.cmd` expects vcpkg at `C:\vcpkg` (override with `VCPKG_ROOT`) and the
 VS2022 `vcvars64.bat` at its default path.  SDL2 is optional: without it the

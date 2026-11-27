@@ -10,6 +10,7 @@
 #include "platform_except.h"
 #include "platform_fs.h"
 #include "platform_paths.h"
+#include "textkey.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -27,6 +28,8 @@
 #include <signal.h>
 #include <ucontext.h>
 #include <unistd.h>
+
+#include "../ps4/ps4_pad.h"
 #endif
 
 #ifdef JILL_VITA
@@ -282,6 +285,8 @@ void usage() {
         "  --level N      with --ticks: set the board header level id (debug)\n"
         "  --macro NAME   replay a recorded .mac input script (debug/demos)\n"
         "  --scale N      windowed integer scale, 1..6 (default 3)\n"
+        "  --scaler M     presentation scaler: 0 integer, 1 fractional,\n"
+        "                 2 vertical bilinear, 3 full bilinear\n"
         "  --high-fps N   presentation rate: 0 (18.2 Hz), 60, 90, 120 or 144\n"
         "  --no-interpolate  disable high-framerate sprite smoothing\n"
         "  --filter N     display filter: 0 none, 1 smooth, 2 CRT\n"
@@ -435,6 +440,7 @@ int main(int argc, char** argv) {
         opt.renderer = ini.get("video", "renderer", opt.renderer);
 #if defined(JILL_PS4) || defined(JILL_XBOX)
         opt.debug = ini.get_bool("debug", "overlay", opt.debug);
+        opt.ps4_quit_raw = ini.get_bool("debug", "quit_raw", opt.ps4_quit_raw);
 #endif
         opt.resolution = ini.get_int("video", "resolution", opt.resolution);
         opt.high_fps = ini.get_int("video", "high_fps", opt.high_fps);
@@ -455,7 +461,26 @@ int main(int argc, char** argv) {
                 opt.filter = 0;
             }
         }
+        const std::string scaler = ini.get("video", "scaler");
+        if (!scaler.empty()) {
+            const std::string ls = ini_lower(scaler);
+            if (ls == "integer") {
+                opt.scaler = 0;
+            } else if (ls == "fractional" || ls == "fractional nearest") {
+                opt.scaler = 1;
+            } else if (ls == "vertical" || ls == "vertical bilinear") {
+                opt.scaler = 2;
+            } else if (ls == "bilinear" || ls == "full bilinear") {
+                opt.scaler = 3;
+            } else {
+                opt.scaler = std::atoi(scaler.c_str());
+            }
+            if (opt.scaler < 0 || opt.scaler > 3) {
+                opt.scaler = 0;
+            }
+        }
         opt.hud_classic = ini.get_bool("hud", "classic", opt.hud_classic);
+        opt.hud_hidden = ini.get_bool("hud", "hidden", opt.hud_hidden);
         opt.hud_portrait = ini.get_bool("hud", "portrait", opt.hud_portrait);
         opt.hud_frame = ini.get_int("hud", "frame", opt.hud_frame);
         opt.hud_panel = ini.get("hud", "panel", opt.hud_panel);
@@ -501,6 +526,9 @@ int main(int argc, char** argv) {
         opt.air_jump_buffer = ini.get_bool("gameplay", "air_jump_buffer",
                                            opt.air_jump_buffer);
         opt.minimap = ini.get_bool("gameplay", "minimap", opt.minimap);
+        // Editor: D-pad text entry (PC option, always on for consoles).
+        textkey::set_pad_keyboard_enabled(
+            ini.get_bool("editor", "pad_text", textkey::pad_keyboard_enabled()));
         opt.animated_water = ini.get_bool("gameplay", "animated_water",
                                           opt.animated_water);
         opt.center_fish_shot = ini.get_bool("gameplay", "center_fish_shot",
@@ -512,6 +540,10 @@ int main(int argc, char** argv) {
         opt.throw_from_vines = ini.get_bool("gameplay", "throw_from_vines",
                                             opt.throw_from_vines);
         opt.turtle = ini.get_bool("gameplay", "turtle", opt.turtle);
+        opt.hud_damage_flash = ini.get_bool("gameplay", "hud_flash",
+                                            opt.hud_damage_flash);
+        opt.jill_damage_flash = ini.get_bool("gameplay", "jill_flash",
+                                             opt.jill_damage_flash);
         opt.player_look = ini.get_int("gameplay", "player_look", opt.player_look);
         opt.player_suit = ini.get_int("gameplay", "player_suit", opt.player_suit);
         opt.data_paths = ini.section("paths");
@@ -584,6 +616,22 @@ int main(int argc, char** argv) {
             opt.macro_file = value("--macro");
         } else if (a == "--scale") {
             opt.scale = std::atoi(value("--scale"));
+        } else if (a == "--scaler") {
+            const char* v = value("--scaler");
+            if (std::strcmp(v, "integer") == 0) {
+                opt.scaler = 0;
+            } else if (std::strcmp(v, "fractional") == 0) {
+                opt.scaler = 1;
+            } else if (std::strcmp(v, "vertical") == 0) {
+                opt.scaler = 2;
+            } else if (std::strcmp(v, "bilinear") == 0) {
+                opt.scaler = 3;
+            } else {
+                opt.scaler = std::atoi(v);
+            }
+            if (opt.scaler < 0 || opt.scaler > 3) {
+                opt.scaler = 0;
+            }
         } else if (a == "--high-fps") {
             opt.high_fps = std::atoi(value("--high-fps"));
         } else if (a == "--no-interpolate") {
@@ -627,6 +675,18 @@ int main(int argc, char** argv) {
             }
         } else if (a == "--hud") {
             opt.hud_classic = true;
+        } else if (a == "--no-hud") {
+            opt.hud_hidden = true;
+        } else if (a == "--hud-visible") {
+            opt.hud_hidden = false;
+        } else if (a == "--hud-flash") {
+            opt.hud_damage_flash = true;
+        } else if (a == "--no-hud-flash") {
+            opt.hud_damage_flash = false;
+        } else if (a == "--jill-flash") {
+            opt.jill_damage_flash = true;
+        } else if (a == "--no-jill-flash") {
+            opt.jill_damage_flash = false;
         } else if (a == "--no-portrait") {
             opt.hud_portrait = false;
         } else if (a == "--portrait") {
@@ -810,6 +870,9 @@ int main(int argc, char** argv) {
     if (opt.scale < 1 || opt.scale > 10) {
         opt.scale = 3;
     }
+    if (opt.scaler < 0 || opt.scaler > 3) {
+        opt.scaler = 0;
+    }
     jill_paths::trace("startup: games=%s profiles=%s external=%s renderer=%s",
                       opt.games_dir.c_str(), opt.profiles_dir.c_str(),
                       opt.external_dir.c_str(), opt.renderer.c_str());
@@ -828,16 +891,14 @@ int main(int argc, char** argv) {
         rc = 1;
     }
 #ifdef JILL_PS4
-    // The devices are already closed and saves/config flushed.  Returning
-    // through the CRT runs atexit(SDL_Quit) and static destructors after the
-    // videoout/audio handles are gone, which faults on retail hardware
-    // (CE-34878-0).  Terminate the process directly instead.
+    // The devices are already closed and saves/config flushed.  Ask the
+    // system service to take the title down; if that call is unavailable,
+    // returning through the CRT is the exit path retail apps use.  A raw
+    // _exit() bypasses the loader's shutdown handshake and was what produced
+    // CE-34878-0.
     jill_paths::trace("startup: exiting (rc=%d)", rc);
-    _exit(rc);
-    // _exit must not return.  If it does, the loader's exit binding is broken;
-    // log it through the signal handler instead of falling into the CRT.
-    jill_paths::trace("startup: _exit returned rc=%d (unexpected)", rc);
-    std::abort();
+    ps4_request_quit();
+    return rc;
 #elif defined(JILL_ANDROID)
     jill_paths::trace("startup: SDL_main returning rc=%d", rc);
     if (rc != 0) {
@@ -848,3 +909,4 @@ int main(int argc, char** argv) {
     return rc;
 #endif
 }
+

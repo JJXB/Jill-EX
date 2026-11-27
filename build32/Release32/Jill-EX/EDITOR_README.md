@@ -4,6 +4,22 @@
 `jill_extractor.py` (read/export) and `jill_import.py` (write/import).  It works
 on the files you point it at; the game itself is not required.
 
+The port also has an in-engine editor: `LEVEL EDITOR` on the front-end main menu
+opens a mouse/keyboard/gamepad tile/object/header editor with an `F5` playtest
+toggle.  Its board selector has a `NEW LEVEL` row; `Esc`/pad `B` opens an editor
+menu with Save, Save As, Load, Save to Game Data, Paint Tool, Undo/Redo,
+Copy/Paste, Object Props, Place Presets, Playtest, Info, Help and Exit.
+The Save As / Load pickers choose among the original board and saved edits under
+`editor/<game>/`, and the menu can write the board into the game data folder
+after confirmation.  The editor also has undo/redo, object copy/paste,
+single/line/rectangle/flood tile tools, tile-region copy/paste, gem-door/key-door
+placeable presets, trigger-channel helpers, object property/string editing and a
+scrollable keyboard/controller/touch control reference.  Vita and Android also
+show an on-screen editor toolbar.  See the "Level editor (JILL MAKER)" section
+of `HOTKEYS.md` for the controls, `docs/editor-doors.md` for a worked guide
+to key/gem doors, trigger channels and the P13 link helper, and
+`docs/editor-object-properties.md` for the per-kind field reference.
+
 ## Launch
 
 ```

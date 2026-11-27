@@ -48,6 +48,8 @@ add_executable(jill
     ${JILL_SRC}/main.cpp
     ${JILL_SRC}/app.cpp
     ${JILL_SRC}/engine.cpp
+    ${JILL_SRC}/editor.cpp
+    ${JILL_SRC}/textkey.cpp
     ${JILL_SRC}/macro.cpp
     ${JILL_SRC}/player.cpp
     ${JILL_SRC}/board.cpp
@@ -70,6 +72,7 @@ add_executable(jill
     ${JILL_SRC}/extaudio.cpp
     ${JILL_SRC}/external.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/screen_vita2d.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/vita_ime.cpp
     ${JILL_SRC}/third_party/stb_vorbis.c
     ${JILL_SRC}/third_party/opl3.c
     ${JILL_SRC}/third_party/fmopl.c
@@ -90,13 +93,19 @@ target_compile_definitions(jill PRIVATE
 )
 
 # The Vita has no floating-point unit, so -O2 matters; unused-parameter stays
-# quiet because the desktop backends are compiled with console stubs.
+# quiet because the desktop backends are compiled with console stubs.  The
+# section flags let the linker drop the desktop-only backends entirely; without
+# them the ELF grows past what vita-elf-create can relocate (it aborts with
+# 0xC0000374 once the image gets large enough).
 target_compile_options(jill PRIVATE
     -O2
+    -ffunction-sections
+    -fdata-sections
     -Wall
     -Wextra
     -Wno-unused-parameter
 )
+target_link_options(jill PRIVATE -Wl,--gc-sections)
 
 find_package(SDL2 CONFIG REQUIRED)
 # SDL2 is used for events, the pad and audio; libvita2d owns presentation.

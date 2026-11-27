@@ -46,6 +46,11 @@ void Engine::player_update(int i) {
     BoardObject& o = objects_[static_cast<size_t>(i)];
     int changed = 0;
 
+    // Latch last tick's water contact for the once-per-entry splash in
+    // tile_hook(); tile_touch() sets it again when the feet touch water.
+    water_contact_prev_ = water_contact_;
+    water_contact_ = false;
+
     // Finishing a climb: hold the body still on the ledge and let the render
     // pass animate the pull-up.  Input is ignored for these few frames.
     if (o.state == 0 && o.raise > 0) {
@@ -408,8 +413,17 @@ shared_tail:
             }
         }
         int sx = o.x + facing * 0x0C + 4;
+        // 1FAE:0A9F builds this offset as stack arguments to _addobj, which
+        // Ghidra drops (the call decompiles with no arguments), so the exact
+        // constant was never read.  The recorded JN3DEM2 throw pins it down:
+        // at T304 the player is at (408,436) and the star's x-overlap with
+        // INCHWORM 33 (16x8 at (354,440)) happens on frame 309.  Spawning at
+        // `y + 2` puts the star's top at 448 - exactly the worm's `y + h` -
+        // so the strict AABB never fires and the star passes under a worm the
+        // original kills (HUD +3, kind 9 count).  `y + 1` makes that throw
+        // land while every other shipped demo keeps its end state.
         int sy = o.y + ((fire_while_crouched_ && crouched) ? 0x12
-                                                          : (climbing ? 8 : 2));
+                                                          : (climbing ? 8 : 1));
         if (blades < inv_count(8)) {
             int n = add_obj(0x32, sx, sy);
             if (n >= 0) {
@@ -797,20 +811,24 @@ void Engine::form_draw(int i, Framebuffer& fb) {
     const int ts = profile_->kind(o.kind).tileset;
     const int x = o.x - cam_x_ + view_x();
     const int y = o.y - cam_y_ + view_y();
+    auto draw_form = [&](int shape) {
+        draw_shape(fb, shape, x, y, true);
+        draw_flash_overlay(fb, shape, x, y);
+    };
     switch (o.kind) {
         case 54: {  // fish: two facing sets, table 0x11F3 = {0,1,2,1}
             static const uint8_t kFishFrame[4] = {0, 1, 2, 1};
             int f = kFishFrame[o.p13 & 3] + (o.p0f > 0 ? 3 : 0);
-            draw_shape(fb, (ts << 8) | f, x, y, true);
+            draw_form((ts << 8) | f);
             return;
         }
         case 55:  // spider: shape entry 38, four-frame crawl cycle
-            draw_shape(fb, (38 << 8) | (o.p13 & 3), x, y, true);
+            draw_form((38 << 8) | (o.p13 & 3));
             return;
         case 56: {  // bird: table 0x11FB = {0,1,2,3}, +4 when facing left
             static const uint8_t kBirdFrame[4] = {0, 1, 2, 3};
             int f = kBirdFrame[o.p13 & 3] + (o.p0f < 0 ? 4 : 0);
-            draw_shape(fb, (ts << 8) | f, x, y, true);
+            draw_form((ts << 8) | f);
             return;
         }
         case 57: {  // frog: idle frame 3, hop frames 1/2
@@ -818,7 +836,7 @@ void Engine::form_draw(int i, Framebuffer& fb) {
             if (o.state == 1) {
                 f += (o.dy < 1) ? 1 : 2;
             }
-            draw_shape(fb, (ts << 8) | f, x, y, true);
+            draw_form((ts << 8) | f);
             return;
         }
         default:

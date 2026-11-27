@@ -32,7 +32,7 @@ Outputs:
 ```
 port\xbox\build\default.xbe        the game executable
 port\xbox\build\data\              default.xbe + jill.ini, games\, profiles\, external\
-JillEX-Xbox.zip                    the same folder, zipped (repo root)
+Releases\JillEX-Xbox.zip           the same folder, zipped (git root)
 ```
 
 `build_xbox.cmd clean` removes `port\xbox\build`.

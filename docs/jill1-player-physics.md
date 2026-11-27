@@ -444,11 +444,11 @@ if btn2 and state_flags[state] & 1 and p1b != 0:
     latch[1] = 1                            ; 0x3DA0
     n = number of active objects with kind 0x32 (SPINBLAD)
     if n < itemcount(8):
-        o = _addobj(0x32, x + p1b*0xC + 4, y + 2)
+        o = _addobj(0x32, x + p1b*0xC + 4, y + 1)
         o.dx = p1b * 6
         sound(2, 0x22)
     elif delitem(2):                        ; KNIFE in inventory
-        o = _addobj(2, x + p1b*0xC + 4, y + 2)
+        o = _addobj(2, x + p1b*0xC + 4, y + 1)
         if _cando(o, o.x, o.y, 1) == 1:    ; the spawn cell must be open
             o.dx  = p1b * 8
             o.p11 = 3
@@ -471,6 +471,12 @@ Notes:
 
 * SPINBLAD placement is capped by `itemcount(8)` (max 15 blades in flight) and
   does **not** set `p11`; KNIFE placement sets `p11 = 3`.
+* The spawn offsets are stack arguments that Ghidra drops (the call
+  decompiles with none), so they cannot be read from the listing.  The
+  recorded JN3DEM2 T304 throw fixes the y offset: with `y + 2` the star's box
+  top lands on the INCHWORM's `y + h` and the strict AABB misses by 1 px,
+  while the original kills it (+3).  `y + 1` reproduces that throw and leaves
+  every other shipped demo's end state unchanged.
 * `delitem` = `FUN_26f4_1a38(test-and-remove)`.
 * `FUN_26f4_23e1(obj)` scans the cells under the object; for every cell whose
   tile attribute has bit 8 it calls `FUN_1f28_0006(col, row, 1)` (the same

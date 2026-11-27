@@ -2,7 +2,8 @@
 //
 // The game still renders into the 8-bit 320x200 Framebuffer; this file only
 // uploads that frame as an RGBA texture and draws one textured quad, scaled to
-// the largest integer fit inside the 1920x1080 output.
+// the output with the selected presentation scaler (integer, fractional
+// nearest, vertical bilinear or full bilinear).
 //
 // Shaders come from the firmware's libScePrecompiledShaders module (PSSL
 // binaries loaded with glShaderBinary).  Piglet has no GLSL compiler, so do not
@@ -23,6 +24,7 @@
 #include <orbis/libkernel.h>
 
 #include "../src/platform_paths.h"
+#include "../src/scaler.h"
 #include "../src/screen.h"
 
 // Blob layout used by libScePrecompiledShaders (see the OpenOrbis piglet
@@ -121,35 +123,47 @@ public:
             first_frame_ = true;
             jill_paths::trace("gl: first present %dx%d", w, h);
         }
-        ensure_texture(w, h);
+        ensure_texture_for_frame(w, h);
         if (!texture_) {
             return;
         }
 
-        // 0xAARRGGBB (little-endian) -> RGBA byte order for GLES2.
-        rgba_.resize(static_cast<size_t>(w) * h * 4);
-        for (size_t i = 0; i < static_cast<size_t>(w) * h; ++i) {
-            const uint32_t c = argb[i];
-            rgba_[i * 4 + 0] = static_cast<uint8_t>((c >> 16) & 0xFF);
-            rgba_[i * 4 + 1] = static_cast<uint8_t>((c >> 8) & 0xFF);
-            rgba_[i * 4 + 2] = static_cast<uint8_t>(c & 0xFF);
-            rgba_[i * 4 + 3] = static_cast<uint8_t>((c >> 24) & 0xFF);
+        const bool vertical = (scale_mode_ == jill_scale::kVertical);
+        const jill_scale::Fit fit = jill_scale::compute_fit(
+            w, h, kOutputWidth, kOutputHeight, scale_mode_);
+        const int tex_h = tex_h_;
+
+        // 0xAARRGGBB (little-endian) -> RGBA byte order for GLES2.  Vertical
+        // bilinear pre-scales the rows on the CPU so the sampler only has to
+        // do the fractional horizontal stretch with GL_NEAREST.
+        if (vertical) {
+            rgba_.resize(static_cast<size_t>(w) * tex_h * 4);
+            scaler_.setup(w, h, w, tex_h, jill_scale::kVertical);
+            scaler_.blit(argb, [&](int x, int y, uint32_t c) {
+                const size_t i = (static_cast<size_t>(y) * w + x) * 4;
+                rgba_[i + 0] = static_cast<uint8_t>((c >> 16) & 0xFF);
+                rgba_[i + 1] = static_cast<uint8_t>((c >> 8) & 0xFF);
+                rgba_[i + 2] = static_cast<uint8_t>(c & 0xFF);
+                rgba_[i + 3] = static_cast<uint8_t>((c >> 24) & 0xFF);
+            });
+        } else {
+            rgba_.resize(static_cast<size_t>(w) * h * 4);
+            for (size_t i = 0; i < static_cast<size_t>(w) * h; ++i) {
+                const uint32_t c = argb[i];
+                rgba_[i * 4 + 0] = static_cast<uint8_t>((c >> 16) & 0xFF);
+                rgba_[i * 4 + 1] = static_cast<uint8_t>((c >> 8) & 0xFF);
+                rgba_[i * 4 + 2] = static_cast<uint8_t>(c & 0xFF);
+                rgba_[i * 4 + 3] = static_cast<uint8_t>((c >> 24) & 0xFF);
+            }
         }
 
-        // Integer fit with letterbox/pillarbox.  A non-integer fallback only
-        // runs on displays smaller than the source.
-        float scale = std::min(static_cast<float>(kOutputWidth) / w,
-                               static_cast<float>(kOutputHeight) / h);
-        if (scale >= 1.0f) {
-            scale = static_cast<float>(static_cast<int>(scale));
-        }
-        const float out_w = static_cast<float>(w) * scale;
-        const float out_h = static_cast<float>(h) * scale;
-        const float out_x = (kOutputWidth - out_w) * 0.5f;
-        const float out_y = (kOutputHeight - out_h) * 0.5f;
+        const float out_w = static_cast<float>(fit.w);
+        const float out_h = static_cast<float>(fit.h);
+        const float out_x = static_cast<float>(fit.x);
+        const float out_y = static_cast<float>(fit.y);
 
         glBindTexture(GL_TEXTURE_2D, texture_);
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA,
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, tex_h, GL_RGBA,
                         GL_UNSIGNED_BYTE, rgba_.data());
 
         glViewport(0, 0, kOutputWidth, kOutputHeight);
@@ -199,6 +213,13 @@ public:
 
     void set_title(const char* title) override {
         (void)title;  // no window title on the console
+    }
+
+    void set_scale_mode(int mode) override {
+        if (mode < jill_scale::kInteger || mode > jill_scale::kFull) {
+            mode = jill_scale::kInteger;
+        }
+        scale_mode_ = mode;
     }
 
     void shutdown() override {
@@ -425,8 +446,17 @@ private:
         return true;
     }
 
-    void ensure_texture(int w, int h) {
-        if (texture_ && tex_w_ == w && tex_h_ == h) {
+    void ensure_texture_for_frame(int w, int h) {
+        const bool vertical = (scale_mode_ == jill_scale::kVertical);
+        const bool linear = (scale_mode_ == jill_scale::kFull);
+        int want_h = h;
+        if (vertical) {
+            const jill_scale::Fit fit = jill_scale::compute_fit(
+                w, h, kOutputWidth, kOutputHeight, scale_mode_);
+            want_h = std::max(1, fit.h);
+        }
+        if (texture_ && tex_w_ == w && tex_h_ == want_h &&
+            tex_linear_ == linear) {
             return;
         }
         if (texture_) {
@@ -436,14 +466,16 @@ private:
         glGenTextures(1, &texture_);
         glBindTexture(GL_TEXTURE_2D, texture_);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA,
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, want_h, 0, GL_RGBA,
                      GL_UNSIGNED_BYTE, nullptr);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        const GLint filter = linear ? GL_LINEAR : GL_NEAREST;
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         tex_w_ = w;
-        tex_h_ = h;
+        tex_h_ = want_h;
+        tex_linear_ = linear;
     }
 
     int32_t piglet_module_ = -1;
@@ -461,6 +493,9 @@ private:
     GLint a_vertex_ = -1;
     int tex_w_ = 0;
     int tex_h_ = 0;
+    bool tex_linear_ = false;
+    int scale_mode_ = jill_scale::kInteger;
+    jill_scale::Scaler scaler_;
     bool context_ready_ = false;
     bool first_frame_ = false;
     bool first_frame_error_checked_ = false;

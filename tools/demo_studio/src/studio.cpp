@@ -606,7 +606,7 @@ bool Studio::start_run(int target_tick, std::string& err) {
     // Playback must start before the entry spawn so the camera/culling use the
     // original 232x160 simulation view (same order as the game's start_game).
     if (!records_.empty()) {
-        engine_->set_macro_records(records_);
+        engine_->set_macro_records(records_, macro_path_);
     } else {
         engine_->stop_macro();
     }
