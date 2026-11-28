@@ -13,11 +13,12 @@ const char kLayout[4][TextKeyboard::kCols][3] = {
     {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "="},
     {"Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "[", "]"},
     {"A", "S", "D", "F", "G", "H", "J", "K", "L", ";", "'", ""},
-    {"Z", "X", "C", "V", "B", "N", "M", ",", ".", "/", "", ""},
+    {"Z", "X", "C", "V", "B", "N", "M", ",", ".", "/", "!", "?"},
 };
 
-const char* const kActions[4] = {"SPACE", "DEL", "OK", "CANCEL"};
-constexpr int kActionCols[4][2] = {{0, 3}, {4, 6}, {7, 9}, {10, 11}};
+const char* const kActions[5] = {"SPACE", "DEL", "SHIFT", "OK", "CANCEL"};
+constexpr int kActionCols[5][2] = {
+    {0, 2}, {3, 4}, {5, 6}, {7, 9}, {10, 11}};
 
 // Runtime "use the D-pad keyboard on PC" option (level editor menu / jill.ini).
 bool g_pad_keyboard = false;
@@ -34,6 +35,8 @@ void TextKeyboard::open(std::string* buffer, size_t max_len) {
     max_len_ = max_len == 0 ? 1 : max_len;
     active_ = true;
     cancelled_ = false;
+    lower_ = false;
+    cursor_ = buffer ? buffer->size() : 0;
     row_ = 1;
     col_ = 0;
 }
@@ -106,15 +109,15 @@ void TextKeyboard::move(int dx, int dy) {
         return;
     }
     if (row_ == kRows - 1) {
-        // Move between the four action buttons, not between their columns.
+        // Move between the action buttons, not between their columns.
         int index = 0;
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 5; ++i) {
             if (col_ >= kActionCols[i][0] && col_ <= kActionCols[i][1]) {
                 index = i;
                 break;
             }
         }
-        index = (index + (dx > 0 ? 1 : 3)) % 4;
+        index = (index + (dx > 0 ? 1 : 4)) % 5;
         col_ = kActionCols[index][0];
         return;
     }
@@ -134,19 +137,20 @@ bool TextKeyboard::press() {
     }
     if (row_ < 4) {
         const char c = kLayout[row_][col_][0];
-        if (c != '\0' && buffer_ && buffer_->size() < max_len_) {
-            buffer_->push_back(c);
+        if (c != '\0') {
+            insert_char(c);
         }
         return false;
     }
     switch (selected_action()) {
         case Action::Space:
-            if (buffer_ && buffer_->size() < max_len_) {
-                buffer_->push_back(' ');
-            }
+            insert_char(' ');
             return false;
         case Action::Del:
             backspace();
+            return false;
+        case Action::Shift:
+            lower_ = !lower_;
             return false;
         case Action::Ok:
             return true;
@@ -158,9 +162,41 @@ bool TextKeyboard::press() {
     }
 }
 
+void TextKeyboard::insert_char(char c) {
+    if (!buffer_ || buffer_->size() >= max_len_) {
+        return;
+    }
+    if (lower_ && c >= 'A' && c <= 'Z') {
+        c = static_cast<char>(c - 'A' + 'a');
+    }
+    if (cursor_ > buffer_->size()) {
+        cursor_ = buffer_->size();
+    }
+    buffer_->insert(buffer_->begin() + static_cast<std::ptrdiff_t>(cursor_), c);
+    ++cursor_;
+}
+
 void TextKeyboard::backspace() {
-    if (buffer_ && !buffer_->empty() && buffer_->size() > 0) {
-        buffer_->pop_back();
+    if (!buffer_ || buffer_->empty() || cursor_ == 0) {
+        return;
+    }
+    if (cursor_ > buffer_->size()) {
+        cursor_ = buffer_->size();
+    }
+    buffer_->erase(buffer_->begin() + static_cast<std::ptrdiff_t>(cursor_ - 1));
+    --cursor_;
+}
+
+void TextKeyboard::cursor_left() {
+    if (cursor_ > 0) {
+        --cursor_;
+    }
+}
+
+void TextKeyboard::cursor_right() {
+    const size_t end = buffer_ ? buffer_->size() : 0;
+    if (cursor_ < end) {
+        ++cursor_;
     }
 }
 
@@ -175,9 +211,13 @@ const char* TextKeyboard::selected_label() const {
     if (row_ < 4) {
         return kLayout[row_][col_];
     }
-    return kActions[span_start(col_) == 0 ? 0
-                       : (span_start(col_) == 4 ? 1
-                          : (span_start(col_) == 7 ? 2 : 3))];
+    const int start = span_start(col_);
+    for (int i = 0; i < 5; ++i) {
+        if (start == kActionCols[i][0]) {
+            return kActions[i];
+        }
+    }
+    return kActions[0];
 }
 
 TextKeyboard::Action TextKeyboard::selected_action() const {
@@ -192,9 +232,12 @@ TextKeyboard::Action TextKeyboard::selected_action() const {
         return Action::Del;
     }
     if (start == kActionCols[2][0]) {
-        return Action::Ok;
+        return Action::Shift;
     }
     if (start == kActionCols[3][0]) {
+        return Action::Ok;
+    }
+    if (start == kActionCols[4][0]) {
         return Action::Cancel;
     }
     return Action::None;
@@ -212,8 +255,12 @@ void TextKeyboard::draw(Framebuffer& fb, Engine& engine, int x, int y) const {
             const bool sel = row_ == row && col_ == col;
             const int cx = x + col * kCellW;
             const int cy = y + row * kCellH;
+            char glyph[2] = {label[0], '\0'};
+            if (lower_ && glyph[0] >= 'A' && glyph[0] <= 'Z') {
+                glyph[0] = static_cast<char>(glyph[0] - 'A' + 'a');
+            }
             fb.fill_rect(cx + 1, cy + 1, kCellW - 2, kCellH - 2, 8);
-            engine.draw_text(fb, cx + kCellW / 2 - 3, cy + 3, 15, label);
+            engine.draw_text(fb, cx + kCellW / 2 - 3, cy + 3, 15, glyph);
             if (sel) {
                 fb.fill_rect(cx, cy, kCellW, 1, 15);
                 fb.fill_rect(cx, cy + kCellH - 1, kCellW, 1, 15);
@@ -222,14 +269,16 @@ void TextKeyboard::draw(Framebuffer& fb, Engine& engine, int x, int y) const {
             }
         }
     }
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 5; ++i) {
         const int x0 = x + kActionCols[i][0] * kCellW;
         const int x1 = x + (kActionCols[i][1] + 1) * kCellW;
         const int cy = y + 4 * kCellH;
         const bool sel = row_ == 4 &&
                          col_ >= kActionCols[i][0] && col_ <= kActionCols[i][1];
-        fb.fill_rect(x0 + 1, cy + 1, x1 - x0 - 2, kCellH - 2, 8);
-        engine.draw_text(fb, x0 + 3, cy + 3, 15, kActions[i]);
+        const bool lit = i == 2 && lower_;  // SHIFT active
+        fb.fill_rect(x0 + 1, cy + 1, x1 - x0 - 2, kCellH - 2, lit ? 4 : 8);
+        engine.draw_text(fb, x0 + (x1 - x0 - static_cast<int>(std::strlen(kActions[i])) * 6) / 2,
+                         cy + 3, 15, kActions[i]);
         if (sel) {
             fb.fill_rect(x0, cy, x1 - x0, 1, 15);
             fb.fill_rect(x0, cy + kCellH - 1, x1 - x0, 1, 15);

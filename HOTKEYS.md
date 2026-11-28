@@ -108,7 +108,7 @@ caption, the titled `Reminder` card, and the news-bulletin/text pages
 `Reminder` card after the first level-title caption.
 
 The front-end main menu is `START GAME`, `DEMO`, `RESTORE GAME`, `STORY`,
-`HIGH SCORES`, `OPTIONS`, `NOISEMAKER`, `LEVEL EDITOR`, `QUIT`.  It always has
+`HIGH SCORES`, `OPTIONS`, `NOISEMAKER`, `JILL MAKER`, `QUIT`.  It always has
 `RESTORE GAME` and `HIGH SCORES`.  On `RESTORE GAME`, Left/Right changes the episode and the
 slots then show that game's saves.  `HIGH SCORES` also uses Left/Right to switch
 episodes.  Each game/mod keeps its own table in `hiscore_<game id>.txt`.
@@ -131,14 +131,18 @@ When a score qualifies, a name prompt appears first:
 | Key | Action |
 | --- | --- |
 | A-Z, 0-9, space | Add a character (up to 9) |
-| Backspace | Delete the last character |
+| Backspace | Delete the character before the cursor |
+| Left / Right | Move the text cursor |
 | Enter | Save the score |
 | Esc | Save with the default name `JILL` |
 
 Leaving the name blank also saves it as `JILL`.  On Vita and Android the prompt
 opens the platform text input (Vita IME / Android soft keyboard); text arrives
 through SDL's native text-input events, so physical and on-screen keyboards both
-work.  Vita physical keyboards are also accepted through key events.
+work.  Vita physical keyboards are also accepted through key events.  PS4 and
+Xbox use the on-screen keyboard instead: D-pad moves, A types, Y deletes,
+LB/RB move the text cursor, START accepts, B keeps `JILL`.  `SHIFT` toggles
+lowercase, and the bottom-right keys type `!` and `?`.
 
 ## In-game system keys
 
@@ -181,7 +185,7 @@ Menus also accept the gamepad: D-pad or left stick moves, **A** confirms,
 
 ### Level editor (JILL MAKER)
 
-`LEVEL EDITOR` on the front-end main menu opens an episode selector, then a
+`JILL MAKER` on the front-end main menu opens an episode selector, then a
 board selector.  Saved custom levels appear there as `CUSTOM <name>` rows after
 `NEW LEVEL`.  The editor draws the board without the HUD and uses the mouse
 for painting.
@@ -242,11 +246,14 @@ control reference is scrollable with Up/Down, Page Up/Page Down, the mouse wheel
 or the D-pad; `Enter`/`A` closes it.  Keyboard, controller and touch bindings
 are listed in separate sections.
 
-**Touch (Android / Vita):** the bottom bar has two rows of ten buttons:
+**Touch bar (Android / Vita / PC):** the bottom bar has two rows of ten
+buttons:
 
 * Row 1: `MODE PAL PICK TOOL PAN SAVE LOAD PLAY INFO MENU`
 * Row 2: `UNDO REDO COPY PASTE PROPS PRST GRID HELP MINI ERASE`
 
+On PC the same bar is clickable with the mouse.  The board viewport ends
+above it, so the bottom row of the map is not hidden behind the bar.
 `PAN` is a toggle: while it is lit, dragging the canvas moves the camera;
 tap it again to go back to painting.  `ERASE` toggles the canvas between paint
 and erase.  Tapping a tile/object palette cell selects it (tap outside to
@@ -273,7 +280,8 @@ or hovered object and `V` pastes it at the cursor.  `O` opens the object
 property panel: Up/Down selects a field, Left/Right adjusts it, and Enter on the
 STRING row opens the native text prompt (Vita IME, Android soft keyboard or
 desktop keyboard).  On PS4 and Xbox the prompt is an on-screen keyboard:
-D-pad moves, A types, Y deletes, B cancels.  Object W/H are editable there, which covers object resizing;
+D-pad moves, A types, Y deletes, LB/RB move the text cursor, SHIFT toggles
+lowercase, B cancels.  Object W/H are editable there, which covers object resizing;
 DX/DY are exposed for doors and moving objects.  The P13 row shows how many
 trigger objects share the channel, and Enter on P13 links this object to the
 nearest trigger sender/receiver.  The editor menu also has UNDO, REDO, COPY,
@@ -368,6 +376,23 @@ Cards also advance automatically after seven seconds.
 
 Gamepad: D-pad/stick scrolls, A/B/Start/Back close.  The page itself cannot be
 switched: the original shows one page per help screen.
+
+## Front-end MUSIC PLAYER
+
+`OPTIONS > MUSIC PLAYER` lists every `*.ddt` track in the running game's data
+folder (plus its title track if that lives elsewhere), sorted by file name.  It
+plays through the same CMF/OPL or MIDI path as the game, which makes A/B
+testing a single track easy.
+
+| Key | Action |
+| --- | --- |
+| Up / Down | Select a track (or BACK) |
+| Left / Right | Music volume -10% / +10% |
+| Enter | Play the track; press again on the playing track (`*`) to stop |
+| Esc / pad B | Back to OPTIONS (the current track keeps playing) |
+
+Starting a game or returning to the front end swaps in that screen's music as
+usual.
 
 ## Front-end SOUND TEST
 

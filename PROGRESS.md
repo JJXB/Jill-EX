@@ -1,5 +1,110 @@
 # Progress
 
+## 2026-11-28 (Vita SFX crackle)
+
+* Vita audio now asks for a 2048-frame buffer (42 ms) instead of 1024, so a
+  slow render frame leaves the audio thread enough slack to avoid dropouts.
+* Final mix uses a soft-knee limiter above 0.8 instead of a hard clip.  A
+  full-scale 8-bit effect plus music could sum past 1.0 and the clamp buzzed.
+* SFX voices fade in over 1.5 ms and out over 3 ms at their source rate.  The
+  `.vcl` samples frequently start/end away from the 128 silence point, so
+  starting or cutting them clicked; repeated effects read as crackle.
+
+## 2026-11-28 (CMF percussion + note retrigger)
+
+* Found the real "missing instruments" cause: SBFMDRV sends note-off and
+  note-on for the same note in one tick, and Nuked's envelope only restarted
+  when it sampled the release state.  Both writes land inside one audio sample,
+  so repeated notes stayed in sustain at full attenuation and went silent;
+  whole passages dropped out in every track.  `OPL3_EnvelopeKeyOff` now moves
+  the envelope to release at register-write time, so the key-on that follows
+  restarts the attack like the chip does.
+* Verified against a reference SBFMDRV render (`viiri/fmdrv`) of `funky.ddt`:
+  envelope correlation went 0.72 → 0.98, waveform correlation 0.55 → 0.84, and
+  the 4-16 kHz band now matches within ~1.4 dB (was 2.5-3.4 dB too loud).
+  Bass drum, snare and hi-hat hit-by-hit levels are now within a few percent
+  and no hits are missing.
+* The hi-hat is lifted 6 dB (8 TL steps below the driver's velocity level).
+  With the chip's TL scale and the melody masking it, it was technically
+  present but hard to pick out; the other drums are unchanged.
+* Percussion now follows SBFMDRV's `set_instrument()` exactly: patches load on
+  the program change (not per hit), the four single-operator drums force
+  additive connection (`ins[10] | 1`) while the bass drum keeps its own byte,
+  pitch is only written for bass/snare/tom, and note-offs clear the drum bit
+  unconditionally.  Previously all drums used the unmodified connection byte.
+
+## 2026-11-28 (OPTIONS > MUSIC PLAYER)
+
+* New `OPTIONS > MUSIC PLAYER` screen for track A/B testing.  It scans the
+  running game's data folder for `*.ddt` (plus the title track when it lives in
+  a pack), lists them sorted, and plays through the normal CMF/OPL/MIDI path.
+* Up/Down selects, Enter plays (again stops), Left/Right trims music volume by
+  10%, Esc/B returns to OPTIONS.  The playing track is marked `*`; starting a
+  game later swaps in that screen's music.
+* Track names come from a scan cached in the menu, so the list is not rebuilt
+  every frame.  The current track follows every `play_music()` call, so the
+  marker is correct even when a level or the front end changed the music.
+
+## 2026-11-28 (touch bar on PC, cursor/case keyboard, text layering)
+
+* JILL MAKER on PC now shows the same 20-button touch bar as Vita/Android and
+  accepts mouse clicks on it.  `bottom_bar()` shrinks the board area to stop
+  above the bar, and the camera/cursor clamps now use that same bottom edge, so
+  panning reaches the true last row (it ends exactly at the bar).  PS4/Xbox
+  keep the full-height board (no pointer, so no bar).
+* The controller text keyboard gained a `SHIFT` lowercase toggle, `!` and `?`
+  keys, and an insertion cursor: LB/RB move the cursor, A types at it, Y
+  deletes before it.  Hi-score and JILL MAKER string prompts both draw the
+  cursor in place.
+* Board text objects (`TEXT6`/`TEXT8`, kinds 20/21) now sort into the scenery
+  layer with kind 32, so Jill and other objects draw in front of them.
+* CMF rhythm voices no longer force the `0xC0` connection bit to additive, so
+  `funky.ddt` keeps its FM bass drum.  Awaiting an in-game A/B.
+
+## 2026-11-27 (editor: asset-pack picker, safe recoloured tiles, grids, palettes, portraits, backups)
+
+* `jill_editor.py` **Tools > Export Asset Pack...** opens a checkbox dialog for
+  the external-pack sections defined by `jill_extractor.PACK_SECTIONS` (Export
+  All / clear, music length, destination), and **Export Reference Pack (all)**
+  keeps the one-click path.  `export_reference_pack()` takes an optional
+  `include` list, so export can be limited to the ticked sections.
+* New original-EXE-safe tile import: `jill_import.tile_from_png_safe()` (CLI
+  `tile-safe`) quantises to the global VGA palette, appends the frame to an
+  existing 8bpp identity-mapped entry below 64 (entry 24 in the Jill games) and
+  repoints only that DMA record.  No palette table or free shape entry changes,
+  and both `.sha` and `.dma` are written.  Exposed as **Allow new colours
+  (append 8bpp frame, original-safe)**, on by default; the old in-place path is
+  still available.
+* Sprite and tile viewers gained a clickable **Grid view** (tile grid is paged
+  10x6) alongside the existing single-frame/animation view.
+* Every editor write now calls `backup_targets()` first, producing
+  `<file>.<YYYYmmdd-HHMMSS>.bak` next to each existing file it overwrites.
+* One-image portrait export/import: `jill_extractor.portrait_image()` composes
+  the 64x70 shape-entry-24 face; `jill_import.portrait_from_image()` (CLI
+  `portrait`) splits a single image back over its sixteen tiles.
+* Palette exchange in JASC `.pal`, GIMP `.gpl` and Adobe `.act`
+  (`palette-export` / `palette-import`, plus per-entry GUI buttons and
+  **Tools > Export Palettes for Image Editor...**).  Import snaps to the global
+  VGA palette, keeps the palette word's low 16 bits and recolours the whole
+  entry.
+* Tests cover safe tile import, palette/portrait round-trips, selective pack
+  export, backups and both grid views.  Real-file dry run on copies of
+  `jill1.sha`/`jill.dma`: only entry 24 gained a frame, its palette was
+  unchanged, and exactly one DMA record moved.
+* Still needs an in-game check on the original DOS EXE with an imported
+  recoloured tile (no palette bytes are written, but this was not run here).
+
+## 2026-11-27 (JILL MAKER menu label + CMF rhythm connection fix)
+
+* Renamed the front-end `LEVEL EDITOR` row and its episode/board subtitle to
+  `JILL MAKER`, matching the editor's own title and help text.
+* CMF rhythm voices no longer force the `0xC0` connection bit to additive.
+  The file's own instrument byte is written unchanged.  In `funky.ddt` the
+  bass drum patch is FM (`connection 0`), so the old `| 1` made it (and the
+  cymbal/tom voices) use the wrong timbre.  This matches AdPlug/SBFMDRV's
+  `writeInstrumentSettings`, which writes the instrument byte as-is.
+* `docs/port-sound.md` corrected accordingly.
+
 ## 2026-11-27 (JN2DEM2: health floor through the late fireball section)
 
 * The pre-draw offset that keeps the first blade hit and the early damage

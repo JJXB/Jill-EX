@@ -110,13 +110,38 @@ specification:
 
 Percussion uses the instrument's operator-0 bytes for the dedicated rhythm
 operator, its carrier scaling byte (`instrument[3]`) for velocity, and the
-`0xBD` key bits, exactly like the chip; the connection register is forced
-additive (`instrument[10] | 1`).
+`0xBD` key bits, exactly like the chip.  Matching SBFMDRV's `set_instrument()`:
+the bass drum goes through the normal two-operator path and keeps the file's
+feedback/connection byte, while snare/tom/top-cymbal/hi-hat are written with
+additive connection forced on (`instrument[10] | 1`).  Patches are loaded on
+the program change, not on every hit: rewriting the ADSR registers while a drum
+is sounding changes its envelope.
+
+The hi-hat is mixed 6 dB above the driver's level (8 fewer TL steps) so the
+taps stay audible under the melody; the other four drums keep the exact
+SBFMDRV level.
+
+The driver's own table calls the five drum voices 6..10, so its pitch write
+goes to `0xA0 + voice` / `0xB0 + voice`.  Only voices 6..8 reach a real OPL
+channel (bass drum, snare, tom).  Top cymbal and hi-hat write to `0xA9`/`0xAA`,
+which the chip ignores, so they keep whatever pitch channel 7/8 already had.
+A note-off clears the drum bit unconditionally.
 
 F-numbers are derived from the chip's native 49,716 Hz, so both cores play at
 the same pitch.  The original loader divides 1,193,180 by the CMF header's
 ticks/sec (`+0x0C`) and passes the result to `_sbfm_song_speed`, so the header
 tempo is authoritative.
+
+## Note retriggering
+
+Nuked's envelope only restarts an attack when it samples the release state, so
+a note-off immediately followed by a note-on inside the same audio sample kept
+the old sustain level and produced silence.  SBFMDRV writes exactly that pair
+for repeated notes (same tick), which made whole passages drop out and left the
+hi-hat and bass drum "missing".  `OPL3_EnvelopeKeyOff` now moves the envelope
+to release at register-write time, so the following key-on restarts the attack
+as the real chip does.  Against a reference SBFMDRV render of `funky.ddt` this
+raised envelope correlation from 0.72 to 0.98 and removed the silent gaps.
 
 ## OPL2 register model
 
@@ -168,7 +193,12 @@ app drains it after each tick and calls `MusicPlayer::play_sfx()`:
 * one voice plays at a time, like the original single DSP DMA channel; a new
   effect replaces the current one unless its priority is strictly lower;
 * playback resamples 6000 Hz to the device rate with linear interpolation and
-  mixes into the same buffer as the OPL music.
+  mixes into the same buffer as the OPL music;
+* each voice fades in over 1.5 ms and out over 3 ms, because the raw samples
+  often start and end away from the 128 silence value;
+* the final mix is soft-limited above 0.8 rather than hard-clipped, so a loud
+  effect plus music does not buzz.  Vita requests a 2048-frame device buffer to
+  keep the audio thread from starving while libvita2d renders.
 
 Settings: `OPTIONS > SOUND` has `SFX: ON/OFF` and `SFX VOLUME: N%`; the same
 values are `[audio] sfx` and `[audio] sfx_volume` in `jill.ini`, with

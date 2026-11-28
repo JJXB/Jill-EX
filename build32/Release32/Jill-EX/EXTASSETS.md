@@ -581,10 +581,11 @@ effect of each override is easy to spot.
 
 `jill_extractor.py` can write a ready-to-edit pack from an installed game:
 
-* GUI: `Tools > Export Reference Asset Pack...`
+* GUI: `jill_editor.py` **Tools > Export Asset Pack...** (tick the sections to
+  write, with an Export All option) or **Export Reference Pack (all)...**
 * CLI: `python extract_all.py out --game jill1 --pack`
 
-It exports all shape frames, tiles, 320x200 board backdrops, the font strip,
+A full export writes all shape frames, tiles, 320x200 board backdrops, the font strip,
 HUD panels/icons, the dialog portrait, text-page templates and previews, the
 intro menu theme, `palette.pal`, SFX WAVs, rendered `music/<track>.wav` files
 and a `pack.ini`.  Copy the generated `reference_pack` folder into

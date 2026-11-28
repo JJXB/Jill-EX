@@ -165,19 +165,19 @@ bool LevelEditor::open(Engine& engine, const std::string& board_name,
     tile_page_ = (paint_tile_ / kTilePalCols) * kTilePalCols;
     kind_page_ = (brush_kind_ / kKindPalPage) * kKindPalPage;
 
+    const int vh = bottom_bar();
     if (engine.has_player()) {
         cam_x_ = board_.objects[0].x - Framebuffer::W / 2;
-        cam_y_ = board_.objects[0].y - Framebuffer::H / 2;
+        cam_y_ = board_.objects[0].y - vh / 2;
     } else {
         cam_x_ = Board::kCols * 16 / 2 - Framebuffer::W / 2;
-        cam_y_ = Board::kRows * 16 / 2 - Framebuffer::H / 2;
+        cam_y_ = Board::kRows * 16 / 2 - vh / 2;
     }
     cam_x_ = clamp_int(cam_x_, 0, Board::kCols * 16 - Framebuffer::W);
-    cam_y_ = clamp_int(cam_y_, 0, Board::kRows * 16 - Framebuffer::H);
+    cam_y_ = clamp_int(cam_y_, 0, std::max(0, Board::kRows * 16 - vh));
     cursor_col_ = clamp_int((cam_x_ + Framebuffer::W / 2) >> 4, 0,
                             kBoardCols - 1);
-    cursor_row_ = clamp_int((cam_y_ + Framebuffer::H / 2) >> 4, 0,
-                            kBoardRows - 1);
+    cursor_row_ = clamp_int((cam_y_ + vh / 2) >> 4, 0, kBoardRows - 1);
     cursor_wx_ = cursor_col_ * 16 + 8;
     cursor_wy_ = cursor_row_ * 16 + 8;
 
@@ -283,14 +283,14 @@ bool LevelEditor::new_level(Engine& engine, std::string& err) {
     undo_coalesce_ = 0;
     clear_history();
     save_name_ = unique_level_name(engine);
+    const int vh = bottom_bar();
     cam_x_ = clamp_int(player.x - Framebuffer::W / 2, 0,
                        Board::kCols * 16 - Framebuffer::W);
-    cam_y_ = clamp_int(player.y - Framebuffer::H / 2, 0,
-                       Board::kRows * 16 - Framebuffer::H);
+    cam_y_ = clamp_int(player.y - vh / 2, 0,
+                       std::max(0, Board::kRows * 16 - vh));
     cursor_col_ = clamp_int((cam_x_ + Framebuffer::W / 2) >> 4, 0,
                             kBoardCols - 1);
-    cursor_row_ = clamp_int((cam_y_ + Framebuffer::H / 2) >> 4, 0,
-                            kBoardRows - 1);
+    cursor_row_ = clamp_int((cam_y_ + vh / 2) >> 4, 0, kBoardRows - 1);
     cursor_wx_ = cursor_col_ * 16 + 8;
     cursor_wy_ = cursor_row_ * 16 + 8;
 
@@ -774,7 +774,7 @@ void LevelEditor::set_mouse(int x, int y, Engine& engine) {
         show_presets_ || show_game_confirm_ || text_input_active_) {
         return;
     }
-    if (y < kTopBar || y >= kBottomBar) {
+    if (y < kTopBar || y >= bottom_bar()) {
         return;
     }
     cursor_wx_ = cam_x_ + x;
@@ -1007,7 +1007,7 @@ void LevelEditor::mouse_button(int button, bool down, int x, int y, bool shift,
         }
         return;
     }
-    if (y < kTopBar || y >= kBottomBar) {
+    if (y < kTopBar || y >= bottom_bar()) {
         return;
     }
 
@@ -1318,7 +1318,7 @@ void LevelEditor::wheel(int dy, bool shift) {
         cam_y_ -= dy * 32;
     }
     cam_x_ = clamp_int(cam_x_, 0, Board::kCols * 16 - Framebuffer::W);
-    cam_y_ = clamp_int(cam_y_, 0, Board::kRows * 16 - Framebuffer::H);
+    cam_y_ = clamp_int(cam_y_, 0, std::max(0, Board::kRows * 16 - bottom_bar()));
     keep_cursor_in_view();
 }
 
@@ -1326,7 +1326,7 @@ void LevelEditor::pan(int dx, int dy) {
     cam_x_ += dx;
     cam_y_ += dy;
     cam_x_ = clamp_int(cam_x_, 0, Board::kCols * 16 - Framebuffer::W);
-    cam_y_ = clamp_int(cam_y_, 0, Board::kRows * 16 - Framebuffer::H);
+    cam_y_ = clamp_int(cam_y_, 0, std::max(0, Board::kRows * 16 - bottom_bar()));
     keep_cursor_in_view();
 }
 
@@ -1336,7 +1336,7 @@ void LevelEditor::keep_cursor_in_view() {
     const int c0 = cam_x_ >> 4;
     const int c1 = (cam_x_ + Framebuffer::W - 1) >> 4;
     const int r0 = (cam_y_ + kTopBar) >> 4;
-    const int r1 = (cam_y_ + kBottomBar - 1) >> 4;
+    const int r1 = (cam_y_ + bottom_bar() - 1) >> 4;
     cursor_col_ = clamp_int(cursor_col_, c0, std::min(c1, kBoardCols - 1));
     cursor_row_ = clamp_int(cursor_row_, r0, std::min(r1, kBoardRows - 1));
     cursor_wx_ = cursor_col_ * 16 + 8;
@@ -1358,8 +1358,9 @@ void LevelEditor::move_cursor(int dx, int dy) {
     }
     if (sy < 16) {
         cam_y_ = std::max(0, cam_y_ - 16);
-    } else if (sy > Framebuffer::H - 32) {
-        cam_y_ = std::min(Board::kRows * 16 - Framebuffer::H, cam_y_ + 16);
+    } else if (sy > bottom_bar() - 32) {
+        cam_y_ = std::min(std::max(0, Board::kRows * 16 - bottom_bar()),
+                         cam_y_ + 16);
     }
     // Moving the cursor without a held button starts a new stamp.
     last_paint_valid_ = false;
@@ -1923,17 +1924,23 @@ void LevelEditor::draw_text_prompt(Framebuffer& fb, Engine& engine) {
         engine.draw_menu_window(fb, x, y, w, h);
         engine.draw_text(fb, x + 10, y + 8, 15, text_input_title_.c_str());
         fb.fill_rect(x + 10, y + 20, w - 20, 12, 0);
-        std::string shown = text_input_buffer_;
         constexpr size_t kMaxShown = 44;
-        if (shown.size() > kMaxShown) {
-            shown = shown.substr(shown.size() - kMaxShown);
+        const size_t cur = std::min(keyboard_.cursor(),
+                                    text_input_buffer_.size());
+        size_t start = text_input_buffer_.size() > kMaxShown
+                           ? text_input_buffer_.size() - kMaxShown
+                           : 0;
+        if (cur < start) {
+            start = cur;
         }
+        std::string view =
+            text_input_buffer_.substr(start, kMaxShown);
+        const size_t vcur = cur - start;
+        const std::string shown = view.substr(0, vcur) + "_" + view.substr(vcur);
         engine.draw_text(fb, x + 12, y + 23, 15, shown.c_str());
-        engine.draw_text(fb, x + 12 + static_cast<int>(shown.size()) * 6,
-                         y + 23, 14, "_");
         keyboard_.draw(fb, engine, x + (w - TextKeyboard::kWidth) / 2, y + 40);
         engine.draw_text(fb, x + 10, y + h - 10, 10,
-                         "D-PAD MOVE  A TYPE  Y DELETE  B CANCEL");
+                         "D-PAD MOVE  A TYPE  Y DEL  LB/RB CURSOR  B CANCEL");
         return;
     }
     const int x = 28;
@@ -1970,8 +1977,26 @@ void LevelEditor::text_input_text(const char* utf8) {
 }
 
 void LevelEditor::text_input_backspace() {
-    if (text_input_active_ && !text_input_buffer_.empty()) {
+    if (!text_input_active_) {
+        return;
+    }
+    if (keyboard_.active()) {
+        keyboard_.backspace();
+        return;
+    }
+    if (!text_input_buffer_.empty()) {
         text_input_buffer_.pop_back();
+    }
+}
+
+void LevelEditor::text_input_cursor(int dir) {
+    if (!text_input_active_ || !keyboard_.active()) {
+        return;
+    }
+    if (dir < 0) {
+        keyboard_.cursor_left();
+    } else if (dir > 0) {
+        keyboard_.cursor_right();
     }
 }
 
@@ -2417,14 +2442,14 @@ bool LevelEditor::load_board_path(const std::string& path, Engine& engine,
     engine.close_text_page();
     if (!board_.objects.empty()) {
         const BoardObject& o = board_.objects[0];
+        const int vh = bottom_bar();
         cam_x_ = clamp_int(o.x - Framebuffer::W / 2, 0,
                            Board::kCols * 16 - Framebuffer::W);
-        cam_y_ = clamp_int(o.y - Framebuffer::H / 2, 0,
-                           Board::kRows * 16 - Framebuffer::H);
+        cam_y_ = clamp_int(o.y - vh / 2, 0,
+                           std::max(0, Board::kRows * 16 - vh));
         cursor_col_ = clamp_int((cam_x_ + Framebuffer::W / 2) >> 4, 0,
                                 kBoardCols - 1);
-        cursor_row_ = clamp_int((cam_y_ + Framebuffer::H / 2) >> 4, 0,
-                                kBoardRows - 1);
+        cursor_row_ = clamp_int((cam_y_ + vh / 2) >> 4, 0, kBoardRows - 1);
         cursor_wx_ = cursor_col_ * 16 + 8;
         cursor_wy_ = cursor_row_ * 16 + 8;
     }
@@ -3057,11 +3082,12 @@ void LevelEditor::render(Framebuffer& fb, Engine& engine, float alpha) {
 }
 
 void LevelEditor::draw_bars(Framebuffer& fb, Engine& engine) {
+    const int board_bottom = bottom_bar();
     fb.fill_rect(0, 0, Framebuffer::W, kTopBar, 0);
     fb.fill_rect(0, kTopBar - 1, Framebuffer::W, 1, 8);
-    fb.fill_rect(0, kBottomBar, Framebuffer::W, Framebuffer::H - kBottomBar,
-                 0);
-    fb.fill_rect(0, kBottomBar, Framebuffer::W, 1, 8);
+    fb.fill_rect(0, board_bottom, Framebuffer::W,
+                 Framebuffer::H - board_bottom, 0);
+    fb.fill_rect(0, board_bottom, Framebuffer::W, 1, 8);
 
     char top[96];
     if (mode_ == Mode::Tile) {
@@ -3125,7 +3151,10 @@ void LevelEditor::draw_bars(Framebuffer& fb, Engine& engine) {
             hint = "LMB/A SELECT  ARROWS MOVE  RMB/X DELETE  ESC CLEAR";
         }
     }
-    engine.draw_text(fb, 2, kBottomBar + 2, 7, hint);
+    // The touch bar replaces the status strip on touch/desktop builds.
+    if (!touch_controls_) {
+        engine.draw_text(fb, 2, kBottomBar + 2, 7, hint);
+    }
 }
 
 void LevelEditor::draw_board_overlays(Framebuffer& fb, Engine& engine) {
@@ -3137,12 +3166,13 @@ void LevelEditor::draw_board_overlays(Framebuffer& fb, Engine& engine) {
         for (int c = c0; c <= c1; ++c) {
             const int x = c * 16 - cam_x_;
             if (x >= 0 && x < Framebuffer::W) {
-                fb.fill_rect(x, kTopBar, 1, kBottomBar - kTopBar, 8);
+                fb.fill_rect(x, kTopBar, 1, bottom_bar() - kTopBar, 8);
             }
         }
+        const int board_bottom = bottom_bar();
         for (int r = r0; r <= r1; ++r) {
             const int y = r * 16 - cam_y_;
-            if (y >= kTopBar && y < kBottomBar) {
+            if (y >= kTopBar && y < board_bottom) {
                 fb.fill_rect(0, y, Framebuffer::W, 1, 8);
             }
         }
@@ -3156,7 +3186,7 @@ void LevelEditor::draw_board_overlays(Framebuffer& fb, Engine& engine) {
             const int sx = o.x - cam_x_;
             const int sy = o.y - cam_y_;
             if (sx + w < 0 || sx >= Framebuffer::W || sy + h < kTopBar ||
-                sy >= kBottomBar) {
+                sy >= bottom_bar()) {
                 continue;
             }
             uint8_t colour = 12;
@@ -3315,7 +3345,7 @@ void LevelEditor::draw_minimap(Framebuffer& fb, Engine& engine) {
     const int vy0 = clamp_int(cam_y_ / 16, 0, Board::kRows - 1);
     const int vx1 = clamp_int((cam_x_ + Framebuffer::W - 1) / 16, 0,
                               Board::kCols - 1);
-    const int vy1 = clamp_int((cam_y_ + Framebuffer::H - 1) / 16, 0,
+    const int vy1 = clamp_int((cam_y_ + bottom_bar() - 1) / 16, 0,
                               Board::kRows - 1);
     outline(fb, mx + vx0, my + vy0, vx1 - vx0 + 1, vy1 - vy0 + 1, 8);
     // Selected object anchor.
@@ -3597,6 +3627,28 @@ void LevelEditor::draw_touch_bar(Framebuffer& fb, Engine& engine) {
         engine.draw_text(fb, x0 + 2, y0 + 6, active ? 15 : 7, labels[i]);
     }
     fb.fill_rect(0, kTouchBarY + 19, Framebuffer::W, 1, 0);
+}
+
+void LevelEditor::set_touch_controls(bool on) {
+    if (touch_controls_ == on) {
+        return;
+    }
+    touch_controls_ = on;
+    // The toolbar shortens the board viewport; keep the camera and cursor
+    // inside the new range when it appears or disappears.
+    if (open_ && !playtest_) {
+        cam_y_ = clamp_int(cam_y_, 0,
+                           std::max(0, Board::kRows * 16 - bottom_bar()));
+        keep_cursor_in_view();
+    }
+}
+
+int LevelEditor::touch_bar_top() const {
+    return touch_controls_ ? kTouchBarY : Framebuffer::H;
+}
+
+int LevelEditor::bottom_bar() const {
+    return touch_controls_ ? kTouchBarY : kBottomBar;
 }
 
 void LevelEditor::draw_help(Framebuffer& fb, Engine& engine) {

@@ -81,7 +81,7 @@ asset-pack system understands, not just the original archive formats:
 | Text pages | `text_pages/page_NN.txt`, `text_pages/pages.json`, `text_pages/preview/page_NN.png` | Read/redraw F1 help and menu pages |
 | Tile images | `tiles/<tile id>.png` + `tiles/tiles.json` | Tile art with attributes and names |
 | HUD | `hud/classic.png`, `hud/modern.png`, previews and `hud/icons/` | Editable HUD panels and item icons |
-| Portrait | `portrait.png` | 64x84 dialog portrait (default is the player idle sprite) |
+| Portrait | `portrait.png` + `portrait.json` | 64x70 dialog portrait (shape entry 24, one image) |
 | Theme | `themes/intro.png` | The intro-board menu backdrop (320x200) |
 | Music | `music/<track>.wav` | OPL2-rendered `.ddt` tracks (uses the built port) |
 | Palette | `palette.pal`, `palette_6bit.bin`, `palette.json` | Exact game DAC palette |
@@ -91,7 +91,11 @@ asset-pack system understands, not just the original archive formats:
 `Export Reference Asset Pack` writes a complete tree that can be copied to
 `external/<name>` and mounted with `--pack <name>` or `OPTIONS > ASSETS`.
 Board previews are large and are never written by `--all`; request them
-explicitly.
+explicitly.  The editor's **Tools > Export Asset Pack...** checklist exports any
+subset of these sections (sprites, fonts, pages, tiles, boards, themes, HUD,
+portrait, palette, page art, SFX, music), while **Export Reference Pack (all)**
+writes everything.  `export_reference_pack(..., include=[...])` is the matching
+API; omit `include` for the old all-sections behaviour.
 
 CLI equivalents:
 

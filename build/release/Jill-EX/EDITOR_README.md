@@ -36,9 +36,13 @@ the same code as the extractor.  **File > Open Files...** lets you load a
 `.sha`, `.dma` and `.vcl` directly instead of picking a game.
 
 Every tab writes a **new file** via a Save dialog; the originals are never
-overwritten unless you explicitly choose the same path.  Bad input is reported
-as a short error dialog/status message, not a traceback.  Set
-`JILL_EDITOR_DEBUG=1` to print a traceback for unexpected errors.
+overwritten unless you explicitly choose the same path.  Before any operation
+writes over an existing file, the editor copies it to
+`<name>.<YYYYmmdd-HHMMSS>.bak` in the same folder, so overwriting in place still
+leaves a timestamped backup of every file about to change (`.sha`, `.dma`,
+`.vcl`, board).  Bad input is reported as a short error dialog/status message,
+not a traceback.  Set `JILL_EDITOR_DEBUG=1` to print a traceback for unexpected
+errors.
 
 ## Tabs
 
@@ -46,6 +50,11 @@ as a short error dialog/status message, not a traceback.  Set
 
 * Pick one of the 128 shape entries, step through its frames and export the
   current frame as a PNG.
+* **Grid view** replaces the single frame with a clickable contact sheet of
+  every frame in the entry (the best column count is chosen automatically).
+  Click a cell to select that frame; untick it to return to the single-frame /
+  animation view.  **Play** animation is unchanged and automatically leaves
+  grid mode.
 * **Replace from PNG** imports a PNG into that frame (same logic as
   `jill_import.py sha-frame`): nearest-neighbour resize to the old frame size,
   quantised to the entry palette, transparent pixels become index 0.
@@ -61,6 +70,15 @@ as a short error dialog/status message, not a traceback.  Set
   sorted naturally by name, scaled to the first image's size and quantised to
   the entry palette; bpp, flags, palette and the trailing frame are preserved.
   PNG/BMP/GIF/JPEG/TGA inputs are accepted.
+* **Export Palette** / **Import Palette** read and write the selected entry's
+  colour table as JASC `.pal`, GIMP `.gpl` or Adobe `.act`.  Importing snaps
+  each colour to the nearest global VGA index, preserves the palette words' low
+  16 bits and leaves slot 0 (transparent/key) unchanged; it **recolours every
+  frame of that entry** (the table is shared) and asks for confirmation first.
+  Entries without a per-entry table (8bpp identity-mapped) cannot be imported.
+* **Portrait (entry 24 as one image)**: **Export Portrait PNG** writes Jill's
+  dialog face as a single 64x70 image; **Import Portrait PNG** reads one image
+  (resized to 64x70) and splits it across the sixteen 16x16 portrait tiles.
 * **Rebuild from Folder** accepts `shape_NNN/frame_NNN.png` trees and the
   extractor's flat `sprites/shape_NNN_FFF.png` layout (`sha-folder`) when you
   want to update several entries at once.
@@ -70,19 +88,31 @@ as a short error dialog/status message, not a traceback.  Set
 ### Tiles
 
 The DMA list shows each tile id, its name and the shape entry/frame holding its
-art.  Export a tile as PNG or replace its art from a PNG (`sha-tile`).  Only the
-`.sha` is written; the `.dma` is read-only.
+art.  **Grid view** shows a paged 10x6 contact sheet of the DMA tiles; click a
+cell to select it, and use **<** / **>** to change page.  Untick it for the
+single-tile preview.  Export a tile as PNG or replace its art from a PNG.
 
-A shape entry's 16-colour palette is shared by every frame in that entry, so
-recolouring it changes other tiles in the original game too.  The editor
-therefore never changes the tile palette: tick **Dither to existing palette**
-to spread the new art across the colours that are already there (Floyd-Steinberg
-dithering) instead of snapping each pixel to the nearest one.  This is safe in
-the original game but cannot create genuinely new hues.  The `tile-clone` CLI
-command can give a tile its own palette by cloning the entry into a free shape
-slot and repointing the DMA record (writes both `.sha` and `.dma`), but the
-original game still rejects that layout, so it is not exposed in the GUI.
-**Use in Level Editor** sets the paint tile on the Levels tab.
+A shape entry's palette is shared by every frame in that entry, so recolouring
+it in place changes every tile that uses the entry.  Import has two modes:
+
+* **Dither to existing palette** (default off) spreads new colours across the
+  colours already present with Floyd-Steinberg dithering instead of snapping
+  each pixel.  Safe, but cannot create genuinely new hues.
+* **Allow new colours (append 8bpp frame, original-safe)** is on by default.
+  It quantises the image to the fixed global VGA palette and appends it as a
+  new frame of an existing 8bpp identity-mapped shape entry below 64 (entry 24
+  in the Jill games), then repoints only that tile's DMA record.  No palette
+  table is written or changed and no free shape slot is needed, so the original
+  DOS EXE keeps its normal palette layout.  Both `.sha` and `.dma` are written;
+  save and install both.  Untick it to use the old in-place `sha-tile` path
+  (`.sha` only, palette unchanged).
+
+**Export Tile Palette** / **Import Tile Palette** work on the selected tile's
+shape entry in `.pal`, `.gpl` or `.act` form; importing recolours every tile
+that shares the entry and asks for confirmation.  The `tile-clone` CLI command
+still exists for ports/packs that support cloned entries, but the original game
+rejects that layout, so it is not exposed in the GUI.  **Use in Level Editor**
+sets the paint tile on the Levels tab.
 
 ### Levels
 
@@ -137,6 +167,22 @@ a WAV into the selected slot (`vcl-sfx`: mono, unsigned 8-bit, resampled to the
 slot rate, normally 6000 Hz), import a folder of `sfx_NN.wav` (`vcl-folder`) or
 save the resulting `.vcl`.
 
+## Asset packs
+
+**Tools > Export Asset Pack...** opens a checklist of the external-pack
+elements (sprites, fonts, text pages, tiles, board previews, menu theme, HUD,
+portrait, global palette, page art, SFX and music).  **Export All** ticks or
+clears everything, and the music section also has a rendered-length field
+(30 seconds by default) because rendering is slow.  The destination defaults to
+`<data folder>/reference_pack`; any folder can be chosen.  The result is the
+same tree the extractor writes and the port mounts, so it can be edited and
+packaged with `jill_import.py pack` or dropped into `external/`.
+
+**Tools > Export Reference Pack (all)...** skips the checklist and exports
+every section.  **Tools > Export Palettes for Image Editor...** writes every
+shape entry's palette to a folder (`entry_NNN.pal`) plus the global palette, for
+batch palette work in an image editor.
+
 ## Workflows
 
 **Change one sprite**
@@ -144,6 +190,26 @@ save the resulting `.vcl`.
 1. Select the game (or open its `.sha`), pick the entry/frame on Sprites.
 2. Export the PNG, edit it in an image editor, then Replace from PNG.
 3. Put the saved `.sha` beside the game data or mount it as a pack.
+
+**Change one tile (new colours)**
+
+1. On Tiles, pick the tile and **Export PNG**.
+2. Edit it and **Replace from PNG** with **Allow new colours** ticked.
+3. Save both the `.sha` and `.dma` the editor asks for and install both beside
+   the game data.  The appends only a new frame to the 8bpp portrait entry and
+   repoints this one DMA record.
+
+**Change the portrait**
+
+1. On Sprites, **Export Portrait PNG**, edit the 64x70 image, then
+   **Import Portrait PNG** and save the new `.sha`.
+
+**Change a palette**
+
+1. On Sprites or Tiles, **Export Palette**, edit it in an image editor and
+   **Import Palette**.  Remember that the colour table is shared by every
+   frame/tile of the entry.  **Tools > Export Palettes** writes them all at
+   once.
 
 **Change a level**
 
@@ -163,13 +229,15 @@ save the resulting `.vcl`.
 
 ## Limits
 
-* No DMA write API: tile ids/names/attributes cannot be changed here.
-* Sprite import quantises to the existing palette; use the extractor's palette
-  assets when preparing art from scratch.
+* Tile ids/names/attributes still cannot be edited; the safe tile importer only
+  rewrites the selected record's shape reference.
+* Sprite import quantises to the existing palette unless **Adapt palette** is
+  ticked; palette import writes the entry table, not the global VGA palette.
 * The level editor draws tiles only; object placement is numeric (no dragging
   objects on the canvas).
 * Text import is VCL pages only; there is no WAV-to-CMF/DDT music converter.
-* This edits files on disk; keep backups of archives you replace.
+* This edits files on disk.  Automatic timestamped `.bak` copies are made
+  before overwriting existing files, but keep your own archive copies too.
 
 See `IMPORT_README.md` for the equivalent CLI commands and
 `EXTRACTOR_README.md` for exporting reference packs.

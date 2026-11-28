@@ -169,6 +169,11 @@ void SfxVoice::mix_external(float* out, int frames, int device_rate) {
     const size_t total = a.frames();
     const double step = static_cast<double>(a.rate) /
                         (device_rate > 0 ? device_rate : 48000);
+    // Short fades hide the step from 0 to the sample's first value and from
+    // its last value back to 0.  The raw bank samples often begin/end well
+    // away from silence, so starting or cutting them clicked.
+    const double fade_in = std::max(1.0, a.rate * 0.0015);
+    const double fade_out = std::max(2.0, a.rate * 0.003);
     for (int i = 0; i < frames; ++i) {
         const size_t f = static_cast<size_t>(ext_pos_);
         if (f >= total) {
@@ -180,10 +185,17 @@ void SfxVoice::mix_external(float* out, int frames, int device_rate) {
             v += a.samples[f * static_cast<size_t>(ch) + static_cast<size_t>(c)];
         }
         v /= static_cast<float>(ch);
+        double gain = 1.0;
+        const double left = static_cast<double>(total - 1) - ext_pos_;
+        if (ext_pos_ < fade_in) {
+            gain = ext_pos_ / fade_in;
+        } else if (left < fade_out) {
+            gain = std::max(0.0, left / fade_out);
+        }
         if (pc_speaker_) {
             v = (v >= 0.0f ? 1.0f : -1.0f) * 0.5f;
         }
-        v *= volume_;
+        v *= static_cast<float>(gain) * volume_;
         out[i] += v;
         peak_ = std::max(peak_, static_cast<float>(std::fabs(v)));
         ext_pos_ += step;
@@ -206,8 +218,13 @@ void SfxVoice::mix(float* out, int frames, int device_rate) {
         stop();
         return;
     }
-    const double step = static_cast<double>(bank_->rate(id_)) /
-                        (device_rate > 0 ? device_rate : 48000);
+    const double rate = bank_->rate(id_);
+    const double step = rate / (device_rate > 0 ? device_rate : 48000);
+    // 1.5 ms in / 3 ms out at the sample's own rate: the banks often start
+    // and end away from the 128 silence point.
+    const double fade_in = std::max(1.0, rate * 0.0015);
+    const double fade_out = std::max(2.0, rate * 0.003);
+    const double last = static_cast<double>(s.size() - 1);
     for (int i = 0; i < frames; ++i) {
         const size_t a = static_cast<size_t>(pos_);
         if (a + 1 >= s.size()) {
@@ -218,10 +235,17 @@ void SfxVoice::mix(float* out, int frames, int device_rate) {
         const float s0 = (static_cast<float>(s[a]) - 128.0f) / 128.0f;
         const float s1 = (static_cast<float>(s[a + 1]) - 128.0f) / 128.0f;
         float v = s0 * (1.0f - frac) + s1 * frac;
+        double gain = 1.0;
+        const double left = last - pos_;
+        if (pos_ < fade_in) {
+            gain = pos_ / fade_in;
+        } else if (left < fade_out) {
+            gain = std::max(0.0, left / fade_out);
+        }
         if (pc_speaker_) {
             v = (v >= 0.0f ? 1.0f : -1.0f) * 0.5f;
         }
-        v *= volume_;
+        v *= static_cast<float>(gain) * volume_;
         out[i] += v;
         peak_ = std::max(peak_, static_cast<float>(std::fabs(v)));
         pos_ += step;

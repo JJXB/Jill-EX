@@ -1646,6 +1646,24 @@ FONT_ENTRY = 2
 FONT_TRANSPARENT = (0, 3)  # the original text blitter skips 0 and 3
 HUD_ICON_BANK = 0x0E
 PORTRAIT_ENTRY = 24  # 4x4 tile grid (16 frames) used by the dialog portrait
+PORTRAIT_SIZE = (64, 70)
+
+# Selectable sections of an external/reference pack.  Keys are stable (used by
+# the CLI/GUI); values are the labels shown in the editor's export dialog.
+PACK_SECTIONS: Dict[str, str] = {
+    'sprites': 'Sprites (every shape frame)',
+    'fonts': 'Fonts',
+    'pages': 'Text pages (.txt + previews)',
+    'tiles': 'Tiles',
+    'boards': 'Board previews + pack backdrops',
+    'themes': 'Menu theme (themes/intro.png)',
+    'hud': 'HUD panels + icons',
+    'portrait': 'Portrait (one 64x70 image)',
+    'palette': 'Global palette (.pal/.bin/.json)',
+    'page_art': 'Text-page art (pack pages/)',
+    'sfx': 'Sound effects (WAV)',
+    'music': 'Music (rendered WAVs, slow)',
+}
 
 
 def _palette_rgb(sha: SHAFile, index: int) -> Tuple[int, int, int]:
@@ -2035,17 +2053,12 @@ def export_hud_assets(sha: SHAFile, out_dir: Path,
     return count
 
 
-def export_portrait_asset(sha: SHAFile, out_dir: Path) -> bool:
-    """Export `portrait.png` (64x70), the original dialog/title portrait.
-
-    Jill's face is shape entry 24: sixteen 16x16 tiles laid out as a 4x4 grid
-    (the last row's frames are 16x22/16x20, so the finished picture is 70 px
-    tall).  The same entry is used by Jill 1/2/3; Onesimus has no portrait.
-    """
+def portrait_image(sha: SHAFile) -> Optional[Image.Image]:
+    """Compose Jill's dialog portrait into one 64x70 RGBA image."""
     entry = sha.entries[PORTRAIT_ENTRY] if PORTRAIT_ENTRY < len(sha.entries) else None
     if entry is None or not entry.frames:
-        return False
-    frame = Image.new('RGBA', (64, 70), (0, 0, 0, 255))
+        return None
+    frame = Image.new('RGBA', PORTRAIT_SIZE, (0, 0, 0, 255))
     drew = False
     for i in range(16):
         tile = _shape_rgba(sha, PORTRAIT_ENTRY, i, skip=())
@@ -2053,12 +2066,23 @@ def export_portrait_asset(sha: SHAFile, out_dir: Path) -> bool:
             continue
         frame.paste(tile, ((i % 4) * 16, (i // 4) * 16))
         drew = True
-    if not drew:
+    return frame if drew else None
+
+
+def export_portrait_asset(sha: SHAFile, out_dir: Path) -> bool:
+    """Export `portrait.png` (64x70), the original dialog/title portrait.
+
+    Jill's face is shape entry 24: sixteen 16x16 tiles laid out as a 4x4 grid
+    (the last row's frames are 16x22/16x20, so the finished picture is 70 px
+    tall).  The same entry is used by Jill 1/2/3; Onesimus has no portrait.
+    """
+    frame = portrait_image(sha)
+    if frame is None:
         return False
     out_dir.mkdir(parents=True, exist_ok=True)
     frame.save(out_dir / "portrait.png")
     with open(out_dir / "portrait.json", 'w', encoding='utf-8') as f:
-        json.dump({'size': [64, 70],
+        json.dump({'size': list(PORTRAIT_SIZE),
                    'source': f'shape entry {PORTRAIT_ENTRY} frames 0-15 '
                              '(4x4 tile grid)',
                    'layout': '16x16 tiles, bottom row 16x22/16x20'},
@@ -2068,65 +2092,97 @@ def export_portrait_asset(sha: SHAFile, out_dir: Path) -> bool:
 
 def export_reference_pack(game: Dict[str, Any], sha: SHAFile, vcl: VCLFile,
                           dma: DMAFile, out_dir: Path,
-                          music_seconds: float = MUSIC_EXPORT_SECONDS) -> Dict[str, int]:
-    """Write a ready-to-edit `external/<id>` style pack tree."""
+                          music_seconds: float = MUSIC_EXPORT_SECONDS,
+                          include: Optional[Any] = None) -> Dict[str, int]:
+    """Write a ready-to-edit `external/<id>` style pack tree.
+
+    `include` is an optional iterable of :data:`PACK_SECTIONS` keys.  Omit it
+    (or pass ``None``) to export every section, which keeps the CLI behaviour.
+    """
     out = Path(out_dir)
-    sprite_dir = out / "sprites"
-    sprite_dir.mkdir(parents=True, exist_ok=True)
+    if include is None:
+        wanted = set(PACK_SECTIONS)
+    else:
+        wanted = set(include)
+        unknown = wanted - set(PACK_SECTIONS)
+        if unknown:
+            raise ValueError(f"unknown pack section(s): {', '.join(sorted(unknown))}")
+        if not wanted:
+            raise ValueError("no pack sections selected")
+    out.mkdir(parents=True, exist_ok=True)
     stats: Dict[str, int] = {}
 
-    # Every shape frame under the pack's shape_<entry>_<frame> name.
-    shapes = 0
-    for entry_idx in range(128):
-        entry = sha.entries[entry_idx]
-        if entry is None:
-            continue
-        for frame_idx in range(entry.frame_count):
-            skip = FONT_TRANSPARENT if entry_idx == FONT_ENTRY else (0,)
-            img = _shape_rgba(sha, entry_idx, frame_idx, skip=skip)
-            if img:
-                img.save(sprite_dir / f"shape_{entry_idx:03d}_{frame_idx:03d}.png")
-                shapes += 1
-    stats['sprites'] = shapes
+    if 'sprites' in wanted:
+        sprite_dir = out / "sprites"
+        sprite_dir.mkdir(parents=True, exist_ok=True)
+        # Every shape frame under the pack's shape_<entry>_<frame> name.
+        shapes = 0
+        for entry_idx in range(128):
+            entry = sha.entries[entry_idx]
+            if entry is None:
+                continue
+            for frame_idx in range(entry.frame_count):
+                skip = FONT_TRANSPARENT if entry_idx == FONT_ENTRY else (0,)
+                img = _shape_rgba(sha, entry_idx, frame_idx, skip=skip)
+                if img:
+                    img.save(sprite_dir / f"shape_{entry_idx:03d}_{frame_idx:03d}.png")
+                    shapes += 1
+        stats['sprites'] = shapes
 
-    stats['fonts'] = export_font_assets(sha, out)
-    stats['pages'] = export_text_page_assets(vcl, sha, out)
-    stats['tiles'] = export_tile_assets(sha, dma, out)
-    stats['boards'] = export_board_previews(game, sha, dma, out)
-    export_theme_assets(game, sha, dma, out)
-    export_palette_assets(sha, out)
+    if 'fonts' in wanted:
+        stats['fonts'] = export_font_assets(sha, out)
+    if 'pages' in wanted or 'page_art' in wanted:
+        page_count = export_text_page_assets(vcl, sha, out)
+        if 'pages' in wanted:
+            stats['pages'] = page_count
+    if 'tiles' in wanted:
+        stats['tiles'] = export_tile_assets(sha, dma, out)
+    if 'boards' in wanted:
+        stats['boards'] = export_board_previews(game, sha, dma, out)
+    if 'themes' in wanted:
+        stats['themes'] = 1 if export_theme_assets(game, sha, dma, out) else 0
+    if 'palette' in wanted:
+        export_palette_assets(sha, out)
+        stats['palette'] = 1
+    if 'hud' in wanted:
+        icon_bank = game.get('hud_icon_bank', HUD_ICON_BANK)
+        stats['hud_icons'] = export_hud_assets(sha, out, icon_bank)
+    if 'portrait' in wanted:
+        stats['portrait'] = 1 if export_portrait_asset(sha, out) else 0
 
     # Pack page art: blank framed pages, with the text kept beside them.
-    pages_dir = out / "pages"
-    pages_dir.mkdir(exist_ok=True)
-    src_pages = out / "text_pages"
-    for p in sorted(src_pages.glob("page_*.txt")):
-        n = int(p.stem.split('_')[1])
-        bg = _palette_rgb(sha, 0)
-        frame = _palette_rgb(sha, 8)
-        img = Image.new('RGBA', (320, 200), (*bg, 255))
-        d = ImageDraw.Draw(img)
-        d.rectangle([6, 4, 313, 195], fill=(*frame, 255))
-        d.rectangle([7, 5, 312, 194], fill=(*bg, 255))
-        d.line([14, 21, 305, 21], fill=(*frame, 255))
-        img.save(pages_dir / f"page_{n:02d}.png")
+    if 'page_art' in wanted:
+        pages_dir = out / "pages"
+        pages_dir.mkdir(exist_ok=True)
+        src_pages = out / "text_pages"
+        count = 0
+        for p in sorted(src_pages.glob("page_*.txt")):
+            n = int(p.stem.split('_')[1])
+            bg = _palette_rgb(sha, 0)
+            frame = _palette_rgb(sha, 8)
+            img = Image.new('RGBA', (320, 200), (*bg, 255))
+            d = ImageDraw.Draw(img)
+            d.rectangle([6, 4, 313, 195], fill=(*frame, 255))
+            d.rectangle([7, 5, 312, 194], fill=(*bg, 255))
+            d.line([14, 21, 305, 21], fill=(*frame, 255))
+            img.save(pages_dir / f"page_{n:02d}.png")
+            count += 1
+        stats['page_art'] = count
 
-    # Sound effects as WAV, the format the pack loader expects.
-    sfx_dir = out / "sfx"
-    sfx_dir.mkdir(exist_ok=True)
-    sfx_count = 0
-    for i in range(50):
-        wav = vcl.create_wav(i, "sfx")
-        if wav:
-            (sfx_dir / f"{i}.wav").write_bytes(wav)
-            sfx_count += 1
-    stats['sfx'] = sfx_count
-    # Music: OPL2-rendered WAVs named after the original .ddt track stems.
-    stats['music'] = export_music_wavs(game, out, music_seconds)
-
-    icon_bank = game.get('hud_icon_bank', HUD_ICON_BANK)
-    stats['hud_icons'] = export_hud_assets(sha, out, icon_bank)
-    stats['portrait'] = 1 if export_portrait_asset(sha, out) else 0
+    if 'sfx' in wanted:
+        # Sound effects as WAV, the format the pack loader expects.
+        sfx_dir = out / "sfx"
+        sfx_dir.mkdir(exist_ok=True)
+        sfx_count = 0
+        for i in range(50):
+            wav = vcl.create_wav(i, "sfx")
+            if wav:
+                (sfx_dir / f"{i}.wav").write_bytes(wav)
+                sfx_count += 1
+        stats['sfx'] = sfx_count
+    if 'music' in wanted:
+        # Music: OPL2-rendered WAVs named after the original .ddt track stems.
+        stats['music'] = export_music_wavs(game, out, music_seconds)
 
     with open(out / "pack.ini", 'w', encoding='ascii') as f:
         f.write("; Generated reference pack - edit or replace these files.\n")

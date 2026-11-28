@@ -88,19 +88,24 @@ public:
     // outside the frame).
     void release_mouse();
 
-    // Touch UI for Vita/Android: an on-screen toolbar supplies mode, palette,
-    // pick, erase, save, load and playtest without L2/L3/R2/R3.
-    void set_touch_controls(bool on) { touch_controls_ = on; }
+    // On-screen toolbar (Vita/Android touchscreens and desktop mouse) supplies
+    // mode, palette, pick, erase, save, load and playtest without L2/L3/R2/R3.
+    void set_touch_controls(bool on);
     bool touch_controls() const { return touch_controls_; }
     bool touch_down(int x, int y, Engine& engine);
     void touch_move(int x, int y, Engine& engine);
     void touch_up(Engine& engine);
+    // Top edge of the on-screen toolbar, or the frame height when the toolbar
+    // is not shown.
+    int touch_bar_top() const;
 
     // Native text prompt (object strings).  The app enables the platform text
     // input while text_input_active() is true.
     bool text_input_active() const { return text_input_active_; }
     void text_input_text(const char* utf8);
     void text_input_backspace();
+    // Move the pad-keyboard insertion cursor (LB/RB).
+    void text_input_cursor(int dir);
     void text_input_commit(Engine& engine);
     void text_input_cancel();
 
@@ -217,6 +222,9 @@ private:
     void draw_editor_menu(Framebuffer& fb, Engine& engine);
     bool activate_menu_row(int row, Engine& engine);
     void draw_touch_bar(Framebuffer& fb, Engine& engine);
+    // Bottom edge of the editable board area: above the touch bar when it is
+    // shown, otherwise the original 188-px status strip.
+    int bottom_bar() const;
 
     bool open_ = false;
     bool playtest_ = false;

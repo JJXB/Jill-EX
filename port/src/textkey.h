@@ -10,8 +10,8 @@ struct Framebuffer;
 // the Noisemaker screen, which needs the original QWERTY layout.
 //
 // Rows 0..3 are the layout keys "1234567890-= / QWERTYUIOP[] / ASDFGHJKL;' /
-// ZXCVBNM,./" (the original Noisemaker order, so character -> sound slot is a
-// direct index).  Row 4 holds SPACE / DEL / OK / CANCEL.
+// ZXCVBNM,./!?" (the original Noisemaker order, so character -> sound slot is
+// a direct index).  Row 4 holds SPACE / DEL / SHIFT / OK / CANCEL.
 class TextKeyboard {
 public:
     static constexpr int kCols = 12;
@@ -21,7 +21,7 @@ public:
     static constexpr int kWidth = kCols * kCellW;
     static constexpr int kHeight = kRows * kCellH;
 
-    enum class Action { None, Space, Del, Ok, Cancel };
+    enum class Action { None, Space, Del, Shift, Ok, Cancel };
 
     // `buffer` may be null for the Noisemaker, where only the highlighted
     // character is used.
@@ -30,11 +30,17 @@ public:
     bool active() const { return active_; }
 
     void move(int dx, int dy);
-    // Press the highlighted key.  Character keys append to the buffer; OK and
+    // Press the highlighted key.  Character keys insert at the cursor; OK and
     // CANCEL end the entry and return true.  `cancelled()` tells them apart.
     bool press();
     bool cancelled() const { return cancelled_; }
     void backspace();
+    // Text cursor (insertion point) for LB/RB.  Cursor==size means append.
+    void cursor_left();
+    void cursor_right();
+    size_t cursor() const { return cursor_; }
+    // SHIFT toggles lowercase for subsequent characters.
+    bool lower() const { return lower_; }
 
     char selected_char() const;
     const char* selected_label() const;
@@ -46,11 +52,14 @@ private:
     int span_start(int col) const;
     int span_end(int col) const;
     void clamp_selection();
+    void insert_char(char c);
 
     bool active_ = false;
     bool cancelled_ = false;
     std::string* buffer_ = nullptr;
     size_t max_len_ = 255;
+    size_t cursor_ = 0;
+    bool lower_ = false;
     int row_ = 1;
     int col_ = 0;
 };

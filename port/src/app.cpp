@@ -241,6 +241,57 @@ std::shared_ptr<CmfSong> load_track(const GameDef& g, const std::string& name,
     return song;
 }
 
+std::string lower_ascii(const std::string& s) {
+    std::string out = s;
+    for (char& c : out) {
+        if (c >= 'A' && c <= 'Z') {
+            c = static_cast<char>(c - 'A' + 'a');
+        }
+    }
+    return out;
+}
+
+// OPTIONS > MUSIC PLAYER track list: the game's own *.ddt files, sorted by
+// file name.  The title track is added when it lives elsewhere (a pack, or an
+// SONG*.ARK bank), so it can still be auditioned.
+void scan_music_tracks(const GameDef& g, std::vector<std::string>& out) {
+    out.clear();
+    std::error_code ec;
+    const std::string dir = jill_paths::resolve_file(g.data_dir);
+    jill_fs::directory_iterator it(jill_fs::path(dir), ec);
+    if (!ec) {
+        for (const auto& entry : it) {
+            std::error_code file_ec;
+            if (!entry.is_regular_file(file_ec) || file_ec) {
+                continue;
+            }
+            const std::string name = entry.path().filename().string();
+            const std::string low = lower_ascii(name);
+            if (low.size() > 4 &&
+                low.compare(low.size() - 4, 4, ".ddt") == 0) {
+                out.push_back(name);
+            }
+        }
+    }
+    std::sort(out.begin(), out.end(),
+              [](const std::string& a, const std::string& b) {
+                  return lower_ascii(a) < lower_ascii(b);
+              });
+    if (!g.title_music.empty()) {
+        const std::string low = lower_ascii(g.title_music);
+        bool found = false;
+        for (const std::string& t : out) {
+            if (lower_ascii(t) == low) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            out.insert(out.begin(), g.title_music);
+        }
+    }
+}
+
 // --- display post-process -------------------------------------------------
 // These work on the 320x200 ARGB frame just before it is uploaded.  They are
 // deliberately cheap: no shader pipeline, so they also work with SDL's
@@ -1398,6 +1449,7 @@ enum class MenuScreen {
     NoisemakerSelect,  // choose which episode's board noisemaker to open
     Noisemaker,        // original board page 99 "NOISE BLASTER" screen
     SoundTest,         // OPTIONS > SOUND raw-slot audition screen
+    MusicPlayer,       // OPTIONS > MUSIC PLAYER: audition the game's tracks
     Assets,
     EditorSelect,      // choose which installed game to edit
     EditorBoards       // choose which board of that game to edit
@@ -1442,6 +1494,9 @@ struct Menu {
     int hi_game = -1;              // episode shown on HIGH SCORES
     HiScores hi_scores;
     int noise_sel = 0;       // front-end sound-test row
+    int music_sel = 0;       // OPTIONS > MUSIC PLAYER row
+    std::vector<std::string> music_tracks;  // scanned *.ddt names
+    std::string music_track;                // track started from the player
     int nm_sel = 0;          // NOISEMAKER episode selector
     int nm_game = 0;         // episode whose board page 99 is open
     int assets_sel = 0;      // external pack row
@@ -1490,11 +1545,12 @@ bool menu_open(const Menu& m) { return m.screen != MenuScreen::Closed; }
 
 // OPTIONS row indices.  The touch layout row only exists on Android, where the
 // on-screen controls are drawn at all.
+constexpr int kOptionsMusicRow = 8;
 #ifdef JILL_ANDROID
-constexpr int kOptionsTouchRow = 8;
-constexpr int kOptionsBackRow = 9;
+constexpr int kOptionsTouchRow = 9;
+constexpr int kOptionsBackRow = 10;
 #else
-constexpr int kOptionsBackRow = 8;
+constexpr int kOptionsBackRow = 9;
 #endif
 
 int& menu_sel(Menu& m) {
@@ -1537,6 +1593,8 @@ int& menu_sel(Menu& m) {
             return m.nm_sel;
         case MenuScreen::SoundTest:
             return m.noise_sel;
+        case MenuScreen::MusicPlayer:
+            return m.music_sel;
         case MenuScreen::Assets:
             return m.assets_sel;
         case MenuScreen::EditorSelect:
@@ -2100,7 +2158,7 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
                 v.push_back("HIGH SCORES");
                 v.push_back("OPTIONS");
                 v.push_back("NOISEMAKER");
-                v.push_back("LEVEL EDITOR");
+                v.push_back("JILL MAKER");
                 v.push_back("QUIT");
             }
             return v;
@@ -2195,13 +2253,29 @@ std::vector<std::string> menu_items(const Menu& m, bool started,
         }
         case MenuScreen::Story:
             return {};
+        case MenuScreen::MusicPlayer: {
+            std::vector<std::string> v;
+            for (const std::string& track : m.music_tracks) {
+                const bool playing =
+                    !m.music_track.empty() &&
+                    lower_ascii(track) == lower_ascii(m.music_track);
+                v.push_back((playing ? "* " : "") +
+                            upper_ascii(track.c_str()));
+            }
+            if (v.empty()) {
+                v.push_back("NO TRACKS IN GAME DATA");
+            }
+            v.push_back("BACK");
+            return v;
+        }
         case MenuScreen::Options:
 #ifdef JILL_ANDROID
             return {"HUD", "VIDEO", "SOUND", "CHEATS", "CONTROLS", "MENUS",
-                    "GAMEPLAY", "ASSETS", "TOUCH CONTROLS", "BACK"};
+                    "GAMEPLAY", "ASSETS", "MUSIC PLAYER", "TOUCH CONTROLS",
+                    "BACK"};
 #else
             return {"HUD", "VIDEO", "SOUND", "CHEATS", "CONTROLS", "MENUS",
-                    "GAMEPLAY", "ASSETS", "BACK"};
+                    "GAMEPLAY", "ASSETS", "MUSIC PLAYER", "BACK"};
 #endif
         case MenuScreen::Video: {
             char size[64];
@@ -3074,10 +3148,11 @@ void draw_menu(Framebuffer& fb, Engine& engine, Menu& m, bool started,
         case MenuScreen::LoadGame: sub = "RESTORE GAME"; break;
         case MenuScreen::HighScores: sub = "HI SCORES"; break;
         case MenuScreen::SoundTest: sub = "SOUND TEST"; break;
+        case MenuScreen::MusicPlayer: sub = "MUSIC PLAYER"; break;
         case MenuScreen::NoisemakerSelect: sub = "NOISEMAKER"; break;
         case MenuScreen::Assets: sub = "EXTERNAL ASSETS"; break;
         case MenuScreen::EditorSelect: sub = "SELECT EPISODE"; break;
-        case MenuScreen::EditorBoards: sub = "LEVEL EDITOR"; break;
+        case MenuScreen::EditorBoards: sub = "JILL MAKER"; break;
         default: break;
     }
 
@@ -3198,12 +3273,14 @@ void draw_hiscore_entry(Framebuffer& fb, Engine& engine,
         std::snprintf(line, sizeof(line), "SCORE: %lu",
                       static_cast<unsigned long>(p.score));
         engine.draw_text(fb, x + 10, y + 20, 14, line);
-        std::string shown = p.name.empty() ? std::string("_") : (p.name + "_");
+        const size_t cur = std::min(kb->cursor(), p.name.size());
+        const std::string shown =
+            p.name.substr(0, cur) + "_" + p.name.substr(cur);
         engine.draw_text(fb, x + 10, y + 32, 7, "NAME:");
         engine.draw_text(fb, x + 58, y + 32, 15, shown.c_str());
         kb->draw(fb, engine, x + (w - TextKeyboard::kWidth) / 2, y + 46);
         engine.draw_text(fb, x + 10, y + h - 10, 11,
-                         "D-PAD MOVE  A TYPE  Y DELETE  START ACCEPT  B DEFAULT");
+                         "DPAD MOVE  A TYPE  Y DEL  LB/RB CURSOR  START OK");
         return;
     }
     const int x = 46;
@@ -3795,6 +3872,7 @@ int run_sdl(const Options& opt, Engine& engine,
     auto play_music = [&](const std::string& name) {
         if (name.empty()) {
             music_player.stop();
+            menu.music_track.clear();
             return;
         }
 #ifdef JILL_PS4
@@ -3810,6 +3888,7 @@ int run_sdl(const Options& opt, Engine& engine,
             if (ext_assets.mounted() && ext_assets.find_music(name, rel) &&
                 decode_pack_audio(rel, audio)) {
                 music_player.play_pcm(audio);
+                menu.music_track = name;
                 return;
             }
         }
@@ -3817,7 +3896,9 @@ int run_sdl(const Options& opt, Engine& engine,
         auto song = load_track(engine.game(), name, merr);
         if (song) {
             music_player.play(song);
+            menu.music_track = name;
         } else {
+            menu.music_track.clear();
             jill_paths::trace("music: FAILED %s (%s)", name.c_str(), merr.c_str());
             std::fprintf(stderr, "%s\n", merr.c_str());
         }
@@ -3937,6 +4018,8 @@ int run_sdl(const Options& opt, Engine& engine,
     bool native_touch_down = false;
     int native_touch_x = 0;
     int native_touch_y = 0;
+    // A desktop mouse press that landed on the editor's touch toolbar.
+    bool editor_bar_press = false;
     bool hiscore_text_active = false;
     bool editor_text_active = false;
     // Press = test from the cursor; keeping the playtest button held for this
@@ -4435,6 +4518,7 @@ int run_sdl(const Options& opt, Engine& engine,
                        menu.screen == MenuScreen::Audio ||
                        menu.screen == MenuScreen::Menus ||
                        menu.screen == MenuScreen::Assets ||
+                       menu.screen == MenuScreen::MusicPlayer ||
                        menu.screen == MenuScreen::Cheats) {
                 menu.screen = MenuScreen::Options;
             } else if (menu.screen == MenuScreen::SoundTest) {
@@ -4796,6 +4880,18 @@ int run_sdl(const Options& opt, Engine& engine,
                 } else if (nav == 5 && sel == 7) {
                     menu.assets_sel = 0;
                     menu.screen = MenuScreen::Assets;
+                } else if (nav == 5 && sel == kOptionsMusicRow) {
+                    scan_music_tracks(engine.game(), menu.music_tracks);
+                    menu.music_sel = 0;
+                    for (int i = 0;
+                         i < static_cast<int>(menu.music_tracks.size()); ++i) {
+                        if (lower_ascii(menu.music_tracks[static_cast<size_t>(i)]) ==
+                            lower_ascii(menu.music_track)) {
+                            menu.music_sel = i;
+                            break;
+                        }
+                    }
+                    menu.screen = MenuScreen::MusicPlayer;
 #ifdef JILL_ANDROID
                 } else if (nav == 5 && sel == kOptionsTouchRow) {
                     // Drag the on-screen pad/buttons into place; DONE saves
@@ -4883,6 +4979,33 @@ int run_sdl(const Options& opt, Engine& engine,
                     music_player.play_sfx_sample(6, menu.noise_sound);
                 }
                 break;
+            case MenuScreen::MusicPlayer: {
+                const int count =
+                    static_cast<int>(menu.music_tracks.size());
+                if ((nav == 3 || nav == 4) && count > 0) {
+                    // Left/Right trims the music volume without leaving the
+                    // audition screen.
+                    menu.music_volume =
+                        std::max(0, std::min(100, menu.music_volume +
+                                                      (nav == 3 ? -10 : 10)));
+                    music_player.set_volume(menu.music_volume / 100.0f);
+                } else if (nav == 5 && sel >= 0 && sel < count) {
+                    const std::string& name =
+                        menu.music_tracks[static_cast<size_t>(sel)];
+                    const bool same =
+                        !menu.music_track.empty() &&
+                        lower_ascii(name) == lower_ascii(menu.music_track);
+                    if (same && music_player.playing()) {
+                        play_music(std::string());
+                    } else {
+                        play_music(name);
+                    }
+                } else if (nav == 5) {
+                    menu.screen = MenuScreen::Options;
+                    menu.opt_sel = kOptionsMusicRow;
+                }
+                break;
+            }
             case MenuScreen::Assets: {
                 if (nav != 5) {
                     break;
@@ -5201,10 +5324,13 @@ int run_sdl(const Options& opt, Engine& engine,
                     menu.screen = MenuScreen::EditorBoards;
                     break;
                 }
-#if defined(JILL_VITA) || defined(JILL_ANDROID)
-                editor.set_touch_controls(true);
+#if defined(JILL_PS4) || defined(JILL_XBOX)
+                // Pad-only consoles have no pointer; keep the board full-size.
+                editor.set_touch_controls(false);
 #else
-                editor.set_touch_controls(SDL_GetNumTouchDevices() > 0);
+                // Vita/Android touchscreens and desktop mouse users both get
+                // the on-screen toolbar.
+                editor.set_touch_controls(true);
 #endif
                 SDL_ShowCursor(SDL_ENABLE);
                 SDL_CaptureMouse(SDL_FALSE);
@@ -5638,17 +5764,38 @@ int run_sdl(const Options& opt, Engine& engine,
                         SDL_CaptureMouse(SDL_FALSE);
                     }
                     if (inside) {
-                        const Uint16 mod = SDL_GetModState();
-                        editor.mouse_button(
-                            ev.button.button, down, fx, fy,
-                            (mod & KMOD_SHIFT) != 0, (mod & KMOD_CTRL) != 0,
-                            engine);
+                        const bool bar_press =
+                            down && ev.button.button == 1 &&
+                            editor.touch_controls() &&
+                            fy >= editor.touch_bar_top();
+                        if (bar_press) {
+                            // Desktop mouse users get the same toolbar taps as
+                            // the Vita/Android touchscreen.
+                            editor.touch_down(fx, fy, engine);
+                            editor_bar_press = true;
+                        } else if (!down && editor_bar_press) {
+                            editor.touch_up(engine);
+                            editor_bar_press = false;
+                        } else {
+                            const Uint16 mod = SDL_GetModState();
+                            editor.mouse_button(
+                                ev.button.button, down, fx, fy,
+                                (mod & KMOD_SHIFT) != 0,
+                                (mod & KMOD_CTRL) != 0, engine);
+                            if (down) {
+                                editor_bar_press = false;
+                            }
+                        }
                         if (!editor.active()) {
                             leave_editor();
                         }
                     } else if (!down) {
                         // The button was released outside the visible frame:
                         // stop dragging/painting without painting at (0,0).
+                        if (editor_bar_press) {
+                            editor.touch_up(engine);
+                            editor_bar_press = false;
+                        }
                         editor.release_mouse();
                     }
                 } else if (ev.type == SDL_WINDOWEVENT) {
@@ -5716,6 +5863,12 @@ int run_sdl(const Options& opt, Engine& engine,
                                 break;
                             case SDL_CONTROLLER_BUTTON_Y:
                                 editor.text_input_backspace();
+                                continue;
+                            case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
+                                editor.text_input_cursor(-1);
+                                continue;
+                            case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
+                                editor.text_input_cursor(1);
                                 continue;
                             default:
                                 break;
@@ -5887,6 +6040,12 @@ int run_sdl(const Options& opt, Engine& engine,
                                 break;
                             case SDL_CONTROLLER_BUTTON_Y:
                                 score_keyboard.backspace();
+                                break;
+                            case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
+                                score_keyboard.cursor_left();
+                                break;
+                            case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
+                                score_keyboard.cursor_right();
                                 break;
                             case SDL_CONTROLLER_BUTTON_START:
                                 commit = true;

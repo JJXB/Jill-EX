@@ -539,6 +539,17 @@ static void OPL3_EnvelopeKeyOn(opl3_slot *slot, uint8_t type)
 static void OPL3_EnvelopeKeyOff(opl3_slot *slot, uint8_t type)
 {
     slot->key &= ~type;
+    /* Key-off takes effect on the register write, not on the next envelope
+       clock.  SBFMDRV frequently writes note-off and note-on for the same
+       note in one sequencer tick; because both register writes land inside
+       one sample, a level-sampled key bit never showed the off transition and
+       the second note stayed in sustain at full attenuation (silent).  Moving
+       the state machine to release here lets the following key-on restart the
+       attack, as the real chip does. */
+    if (!slot->key)
+    {
+        slot->eg_gen = envelope_gen_num_release;
+    }
 }
 
 /*

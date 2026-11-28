@@ -912,7 +912,13 @@ void Engine::update_pass() {
     // everything: the original draws the player in front of the switch panel.
     auto depth = [this](int i) {
         const BoardObject& o = objects_[static_cast<size_t>(i)];
-        return o.kind == 32 ? -0x10000 : static_cast<int>(o.y);
+        // Board text (TEXT6/TEXT8) belongs to the scenery layer, not the
+        // object layer: the original draws it before Jill and the other
+        // objects so they can pass in front of it.
+        if (o.kind == 20 || o.kind == 21 || o.kind == 32) {
+            return -0x10000;
+        }
+        return static_cast<int>(o.y);
     };
     std::stable_sort(order_.begin(), order_.end(), [&](int a, int b) {
         return depth(a) < depth(b);
@@ -2826,9 +2832,12 @@ void Engine::render_at(Framebuffer& fb, int x, int y, bool with_hud) {
     std::stable_sort(order_.begin(), order_.end(), [this](int a, int b) {
         const BoardObject& oa = objects_[static_cast<size_t>(a)];
         const BoardObject& ob = objects_[static_cast<size_t>(b)];
-        const int da = oa.kind == 32 ? -0x10000 : oa.y;
-        const int db = ob.kind == 32 ? -0x10000 : ob.y;
-        return da < db;
+        const auto layer = [](const BoardObject& o) {
+            return (o.kind == 20 || o.kind == 21 || o.kind == 32)
+                       ? -0x10000
+                       : static_cast<int>(o.y);
+        };
+        return layer(oa) < layer(ob);
     });
     render(fb, with_hud, 1.0f);
 }

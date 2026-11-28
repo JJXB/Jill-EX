@@ -21,19 +21,22 @@ A boatload of stuff has changed since last README update so that's coming soon.
 ### Platforms
 * Windows 32bit
 * Windows 64bit
-* PlayStation 4 (Tested on 13.52 GoldHEN and shadPS4. Crashes on exit)
+* PlayStation 4 (Tested on 13.52 GoldHEN and shadPS4.)
 * PlayStation Vita (Tested on 3.65)
-* Android (Playing, tested on FireOS 7.x and Android 16 - OneUI 8.5. Touch controls need work, controller is working fine)
+* Android (Playing, tested on FireOS 7.x and Android 16 - OneUI 8.5. Touch Controls + Controller)
 * Original Xbox (NXDK - tested on hardware at 480i/480p/720p)
 
 ### Modernization
 * Modern/Classic HUD, Classic Menu with Customization
 * Front-end STORY viewer for every installed game/mod (original intro-board pages)
+* Main Menu Demo viewer for original games
+* External Demo studio for PC
 * High framerate support - 60/90/120/144 Hz - Interpolation as a separate option - Logic still at 18.2065hz
 * Presentation scaler: integer, fractional nearest, vertical bilinear or full bilinear (fills the height on 16:9 displays)
 * Expanded Limits (Board Obj Cap = 384, KIND Limit = 138, Visible/Active Obj Cap = 384)
 * Windowed, exclusive fullscreen and borderless modes; resolution presets and 1x-6x window scaling.
-* Noisemaker Menu in Options/Sound
+* Classic Noisemaker on Main Menu
+* Sound Test in Sound options
 * Extra Features (All Optional)
   * Minimap
   * Centred fish shot
@@ -43,7 +46,13 @@ A boatload of stuff has changed since last README update so that's coming soon.
   * faster dialog boxes
   * Air jump buffer
   * Jill Select: play as the Jill 1/2/3 or Custom Colour in any episode. Onesimus Support WIP
-  * More to be added to README. So much.
+  * Animated Water (On By default but was a difference in jill patch versions)
+  * Turtle Mode (Original Feature bought back)
+  * HUD Damage Flash
+  * Jill Damage Flash
+  * Throw from Vines
+  * Toggle Phoenix Water Death
+  * Death Respawn Behaviour (Default reset to checkpoint)
 * Keyboard and gamepad input with rebindable movement, jump and throw.
 * SDL Sound Output
 * Multiple Music Output options
@@ -56,8 +65,11 @@ A boatload of stuff has changed since last README update so that's coming soon.
   * Super Jump
   * Add Items
   * Refill Health 
-  * BECOME JILL/FROG/BIRD/SPIDER/FISH (Spider Unused but logic present in files, uses shape entry 38).
+  * BECOME JILL/FROG/PHOENIX/SPIDER/FISH (Spider Unused but logic present in files, uses shape entry 38).
   * Level/Board Select
+* Music Player
+* Jill Maker - In Engine interactive Level editor
+
 
 ## Command Line Arguments and Keyboard Hotkeys
 [See COMMANDLINE](COMMANDLINE.md)

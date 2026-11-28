@@ -56,7 +56,14 @@ bool MusicPlayer::open(std::string& err) {
     want.freq = 48000;
     want.format = AUDIO_S16SYS;
     want.channels = 2;
+#if defined(JILL_VITA)
+    // The Vita shares its CPU with libvita2d and the game loop.  A 1024-frame
+    // buffer (21 ms) leaves too little slack when a frame overruns, which
+    // showed up as crackle on the effect channel; 2048 matches the PS4 thread.
+    want.samples = 2048;
+#else
     want.samples = 1024;
+#endif
     want.callback = &MusicPlayer::callback;
     want.userdata = this;
 
@@ -559,6 +566,24 @@ void MusicPlayer::callback(void* user, uint8_t* stream, int len) {
 }
 #endif
 
+namespace {
+
+// Soft-knee limiter.  Music and a full-scale 8-bit effect can sum past 1.0;
+// hard clamping turned that into buzzing crackle.  Below 0.8 this is linear,
+// above it the excess is compressed smoothly towards (but never past) 1.0.
+float soft_limit(float s) {
+    constexpr float kKnee = 0.8f;
+    const float a = std::fabs(s);
+    if (a <= kKnee) {
+        return s;
+    }
+    const float over = a - kKnee;
+    const float limited = kKnee + over / (1.0f + over / (1.0f - kKnee));
+    return s < 0.0f ? -limited : limited;
+}
+
+}  // namespace
+
 void MusicPlayer::mix(uint8_t* stream, int len) {
     const int bps = format_ == AUDIO_F32SYS ? 4 : 2;
     const int channels = channels_ > 0 ? channels_ : 2;
@@ -636,8 +661,7 @@ void MusicPlayer::mix(uint8_t* stream, int len) {
     if (format_ == AUDIO_F32SYS) {
         auto* out = reinterpret_cast<float*>(stream);
         for (int i = 0; i < frames; ++i) {
-            float s = scratch_[static_cast<size_t>(i)];
-            s = std::max(-1.0f, std::min(1.0f, s));
+            float s = soft_limit(scratch_[static_cast<size_t>(i)]);
             peak = std::max(peak, static_cast<float>(std::fabs(s)));
             for (int c = 0; c < channels; ++c) {
                 out[i * channels + c] = s;
@@ -646,8 +670,7 @@ void MusicPlayer::mix(uint8_t* stream, int len) {
     } else if (format_ == AUDIO_S16SYS) {
         auto* out = reinterpret_cast<int16_t*>(stream);
         for (int i = 0; i < frames; ++i) {
-            float s = scratch_[static_cast<size_t>(i)];
-            s = std::max(-1.0f, std::min(1.0f, s));
+            float s = soft_limit(scratch_[static_cast<size_t>(i)]);
             peak = std::max(peak, static_cast<float>(std::fabs(s)));
             const int16_t v = static_cast<int16_t>(s * 32767.0f);
             for (int c = 0; c < channels; ++c) {

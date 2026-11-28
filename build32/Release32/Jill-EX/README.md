@@ -14,6 +14,8 @@ This did use Deepseek 4.1 Flash to construct and make. Disclaimer over.
 
 No game data or artwork is shipped on PC (PS4 Icon uses Jill portrait, see DISCLAIMER.txt) - supply your own legally obtained copy of the games (see Legal / trademarks).
 
+A boatload of stuff has changed since last README update so that's coming soon.
+
 ## Features
 
 ### Platforms
@@ -31,7 +33,7 @@ No game data or artwork is shipped on PC (PS4 Icon uses Jill portrait, see DISCL
 * Presentation scaler: integer, fractional nearest, vertical bilinear or full bilinear (fills the height on 16:9 displays)
 * Expanded Limits (Board Obj Cap = 384, KIND Limit = 138, Visible/Active Obj Cap = 384)
 * Windowed, exclusive fullscreen and borderless modes; resolution presets and 1x-6x window scaling.
-* Noisemaker Menu in Options/Sound (Old Style Noisemaker Still in progress)
+* Noisemaker Menu in Options/Sound
 * Extra Features (All Optional)
   * Minimap
   * Centred fish shot
@@ -41,6 +43,7 @@ No game data or artwork is shipped on PC (PS4 Icon uses Jill portrait, see DISCL
   * faster dialog boxes
   * Air jump buffer
   * Jill Select: play as the Jill 1/2/3 or Custom Colour in any episode. Onesimus Support WIP
+  * More to be added to README. So much.
 * Keyboard and gamepad input with rebindable movement, jump and throw.
 * SDL Sound Output
 * Multiple Music Output options
@@ -73,7 +76,7 @@ copies its distributable output into the git-root `Releases` folder.
 ## TODO
 
 ### Remaining Realistic Goals
-* Old Style Noisemaker work
+* Refine file handling tools
 * Work on Display Filters to be continued 
 * Mac/Linux/Console builds
 

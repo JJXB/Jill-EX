@@ -20,6 +20,10 @@ py -3 jill_import.py sha-folder jill1.sha sprites -o jill1_new.sha
 py -3 jill_import.py sha-entry-folder jill1.sha 8 frames -o jill1_new.sha
 py -3 jill_import.py sha-font   jill1.sha fonts/main.png -o jill1_new.sha
 py -3 jill_import.py sha-tile   jill1.sha jill.dma 0x9E tiles/158.png -o jill1_new.sha
+py -3 jill_import.py tile-safe  jill1.sha jill.dma 0x9E tiles/158.png --out-sha jill1_new.sha --out-dma jill_new.dma
+py -3 jill_import.py palette-export jill1.sha 8 entry8.pal
+py -3 jill_import.py palette-import jill1.sha 8 entry8.pal -o jill1_new.sha
+py -3 jill_import.py portrait   jill1.sha portrait.png -o jill1_new.sha
 py -3 jill_import.py board-image 1.jn1 jill1.sha jill.dma board_previews/1.png -o 1_new.jn1
 py -3 jill_import.py vcl-sfx    jill1.vcl 6 jump.wav -o jill1_new.vcl
 py -3 jill_import.py vcl-pages  jill1.vcl text_pages -o jill1_new.vcl
@@ -104,6 +108,48 @@ game data.  DMA shape references only allow entries 0..63, so the command fails
 if no free slot remains there.  Note: the original DOS game still renders the
 cloned layout incorrectly; use this only for ports/packs that support it.
 
+### `tile-safe <sha> <dma> <tile-id> <image> [--out-sha out.sha] [--out-dma out.dma]`
+
+Original-EXE-safe recoloured tile import.  The image (normally 16x16) is
+quantised to the fixed **global VGA palette** and appended as a new frame to an
+existing 8bpp identity-mapped shape entry below 64 (entry 24 in the Jill games,
+which is the portrait entry).  Only that tile's DMA record is repointed at the
+new frame, so **no palette table changes and no free shape entry is needed**;
+the original DOS EXE keeps its normal palette layout.
+
+Both `.sha` and `.dma` are written (defaults: the input paths, which are
+overwritten).  The command prints the entry/frame used.  This is the path the
+editor's **Allow new colours (append 8bpp frame, original-safe)** option uses.
+The one visible side effect is that the portrait entry gains extra frames; its
+palette and the first 16 frames are untouched.
+
+### `palette-export <sha> <entry> <out.pal|.gpl|.act>`
+
+Writes one shape entry's colour table in an image-editor format chosen by the
+output extension: JASC-PAL (`.pal`), GIMP (`.gpl`) or Adobe colour table
+(`.act`).  Colours are written in palette-slot order (4, 8 or 16 entries for a
+small table).  Slot 0 is the transparent/key colour and is restored unchanged by
+`palette-import`, so edit the visible colours from slot 1 onward.
+
+### `palette-import <sha> <entry> <palette> [-o out.sha]`
+
+Reads `.pal`, `.gpl` or `.act` into the entry's colour table.  Each colour is
+snapped to the nearest index in the game's global VGA palette and the palette
+word's low 16 bits are preserved; slot 0 (transparent/key) is left exactly as it
+was.  **Every frame/tile that shares the entry
+changes colour** because the table is per-entry; the command warns about this
+in its output.  Only entries that carry a per-entry table can be imported (fewer
+than 8 bpp and not identity-mapped); use `tile-safe` when a tile needs genuinely
+new colours without touching other tiles.
+
+### `portrait <sha> <portrait.png> [-o out.sha]`
+
+Replaces Jill's dialogue portrait from a single image instead of sixteen tile
+entries.  The image is resized to 64x70 and split across shape entry 24's
+sixteen 16x16 tiles (the bottom row is 16x22/16x20).  The extractor's
+`portrait.png` can be edited and fed straight back.  Games without an entry-24
+portrait (Onesimus) fail with a short error.
+
 ### `board-image <board> <sha> <dma> <render.png> [-o out.jn1]`
 
 Rebuilds a board's tile map from a **full 2048x1024** render, such as
@@ -172,6 +218,27 @@ audio file.
 1. Extract `tiles/`.
 2. Edit `tiles/158.png` (tile 0x9E).
 3. `sha-tile jill1.sha jill.dma 0x9E tiles/158.png -o jill1_new.sha`.
+
+If the edited art uses colours the tile's shared palette does not have, use the
+safe importer instead and install both outputs:
+
+```
+py -3 jill_import.py tile-safe jill1.sha jill.dma 0x9E tiles/158.png \
+    --out-sha jill1_new.sha --out-dma jill_new.dma
+```
+
+**Edit the portrait**
+
+1. Extract the pack (or use the editor's **Export Portrait PNG**) to get a
+   64x70 `portrait.png`.
+2. Edit it, then `portrait jill1.sha portrait.png -o jill1_new.sha`.
+
+**Edit a palette**
+
+1. `palette-export jill1.sha 8 entry8.pal`.
+2. Edit the palette in an image editor and save as `.pal`, `.gpl` or `.act`.
+3. `palette-import jill1.sha 8 entry8.pal -o jill1_new.sha` (all frames of the
+   entry change colour).
 
 **Edit a board**
 

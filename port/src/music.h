@@ -56,6 +56,8 @@ private:
     void load_melodic(int opl_ch, int instrument);
     void write_instrument(int opl_ch, const uint8_t* ins);
     void load_operator(int op_off, const uint8_t* ins, bool carrier_half);
+    // Load a rhythm-mode patch the way SBFMDRV's set_instrument() does.
+    void load_percussion(int chan);
     void set_carrier_volume(int opl_ch, int instrument, int velocity);
     void driver_reset();
     void release_note(int chan, int note);
@@ -86,6 +88,7 @@ private:
     int program_[16] = {};
     double transpose_[16] = {};
     int percussion_notes_[16] = {};
+    int percussion_loaded_[16] = {};  // program index last written per drum
     int note_playing_[16] = {};
     bool note_fix_[16] = {};
     int note_fix_vel_[16] = {};

@@ -17,8 +17,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sys
 import tempfile
+import time
 import traceback
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -87,6 +89,33 @@ def tile_image(sha, dma, tile_id: int, cache: Dict[str, Image.Image]):
     return cache[key]
 
 
+def backup_file(path: Optional[Path], tag: str = 'bak') -> Optional[Path]:
+    """Copy an existing file to `<name>.<timestamp>.bak` before it changes.
+
+    Returns the backup path, or None when `path` does not exist / was not
+    given.  Timestamped names keep a history instead of replacing the previous
+    backup, and a numeric suffix avoids two saves in the same second.
+    """
+    if not path:
+        return None
+    src = Path(path)
+    if not src.is_file():
+        return None
+    stamp = time.strftime('%Y%m%d-%H%M%S')
+    dst = src.with_name(f'{src.name}.{stamp}.{tag}')
+    n = 1
+    while dst.exists():
+        dst = src.with_name(f'{src.name}.{stamp}-{n}.{tag}')
+        n += 1
+    shutil.copy2(src, dst)
+    return dst
+
+
+def tile_owner_entry(dma, tile_id: int) -> Optional[int]:
+    rec = jx._dma_by_tile(dma).get(int(tile_id) & 0x3FFF)
+    return ((rec.shape_id >> 8) & 0x3F) if rec else None
+
+
 def page_lines(vcl, index: int) -> List[Dict[str, Any]]:
     return list(vcl.parse_text_page(index) or [])
 
@@ -97,6 +126,8 @@ def self_check() -> str:
         assert hasattr(jx.SHAFile, name), name
     for name in ('adapt_entry_palette', 'replace_sha_frame',
                  'sha_entry_from_folder', 'tile_from_png', 'clone_tile_to_entry',
+                 'tile_from_png_safe', 'export_entry_palette',
+                 'import_entry_palette', 'portrait_from_image',
                  'build_dma_bytes', 'save_dma',
                  'board_from_image',
                  'save_board', 'vcl_set_pages', 'replace_vcl_sfx',
@@ -124,6 +155,106 @@ def self_check() -> str:
 # ---------------------------------------------------------------------------
 # GUI
 # ---------------------------------------------------------------------------
+
+class PackExportDialog(tk.Toplevel):
+    """Checkbox picker for the sections written by an external asset pack."""
+
+    def __init__(self, app: "JillEditorApp"):
+        super().__init__(app.root)
+        self.app = app
+        self.title('Export Asset Pack')
+        self.transient(app.root)
+        self.resizable(False, False)
+        ttk.Label(self, text='Choose the elements to export:',
+                  padding=(8, 8, 8, 2)).grid(
+                      row=0, column=0, columnspan=2, sticky='w')
+        self.vars: Dict[str, Any] = {}
+        self.all_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(self, text='Export All', variable=self.all_var,
+                        command=self._on_all).grid(
+                            row=1, column=0, columnspan=2, sticky='w', padx=8)
+        row = 2
+        for key, label in jx.PACK_SECTIONS.items():
+            var = tk.BooleanVar(value=True)
+            self.vars[key] = var
+            ttk.Checkbutton(self, text=label, variable=var,
+                            command=self._on_item).grid(
+                                row=row, column=0, columnspan=2, sticky='w',
+                                padx=(24, 8))
+            row += 1
+        ttk.Separator(self, orient='horizontal').grid(
+            row=row, column=0, columnspan=2, sticky='ew', padx=8, pady=4)
+        row += 1
+        ttk.Label(self, text='Music length (seconds):').grid(
+            row=row, column=0, sticky='w', padx=8)
+        self.music_seconds = tk.StringVar(value='30')
+        ttk.Spinbox(self, from_=1, to=600, width=8,
+                    textvariable=self.music_seconds).grid(
+                        row=row, column=1, sticky='w')
+        row += 1
+        ttk.Label(self, text='Destination folder:').grid(
+            row=row, column=0, sticky='w', padx=8, pady=(6, 0))
+        self.dest = tk.StringVar(
+            value=str(app.data_dir / 'reference_pack') if app.data_dir else '')
+        ttk.Entry(self, textvariable=self.dest, width=44).grid(
+            row=row, column=1, sticky='ew', padx=4, pady=(6, 0))
+        row += 1
+        ttk.Button(self, text='Browse...', command=self.browse).grid(
+            row=row, column=1, sticky='w', padx=4)
+        row += 1
+        buttons = ttk.Frame(self, padding=8)
+        buttons.grid(row=row, column=0, columnspan=2, sticky='e')
+        ttk.Button(buttons, text='Select All', command=self.select_all).pack(side='left', padx=2)
+        ttk.Button(buttons, text='Clear', command=self.clear_all).pack(side='left', padx=2)
+        ttk.Button(buttons, text='Cancel', command=self.destroy).pack(side='right', padx=2)
+        ttk.Button(buttons, text='Export', command=self.export).pack(side='right', padx=2)
+        self.grab_set()
+
+    def _on_all(self):
+        value = self.all_var.get()
+        for var in self.vars.values():
+            var.set(value)
+
+    def _on_item(self):
+        self.all_var.set(all(var.get() for var in self.vars.values()))
+
+    def select_all(self):
+        self.all_var.set(True)
+        self._on_all()
+
+    def clear_all(self):
+        self.all_var.set(False)
+        self._on_all()
+
+    def browse(self):
+        folder = filedialog.askdirectory(title='Asset pack destination',
+                                         parent=self)
+        if folder:
+            self.dest.set(folder)
+
+    def export(self):
+        include = [key for key, var in self.vars.items() if var.get()]
+        if not include:
+            messagebox.showinfo('Export Asset Pack',
+                                'Select at least one element.', parent=self)
+            return
+        out = self.dest.get().strip()
+        if not out:
+            messagebox.showinfo('Export Asset Pack',
+                                'Choose a destination folder.', parent=self)
+            return
+        if 'music' in include and not messagebox.askyesno(
+                'Export Asset Pack',
+                'Rendering music WAVs can take a long time. Continue?',
+                parent=self):
+            return
+        try:
+            seconds = max(1.0, float(self.music_seconds.get()))
+        except ValueError:
+            seconds = 30.0
+        self.destroy()
+        self.app.export_pack_to(Path(out), include, seconds)
+
 
 class JillEditorApp:
     """Tkinter application.  `root` is supplied by run_gui()."""
@@ -162,6 +293,19 @@ class JillEditorApp:
         self._board_photo = None
         self._sfx_preview = None
 
+        # Viewer modes: the existing single preview doubles as the animation
+        # view; the grid view shows a clickable contact sheet.
+        self.sprite_grid_var = tk.BooleanVar(value=False)
+        self.tile_grid_var = tk.BooleanVar(value=False)
+        self.sprite_anim_playing = False
+        self._sprite_anim_timer = None
+        self.sprite_fps_var = tk.StringVar(value='10')
+        self._sprite_grid_cells: List[Tuple[int, int, int, int, int]] = []
+        self._tile_grid_cells: List[Tuple[int, int, int, int, int]] = []
+        self.tile_grid_page = 0
+        self.TILE_GRID_COLS = 10
+        self.TILE_GRID_ROWS = 6
+
         self.status_var = tk.StringVar(value='Select a game or open archive files.')
         self.game_var = tk.StringVar()
         self.entry_var = tk.StringVar()
@@ -177,6 +321,7 @@ class JillEditorApp:
         self.show_links_var = tk.BooleanVar(value=True)
         self.adapt_palette_var = tk.BooleanVar(value=False)
         self.dither_var = tk.BooleanVar(value=False)
+        self.tile_safe_var = tk.BooleanVar(value=True)
         self.bg_tile_var = tk.StringVar(value='0')
         self.zoom = 2
         self.colour_var = tk.StringVar(value='7')
@@ -237,8 +382,13 @@ class JillEditorApp:
         menu.add_cascade(label='File', menu=file_menu)
 
         view_menu = tk.Menu(menu, tearoff=0)
-        view_menu.add_command(label='Export Reference Pack...',
+        view_menu.add_command(label='Export Asset Pack...',
+                              command=self.open_export_pack_dialog)
+        view_menu.add_command(label='Export Reference Pack (all)...',
                               command=self.export_pack)
+        view_menu.add_separator()
+        view_menu.add_command(label='Export Palettes for Image Editor...',
+                              command=self.export_all_palettes)
         menu.add_cascade(label='Tools', menu=view_menu)
         return menu
 
@@ -267,7 +417,21 @@ class JillEditorApp:
 
         right = ttk.Frame(parent)
         right.pack(side='left', fill='both', expand=True)
-        self.sprite_preview = self._photo_label(right, 320, 200)
+        self.sprite_preview = self._photo_label(right, 640, 400)
+        self.sprite_preview.bind('<Button-1>', self.on_sprite_preview_click)
+
+        viewbar = ttk.Frame(right)
+        viewbar.pack(fill='x', padx=4)
+        ttk.Checkbutton(viewbar, text='Grid view', variable=self.sprite_grid_var,
+                        command=self.refresh_sprite_view).pack(side='left')
+        self.sprite_anim_btn = ttk.Button(viewbar, text='> Play',
+                                          command=self.toggle_sprite_animation,
+                                          width=8)
+        self.sprite_anim_btn.pack(side='left', padx=4)
+        ttk.Label(viewbar, text='FPS:').pack(side='left')
+        ttk.Spinbox(viewbar, from_=1, to=60, width=4,
+                    textvariable=self.sprite_fps_var).pack(side='left', padx=2)
+
         nav = ttk.Frame(right)
         nav.pack(fill='x', padx=4)
         ttk.Label(nav, textvariable=self.sprite_info).pack(side='left')
@@ -287,6 +451,20 @@ class JillEditorApp:
         ttk.Checkbutton(actions, text='Adapt palette (recolours whole entry)',
                         variable=self.adapt_palette_var).grid(
                             row=3, column=0, columnspan=2, sticky='w')
+        ttk.Button(actions, text='Export Palette...',
+                   command=self.export_sprite_palette).grid(
+                       row=4, column=0, padx=2, pady=2, sticky='w')
+        ttk.Button(actions, text='Import Palette...',
+                   command=self.import_sprite_palette).grid(
+                       row=4, column=1, padx=2, pady=2, sticky='w')
+
+        portrait = ttk.LabelFrame(right, text='Portrait (entry 24 as one image)',
+                                  padding=6)
+        portrait.pack(fill='x', padx=4, pady=(0, 4))
+        ttk.Button(portrait, text='Export Portrait PNG...',
+                   command=self.export_portrait_png).pack(side='left', padx=2)
+        ttk.Button(portrait, text='Import Portrait PNG...',
+                   command=self.import_portrait_png).pack(side='left', padx=2)
 
     def _build_tiles_tab(self, parent):
         left = ttk.Frame(parent)
@@ -297,9 +475,22 @@ class JillEditorApp:
 
         right = ttk.Frame(parent)
         right.pack(side='left', fill='both', expand=True)
-        self.tile_preview = self._photo_label(right, 160, 160)
-        ttk.Label(right, textvariable=self.tile_info, wraplength=480,
+        self.tile_preview = self._photo_label(right, 640, 440)
+        self.tile_preview.bind('<Button-1>', self.on_tile_preview_click)
+        ttk.Label(right, textvariable=self.tile_info, wraplength=520,
                   justify='left').pack(anchor='w', padx=4)
+
+        viewbar = ttk.Frame(right)
+        viewbar.pack(fill='x', padx=4)
+        ttk.Checkbutton(viewbar, text='Grid view', variable=self.tile_grid_var,
+                        command=self.refresh_tile_view).pack(side='left')
+        ttk.Button(viewbar, text='Prev page',
+                   command=lambda: self.tile_grid_page_step(-1)).pack(side='left', padx=2)
+        ttk.Button(viewbar, text='Next page',
+                   command=lambda: self.tile_grid_page_step(1)).pack(side='left', padx=2)
+        self.tile_page_label = ttk.Label(viewbar, text='')
+        self.tile_page_label.pack(side='left', padx=6)
+
         ttk.Button(right, text='Use in Level Editor',
                    command=self.use_tile_in_levels).pack(anchor='w', padx=4, pady=2)
         actions = ttk.LabelFrame(right, text='Tile art', padding=6)
@@ -310,6 +501,16 @@ class JillEditorApp:
                         text='Dither to existing palette (original-game safe)',
                         variable=self.dither_var).grid(
                             row=1, column=0, columnspan=2, sticky='w')
+        ttk.Checkbutton(actions,
+                        text='Allow new colours (append 8bpp frame, original-safe)',
+                        variable=self.tile_safe_var).grid(
+                            row=2, column=0, columnspan=2, sticky='w')
+        ttk.Button(actions, text='Export Tile Palette...',
+                   command=self.export_tile_palette).grid(
+                       row=3, column=0, padx=2, pady=2, sticky='w')
+        ttk.Button(actions, text='Import Tile Palette...',
+                   command=self.import_tile_palette).grid(
+                       row=3, column=1, padx=2, pady=2, sticky='w')
 
     def _build_levels_tab(self, parent):
         top = ttk.Frame(parent)
@@ -514,6 +715,16 @@ class JillEditorApp:
                                  parent=self.root)
         return None
 
+    def backup_targets(self, *paths) -> List[Path]:
+        """Back up every existing file before an operation overwrites it."""
+        made: List[Path] = []
+        for path in paths:
+            try:
+                made.append(backup_file(path))
+            except OSError as e:
+                raise ji.ImportFailure(f'cannot back up {path}: {e}') from e
+        return [p for p in made if p]
+
     def ask_out(self, title: str, source: Optional[Path], suffix: str,
                 ext: str) -> Optional[Path]:
         initial = str(source.parent) if source else str(self.data_dir or self.base_dir)
@@ -624,6 +835,23 @@ class JillEditorApp:
                    'SFX': self.save_vcl_file}
         actions.get(name, self.save_board_file)()
 
+    def open_export_pack_dialog(self):
+        if not all((self.sha, self.dma, self.vcl, self.current_game)):
+            messagebox.showinfo('Export Asset Pack', 'Load a full game first.',
+                                parent=self.root)
+            return
+        PackExportDialog(self)
+
+    def export_pack_to(self, out: Path, include: List[str],
+                       music_seconds: float = 30.0):
+        def work():
+            self.status(f'Exporting pack to {out}...')
+            self.root.update_idletasks()
+            return jx.export_reference_pack(
+                self.current_game, self.sha, self.vcl, self.dma, out,
+                music_seconds, include=include)
+        self.run_action(work, lambda stats: f'Exported pack {out}: {stats}')
+
     def export_pack(self):
         if not all((self.sha, self.dma, self.vcl, self.current_game)):
             messagebox.showinfo('Export Pack', 'Load a full game first.',
@@ -633,10 +861,29 @@ class JillEditorApp:
                                       parent=self.root)
         if not out:
             return
+        self.export_pack_to(Path(out), list(jx.PACK_SECTIONS))
+
+    def export_all_palettes(self):
+        """Write every entry palette plus the global palette into one folder."""
+        if not self.sha or not self.sha_path:
+            return
+        out = filedialog.askdirectory(
+            title='Export entry palettes for an image editor', parent=self.root)
+        if not out:
+            return
         def work():
-            return jx.export_reference_pack(self.current_game, self.sha, self.vcl,
-                                            self.dma, Path(out))
-        self.run_action(work, lambda stats: f'Exported pack: {stats}')
+            root = Path(out)
+            root.mkdir(parents=True, exist_ok=True)
+            count = 0
+            for i, entry in enumerate(self.sha.entries):
+                if entry is None:
+                    continue
+                ji.export_entry_palette(self.sha_path, i,
+                                        root / f'entry_{i:03d}.pal')
+                count += 1
+            jx.export_palette_assets(self.sha, root / 'global')
+            return count
+        self.run_action(work, lambda n: f'Exported {n} entry palettes to {out}')
 
     # -- sprites ------------------------------------------------------------
 
@@ -653,11 +900,14 @@ class JillEditorApp:
                     'end', f'Entry {i:03d}: {entry.frame_count} frames, '
                            f'{entry.src_bpp}bpp')
         self.status(f'{len(self.sha.entries)} shape entries loaded.')
+        if self.sprite_grid_var.get():
+            self.refresh_sprite_view()
 
     def on_sprite_selected(self, _event=None):
         sel = self.sprite_list.curselection()
         if not sel or not self.sha:
             return
+        self.stop_sprite_animation()
         idx = sel[0]
         entry = self.sha.entries[idx]
         self.entry_var.set(str(idx))
@@ -670,15 +920,17 @@ class JillEditorApp:
         self.show_sprite_frame(idx, frame)
 
     def step_frame(self, delta: int):
+        self.stop_sprite_animation()
         try:
             frame = int(self.frame_var.get() or 0) + delta
         except ValueError:
             frame = 0
-        frames = len(self.sha.entries[int(self.entry_var.get() or 0)].frames) \
-            if self.sha and self.sha.entries[int(self.entry_var.get() or 0)] else 0
+        entry_idx = int(self.entry_var.get() or 0)
+        entry = self.sha.entries[entry_idx] if self.sha else None
+        frames = len(entry.frames) if entry else 0
         frame = max(0, min(frame, frames - 1))
         self.frame_var.set(str(frame))
-        self.show_sprite_frame(int(self.entry_var.get() or 0), frame)
+        self.show_sprite_frame(entry_idx, frame)
 
     def show_sprite_frame(self, entry_idx: int, frame_idx: int):
         if not self.sha:
@@ -690,14 +942,127 @@ class JillEditorApp:
         if entry is None or frame_idx >= len(entry.frames):
             self.sprite_preview.config(image='')
             return
+        if self.sprite_grid_var.get():
+            self._draw_sprite_grid(entry_idx, frame_idx)
+            return
         img = jx._shape_rgba(self.sha, entry_idx, frame_idx)
         if img is None:
             self.sprite_preview.config(image='')
             return
-        scale = max(1, min(8, 256 // max(1, img.width)))
-        self._preview_photo = ImageTk.PhotoImage(
-            img.resize((img.width * scale, img.height * scale), Image.NEAREST))
-        self.sprite_preview.config(image=self._preview_photo)
+        canvas = Image.new('RGBA', (640, 400), (32, 32, 32, 255))
+        scale = max(1, min(8, 600 // max(1, img.width), 360 // max(1, img.height)))
+        big = img.resize((img.width * scale, img.height * scale), Image.NEAREST)
+        canvas.paste(big, ((640 - big.width) // 2, (400 - big.height) // 2), big)
+        self._sprite_photo = ImageTk.PhotoImage(canvas)
+        self.sprite_preview.config(image=self._sprite_photo)
+
+    def refresh_sprite_view(self):
+        """Redraw the selected sprite using the current grid/animation mode."""
+        try:
+            entry = int(self.entry_var.get() or 0)
+            frame = int(self.frame_var.get() or 0)
+        except ValueError:
+            entry, frame = 0, 0
+        if self.sprite_grid_var.get():
+            self.stop_sprite_animation()
+        self.show_sprite_frame(entry, frame)
+
+    def _draw_sprite_grid(self, entry_idx: int, frame_idx: int):
+        entry = self.sha.entries[entry_idx]
+        frames = entry.frames
+        n = len(frames)
+        self._sprite_grid_cells = []
+        if n == 0:
+            self.sprite_preview.config(image='')
+            return
+        max_w = max(1, max(f['width'] for f in frames))
+        max_h = max(1, max(f['height'] for f in frames))
+        best = None
+        for cols in range(1, min(n, 16) + 1):
+            rows = (n + cols - 1) // cols
+            cell_w, cell_h = 640 / cols, 400 / rows
+            scale = min((cell_w - 8) / max_w, (cell_h - 16) / max_h)
+            if best is None or scale > best[0] + 1e-6:
+                best = (scale, cols, rows)
+        _scale, cols, rows = best
+        cell_w, cell_h = 640 // cols, 400 // rows
+        sheet = Image.new('RGBA', (640, 400), (32, 32, 32, 255))
+        draw = ImageDraw.Draw(sheet)
+        for i, frame in enumerate(frames):
+            r, c = divmod(i, cols)
+            x0, y0 = c * cell_w, r * cell_h
+            img = jx._shape_rgba(self.sha, entry_idx, i)
+            if img is not None:
+                s = max(1, int(min((cell_w - 8) / max(1, img.width),
+                                   (cell_h - 16) / max(1, img.height))))
+                big = img.resize((img.width * s, img.height * s), Image.NEAREST)
+                sheet.paste(big, (x0 + (cell_w - big.width) // 2,
+                                  y0 + (cell_h - 12 - big.height) // 2), big)
+            colour = '#FFFF00' if i == frame_idx else '#707070'
+            draw.rectangle([x0 + 1, y0 + 1, x0 + cell_w - 2, y0 + cell_h - 2],
+                           outline=colour)
+            draw.text((x0 + 3, y0 + cell_h - 11), str(i), fill='#C8C8C8')
+            self._sprite_grid_cells.append((x0, y0, cell_w, cell_h, i))
+        self._sprite_photo = ImageTk.PhotoImage(sheet)
+        self.sprite_preview.config(image=self._sprite_photo)
+
+    def on_sprite_preview_click(self, event):
+        if not self.sprite_grid_var.get():
+            return
+        for x0, y0, w, h, index in self._sprite_grid_cells:
+            if x0 <= event.x < x0 + w and y0 <= event.y < y0 + h:
+                self.frame_var.set(str(index))
+                self.show_sprite_frame(int(self.entry_var.get() or 0), index)
+                return
+
+    def _sprite_fps(self) -> int:
+        try:
+            return max(1, min(60, int(self.sprite_fps_var.get())))
+        except (tk.TclError, ValueError):
+            return 10
+
+    def toggle_sprite_animation(self):
+        if self.sprite_anim_playing:
+            self.stop_sprite_animation()
+            return
+        if self.sprite_grid_var.get():
+            self.sprite_grid_var.set(False)
+        entry_idx = int(self.entry_var.get() or 0)
+        entry = self.sha.entries[entry_idx] if self.sha else None
+        if entry is None or len(entry.frames) <= 1:
+            self.status('This shape has only one frame - nothing to animate.')
+            return
+        self.sprite_anim_playing = True
+        self.sprite_anim_btn.config(text='|| Stop')
+        self._sprite_anim_tick(first=True)
+
+    def _sprite_anim_tick(self, first: bool = False):
+        if not self.sprite_anim_playing:
+            return
+        entry_idx = int(self.entry_var.get() or 0)
+        entry = self.sha.entries[entry_idx] if self.sha else None
+        if entry is None or not entry.frames:
+            self.stop_sprite_animation()
+            return
+        if not first:
+            try:
+                frame = (int(self.frame_var.get() or 0) + 1) % len(entry.frames)
+            except ValueError:
+                frame = 0
+            self.frame_var.set(str(frame))
+        self.show_sprite_frame(entry_idx, int(self.frame_var.get() or 0))
+        delay = max(1, int(1000 / self._sprite_fps()))
+        self._sprite_anim_timer = self.root.after(delay, self._sprite_anim_tick)
+
+    def stop_sprite_animation(self):
+        self.sprite_anim_playing = False
+        self.sprite_anim_btn.config(text='> Play')
+        if self._sprite_anim_timer:
+            try:
+                self.root.after_cancel(self._sprite_anim_timer)
+            except Exception:
+                pass
+            self._sprite_anim_timer = None
 
     def selected_sprite(self) -> Tuple[int, int]:
         try:
@@ -733,6 +1098,7 @@ class JillEditorApp:
         if not out:
             return
         def work():
+            self.backup_targets(out)
             path = ji.replace_sha_frame(self.sha_path, entry, frame, Path(src), out,
                                         adapt_palette=self.adapt_palette_var.get())
             self.sha_path = path
@@ -751,6 +1117,7 @@ class JillEditorApp:
         if not out:
             return
         def work():
+            self.backup_targets(out)
             path = ji.sha_from_folder(self.sha_path, Path(folder), out)
             self.sha_path = path
             self.load_archives()
@@ -771,6 +1138,7 @@ class JillEditorApp:
         if not out:
             return
         def work():
+            self.backup_targets(out)
             path = ji.sha_entry_from_folder(
                 self.sha_path, entry, Path(folder), out,
                 adapt_palette=self.adapt_palette_var.get())
@@ -791,11 +1159,92 @@ class JillEditorApp:
         if not out:
             return
         def work():
+            self.backup_targets(out)
             path = ji.font_from_sheet(self.sha_path, Path(sheet), out)
             self.sha_path = path
             self.load_archives()
             return path
         self.run_action(work, lambda path: f'Font imported -> {path}')
+
+    def export_sprite_palette(self):
+        if not self.sha or not self.sha_path:
+            return
+        entry, _frame = self.selected_sprite()
+        out = filedialog.asksaveasfilename(
+            title=f'Export palette for shape entry {entry}',
+            defaultextension='.pal',
+            initialfile=f'entry_{entry:03d}.pal',
+            filetypes=[('JASC palette', '*.pal'), ('GIMP palette', '*.gpl'),
+                       ('Adobe colour table', '*.act'), ('All', '*.*')],
+            parent=self.root)
+        if not out:
+            return
+        self.run_action(
+            lambda: ji.export_entry_palette(self.sha_path, entry, Path(out)),
+            lambda p: f'Exported palette {p}')
+
+    def import_sprite_palette(self):
+        if not self.sha or not self.sha_path:
+            return
+        entry, _frame = self.selected_sprite()
+        if not messagebox.askyesno(
+                'Import palette',
+                f'This replaces the colour table of shape entry {entry}.\n'
+                'Every frame/tile that shares this entry will change colour.\n'
+                'Continue?', parent=self.root):
+            return
+        src = filedialog.askopenfilename(
+            title=f'Palette for shape entry {entry}',
+            filetypes=[('Palettes', '*.pal *.gpl *.act'), ('All', '*.*')],
+            parent=self.root)
+        if not src:
+            return
+        out = self.ask_out('Save .sha with imported palette', self.sha_path,
+                           'palette', '.sha')
+        if not out:
+            return
+        def work():
+            self.backup_targets(out)
+            path = ji.import_entry_palette(self.sha_path, entry, Path(src), out)
+            self.sha_path = path
+            self.load_archives()
+            return path
+        self.run_action(work, lambda path: f'Palette imported -> {path}')
+
+    def export_portrait_png(self):
+        if not self.sha:
+            return
+        img = jx.portrait_image(self.sha)
+        if img is None:
+            self.status('This game has no shape entry 24 portrait.')
+            return
+        out = filedialog.asksaveasfilename(
+            title='Export portrait as one image', defaultextension='.png',
+            initialfile='portrait.png', filetypes=[('PNG', '*.png')],
+            parent=self.root)
+        if out:
+            self.run_action(lambda: img.save(out), f'Exported portrait {out}')
+
+    def import_portrait_png(self):
+        if not self.sha or not self.sha_path:
+            return
+        src = filedialog.askopenfilename(
+            title='Custom portrait (64x70 recommended)',
+            filetypes=[('Images', '*.png *.bmp *.gif *.jpg'), ('All', '*.*')],
+            parent=self.root)
+        if not src:
+            return
+        out = self.ask_out('Save .sha with custom portrait', self.sha_path,
+                           'portrait', '.sha')
+        if not out:
+            return
+        def work():
+            self.backup_targets(out)
+            path = ji.portrait_from_image(self.sha_path, Path(src), out)
+            self.sha_path = path
+            self.load_archives()
+            return path
+        self.run_action(work, lambda path: f'Portrait imported -> {path}')
 
     # -- tiles --------------------------------------------------------------
 
@@ -810,6 +1259,8 @@ class JillEditorApp:
             self.tile_list.insert(
                 'end', f'0x{rec.tile_id:03X}: {rec.name[:14]:14s} {entry:02X}:{frame:02X}')
         self.status(f'{len(self.dma.records)} DMA tiles loaded.')
+        if self.tile_grid_var.get():
+            self._draw_tile_grid()
 
     def on_tile_selected(self, _event=None):
         sel = self.tile_list.curselection()
@@ -822,14 +1273,89 @@ class JillEditorApp:
         frame = rec.shape_id & 0xFF
         self.tile_info.set(f'tile 0x{rec.tile_id:02X} -> shape {entry}:{frame}, '
                            f'attr 0x{rec.attr:04X}, name "{rec.name}"')
-        img = tile_image(self.sha, self.dma, rec.tile_id, self._tile_cache)
+        per_page = self.TILE_GRID_COLS * self.TILE_GRID_ROWS
+        self.tile_grid_page = sel[0] // per_page
+        self.refresh_tile_view()
+
+    def refresh_tile_view(self):
+        if not self.sha or not self.dma:
+            return
+        try:
+            tile_id = int(self.tile_var.get(), 0)
+        except ValueError:
+            tile_id = self.tile_id
+        if self.tile_grid_var.get():
+            self._draw_tile_grid()
+        else:
+            self._show_tile_preview(tile_id)
+
+    def _show_tile_preview(self, tile_id: int):
+        record = self.dma.get_record(tile_id) if self.dma else None
+        self.tile_page_label.config(text='')
+        img = tile_image(self.sha, self.dma, tile_id, self._tile_cache) if record else None
         if img is None:
             self.tile_preview.config(image='')
             return
-        scale = max(1, min(8, 128 // max(1, img.width)))
-        self._preview_photo = ImageTk.PhotoImage(
-            img.resize((img.width * scale, img.height * scale), Image.NEAREST))
-        self.tile_preview.config(image=self._preview_photo)
+        canvas = Image.new('RGBA', (640, 440), (32, 32, 32, 255))
+        scale = max(1, min(12, 600 // max(1, img.width), 400 // max(1, img.height)))
+        big = img.resize((img.width * scale, img.height * scale), Image.NEAREST)
+        canvas.paste(big, ((640 - big.width) // 2, (440 - big.height) // 2), big)
+        self._tile_photo = ImageTk.PhotoImage(canvas)
+        self.tile_preview.config(image=self._tile_photo)
+
+    def _draw_tile_grid(self):
+        records = self.dma.records if self.dma else []
+        per_page = self.TILE_GRID_COLS * self.TILE_GRID_ROWS
+        pages = max(1, (len(records) + per_page - 1) // per_page)
+        self.tile_grid_page = max(0, min(self.tile_grid_page, pages - 1))
+        start = self.tile_grid_page * per_page
+        self.tile_page_label.config(
+            text=f'page {self.tile_grid_page + 1}/{pages}')
+        sheet = Image.new('RGBA', (640, 440), (32, 32, 32, 255))
+        draw = ImageDraw.Draw(sheet)
+        cell_w = 640 // self.TILE_GRID_COLS
+        cell_h = 440 // self.TILE_GRID_ROWS
+        self._tile_grid_cells = []
+        for slot, rec in enumerate(records[start:start + per_page]):
+            r, c = divmod(slot, self.TILE_GRID_COLS)
+            x0, y0 = c * cell_w, r * cell_h
+            img = tile_image(self.sha, self.dma, rec.tile_id, self._tile_cache)
+            if img is not None:
+                s = max(1, min((cell_w - 8) // max(1, img.width),
+                               (cell_h - 16) // max(1, img.height)))
+                big = img.resize((img.width * s, img.height * s), Image.NEAREST)
+                sheet.paste(big, (x0 + (cell_w - big.width) // 2,
+                                  y0 + (cell_h - 12 - big.height) // 2), big)
+            colour = '#FFFF00' if rec.tile_id == self.tile_id else '#707070'
+            draw.rectangle([x0 + 1, y0 + 1, x0 + cell_w - 2, y0 + cell_h - 2],
+                           outline=colour)
+            draw.text((x0 + 3, y0 + cell_h - 11), f'{rec.tile_id:X}',
+                      fill='#C8C8C8')
+            self._tile_grid_cells.append(
+                (x0, y0, cell_w, cell_h, start + slot))
+        self._tile_photo = ImageTk.PhotoImage(sheet)
+        self.tile_preview.config(image=self._tile_photo)
+
+    def on_tile_preview_click(self, event):
+        if not self.tile_grid_var.get():
+            return
+        for x0, y0, w, h, index in self._tile_grid_cells:
+            if x0 <= event.x < x0 + w and y0 <= event.y < y0 + h:
+                self.tile_list.selection_clear(0, 'end')
+                self.tile_list.selection_set(index)
+                self.tile_list.see(index)
+                self.on_tile_selected()
+                return
+
+    def tile_grid_page_step(self, delta: int):
+        if not self.tile_grid_var.get():
+            self.tile_grid_var.set(True)
+        records = self.dma.records if self.dma else []
+        per_page = self.TILE_GRID_COLS * self.TILE_GRID_ROWS
+        pages = max(1, (len(records) + per_page - 1) // per_page)
+        self.tile_grid_page = max(0, min(pages - 1,
+                                         self.tile_grid_page + delta))
+        self._draw_tile_grid()
 
     def use_tile_in_levels(self):
         try:
@@ -869,11 +1395,32 @@ class JillEditorApp:
                                                     ('All', '*.*')], parent=self.root)
         if not src:
             return
+        if self.tile_safe_var.get():
+            out_sha = self.ask_out('Save modified .sha (safe palette import)',
+                                   self.sha_path, 'tile', '.sha')
+            if not out_sha:
+                return
+            out_dma = self.ask_out('Save modified .dma (safe palette import)',
+                                   self.dma_path, 'tile', '.dma')
+            if not out_dma:
+                return
+            def safe_work():
+                self.backup_targets(out_sha, out_dma)
+                sha_path, dma_path, entry, frame = ji.tile_from_png_safe(
+                    self.sha_path, self.dma_path, tile_id, Path(src),
+                    out_sha, out_dma)
+                self.sha_path = sha_path
+                self.dma_path = dma_path
+                self.load_archives()
+                return f'{sha_path} + {dma_path} (shape {entry}:{frame})'
+            self.run_action(safe_work, lambda msg: f'Tile art imported -> {msg}')
+            return
         out = self.ask_out('Save modified .sha', self.sha_path, 'tile', '.sha')
         if not out:
             return
 
         def work():
+            self.backup_targets(out)
             path, entry, frame = ji.tile_from_png(
                 self.sha_path, self.dma_path, tile_id, Path(src), out,
                 dither=self.dither_var.get())
@@ -881,6 +1428,66 @@ class JillEditorApp:
             self.load_archives()
             return f'{path} (shape {entry}:{frame})'
         self.run_action(work, lambda msg: f'Tile art imported -> {msg}')
+
+    def _tile_palette_entry(self) -> Optional[int]:
+        if not self.dma:
+            return None
+        try:
+            tile_id = int(self.tile_var.get(), 0)
+        except ValueError:
+            tile_id = self.tile_id
+        return tile_owner_entry(self.dma, tile_id)
+
+    def export_tile_palette(self):
+        if not self.sha or not self.sha_path:
+            return
+        entry = self._tile_palette_entry()
+        if entry is None:
+            self.status('Select a tile first.')
+            return
+        out = filedialog.asksaveasfilename(
+            title=f'Export palette for tile shape entry {entry}',
+            defaultextension='.pal',
+            initialfile=f'tile_entry_{entry:03d}.pal',
+            filetypes=[('JASC palette', '*.pal'), ('GIMP palette', '*.gpl'),
+                       ('Adobe colour table', '*.act'), ('All', '*.*')],
+            parent=self.root)
+        if not out:
+            return
+        self.run_action(
+            lambda: ji.export_entry_palette(self.sha_path, entry, Path(out)),
+            lambda p: f'Exported tile palette {p}')
+
+    def import_tile_palette(self):
+        if not self.sha or not self.sha_path:
+            return
+        entry = self._tile_palette_entry()
+        if entry is None:
+            self.status('Select a tile first.')
+            return
+        if not messagebox.askyesno(
+                'Import tile palette',
+                f'This replaces the colour table of shape entry {entry}.\n'
+                'Every tile/frame that shares this entry will change colour.\n'
+                'Continue?', parent=self.root):
+            return
+        src = filedialog.askopenfilename(
+            title=f'Palette for tile shape entry {entry}',
+            filetypes=[('Palettes', '*.pal *.gpl *.act'), ('All', '*.*')],
+            parent=self.root)
+        if not src:
+            return
+        out = self.ask_out('Save .sha with imported tile palette', self.sha_path,
+                           'tilepal', '.sha')
+        if not out:
+            return
+        def work():
+            self.backup_targets(out)
+            path = ji.import_entry_palette(self.sha_path, entry, Path(src), out)
+            self.sha_path = path
+            self.load_archives()
+            return path
+        self.run_action(work, lambda path: f'Tile palette imported -> {path}')
 
     # -- levels -------------------------------------------------------------
 
@@ -1153,6 +1760,7 @@ class JillEditorApp:
         if not out:
             return
         def work():
+            self.backup_targets(out)
             path = ji.save_board(self.board, self.board_path or out, out)
             self.board_path = path
             self.board_dirty = False
@@ -1172,6 +1780,7 @@ class JillEditorApp:
         if not out:
             return
         def work():
+            self.backup_targets(out)
             path = ji.board_from_image(self.board_path, self.sha_path,
                                        self.dma_path, Path(src), out)
             self.open_board(path)
@@ -1448,6 +2057,7 @@ class JillEditorApp:
         if not out:
             return
         def work():
+            self.backup_targets(out)
             path = ji.vcl_set_pages(self.vcl_path, self.pages, out)
             self.vcl_path = path
             self.load_archives()
@@ -1466,6 +2076,7 @@ class JillEditorApp:
         if not out:
             return
         def work():
+            self.backup_targets(out)
             path = ji.vcl_pages_from_folder(self.vcl_path, Path(folder), out)
             self.vcl_path = path
             self.load_archives()
@@ -1578,6 +2189,7 @@ class JillEditorApp:
         if not out:
             return
         def work():
+            self.backup_targets(out)
             path = ji.replace_vcl_sfx(self.vcl_path, slot, Path(src), out)
             self.vcl_path = path
             self.load_archives()
@@ -1595,6 +2207,7 @@ class JillEditorApp:
         if not out:
             return
         def work():
+            self.backup_targets(out)
             path = ji.vcl_from_folder(self.vcl_path, Path(folder), out)
             self.vcl_path = path
             self.load_archives()

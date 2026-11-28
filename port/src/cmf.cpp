@@ -94,6 +94,8 @@ bool cmf_parse(const std::vector<uint8_t>& d, CmfSong& song, std::string& err) {
         for (int j = 0; j < 11; ++j) {
             song.instruments[i][j] = d[p + j];
         }
+
+
     }
 
     if (music_off == 0 || music_off >= d.size()) {

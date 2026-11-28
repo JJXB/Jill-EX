@@ -174,6 +174,7 @@ void Music::driver_reset() {
     for (int i = 0; i < 16; ++i) {
         program_[i] = 0;
         percussion_notes_[i] = 0;
+        percussion_loaded_[i] = -1;
         note_playing_[i] = -1;
         note_fix_[i] = false;
     }
@@ -258,7 +259,11 @@ void Music::program_change(int chan, int program) {
     }
     program_[chan] = program;
     if (rhythm_ && chan >= 11) {
-        return;  // loaded by the next percussion note-on
+        // SBFMDRV loads a percussion patch on the program change itself, not
+        // per note; reloading the ADSR/TL registers on every hit alters the
+        // sounding envelope.
+        load_percussion(chan);
+        return;
     }
     const int limit = rhythm_ ? 6 : 9;
     for (int i = 0; i < limit; ++i) {
@@ -304,6 +309,43 @@ void Music::load_operator(int op_off, const uint8_t* ins, bool carrier_half) {
     write_reg(static_cast<uint8_t>(0x60 + op_off), ins[k ? 5 : 4]);
     write_reg(static_cast<uint8_t>(0x80 + op_off), ins[k ? 7 : 6]);
     write_reg(static_cast<uint8_t>(0xE0 + op_off), ins[k ? 9 : 8]);
+}
+
+void Music::load_percussion(int chan) {
+    const int prog = program_[chan];
+    if (!song_ || prog < 0 || prog >= song_->instrument_count) {
+        return;
+    }
+    const uint8_t* ins = song_->instruments[prog];
+    int c0ch = 7;
+    switch (chan) {
+        case 11:  // bass drum: both halves of OPL channel 6
+            load_operator(0x10, ins, false);
+            load_operator(0x13, ins, true);
+            c0ch = 6;
+            break;
+        case 12:  // snare: channel 7 carrier
+            load_operator(0x14, ins, false);
+            c0ch = 7;
+            break;
+        case 13:  // tom: channel 8 modulator
+            load_operator(0x12, ins, false);
+            c0ch = 8;
+            break;
+        case 14:  // top cymbal: channel 8 carrier
+            load_operator(0x15, ins, false);
+            c0ch = 8;
+            break;
+        default:  // hi-hat: channel 7 modulator
+            load_operator(0x11, ins, false);
+            c0ch = 7;
+            break;
+    }
+    // The bass drum keeps the file's feedback/connection byte; the four
+    // single-operator drums are written with additive connection forced on.
+    write_reg(static_cast<uint8_t>(0xC0 + c0ch),
+              static_cast<uint8_t>(chan == 11 ? ins[10] : (ins[10] | 1)));
+    percussion_loaded_[chan] = prog;
 }
 
 void Music::set_carrier_volume(int opl_ch, int instrument, int velocity) {
@@ -403,61 +445,48 @@ void Music::note_on(int chan, int note, int velocity) {
         return;
     }
     if (rhythm_ && chan >= 11 && chan <= 15) {
-        const double pitch = fold_note(note) + transpose_[chan];
+        // SBFMDRV's percussion voices are 6..10 in its own table.  The pitch
+        // write goes to 0xA0+voice/0xB0+voice, so only voices 6..8 (bass drum,
+        // snare, tom) reach a real OPL channel; top cymbal (voice 9) and
+        // hi-hat (voice 10) land on 0xA9/0xAA, which the chip ignores.  Those
+        // two therefore keep whatever pitch channel 7/8 already had.
         int opl_ch = 6;
-        int op_off = -1;
         int bit = 0;
         switch (chan) {
-            case 11:
-                op_off = 0x00;  // both halves loaded below
-                bit = 0x10;
-                break;
-            case 12:
-                opl_ch = 7;
-                op_off = 0x14;  // snare: channel 7 carrier
-                bit = 0x08;
-                break;
-            case 13:
-                opl_ch = 8;
-                op_off = 0x12;  // tom: channel 8 modulator
-                bit = 0x04;
-                break;
-            case 14:
-                opl_ch = 8;
-                op_off = 0x15;  // top cymbal: channel 8 carrier
-                bit = 0x02;
-                break;
-            default:
-                opl_ch = 7;
-                op_off = 0x11;  // hi-hat: channel 7 modulator
-                bit = 0x01;
-                break;
+            case 11: opl_ch = 6; bit = 0x10; break;
+            case 12: opl_ch = 7; bit = 0x08; break;
+            case 13: opl_ch = 8; bit = 0x04; break;
+            case 14: opl_ch = -1; bit = 0x02; break;
+            default: opl_ch = -1; bit = 0x01; break;
         }
-        set_frequency(opl_ch, pitch, false);
-        const int prog = program_[chan];
-        if (song_ && prog >= 0 && prog < song_->instrument_count) {
-            const uint8_t* ins = song_->instruments[prog];
-            if (chan == 11) {
-                load_operator(0x10, ins, false);
-                load_operator(0x13, ins, true);
-            } else {
-                load_operator(op_off, ins, false);
+        if (opl_ch >= 0) {
+            set_frequency(opl_ch, fold_note(note) + transpose_[chan], false);
+        }
+        if (percussion_loaded_[chan] != program_[chan]) {
+            load_percussion(chan);
+        }
+        if (song_) {
+            const int prog = program_[chan];
+            if (prog >= 0 && prog < song_->instrument_count) {
+                const uint8_t* ins = song_->instruments[prog];
+                const int target = chan == 11 ? 0x13
+                                   : (chan == 12) ? 0x14
+                                   : (chan == 13) ? 0x12
+                                   : (chan == 14) ? 0x15
+                                                  : 0x11;
+                uint8_t level = carrier_level(ins[3], velocity);
+                if (chan == 15) {
+                    // The hi-hat sits well under the mix with the chip's TL
+                    // scale; lift it 6 dB (8 TL steps) so the taps read
+                    // clearly without touching the other drums.
+                    const int tl = std::max(0, (level & 0x3F) - 8);
+                    level = static_cast<uint8_t>((level & 0xC0) | tl);
+                }
+                write_reg(static_cast<uint8_t>(0x40 + target), level);
             }
-            // The driver always forces additive connection on the rhythm
-            // voices (C0 = instrument byte 10 | 1).
-            const int c0ch = (chan == 11) ? 6 : (chan == 12 || chan == 15) ? 7 : 8;
-            write_reg(static_cast<uint8_t>(0xC0 + c0ch),
-                      static_cast<uint8_t>(ins[10] | 1));
-            // SBFMDRV scales velocity from the carrier scaling byte (ins[3])
-            // for every percussion voice, then writes the result to that
-            // voice's own level register.
-            const int target = chan == 11 ? 0x13 : op_off;
-            write_reg(static_cast<uint8_t>(0x40 + target),
-                      carrier_level(ins[3], velocity));
         }
         percussion_notes_[chan] = note;
-        bd_ &= ~bit;
-        write_rhythm_mode();
+        // The driver only sets the key bit; the preceding note-off clears it.
         bd_ |= bit;
         write_rhythm_mode();
         return;
@@ -516,9 +545,6 @@ void Music::note_off(int chan, int note) {
         return;
     }
     if (rhythm_ && chan >= 11 && chan <= 15) {
-        if (percussion_notes_[chan] != note) {
-            return;  // a newer hit is playing
-        }
         int bit = 0;
         switch (chan) {
             case 11: bit = 0x10; break;
@@ -555,16 +581,8 @@ void Music::update_transpose(int chan) {
             set_frequency(i, fold_note(voice_[i].note) + transpose_[chan], true);
         }
     }
-    if (rhythm_ && chan >= 11 && chan <= 15 && percussion_notes_[chan] != 0) {
-        int opl_ch = 7;
-        if (chan == 11) {
-            opl_ch = 6;
-        } else if (chan == 13 || chan == 14) {
-            opl_ch = 8;
-        }
-        const int base = fold_note(percussion_notes_[chan]);
-        set_frequency(opl_ch, base + transpose_[chan], false);
-    }
+    // SBFMDRV's transpose only walks its six melodic voices; percussion is
+    // left alone.
 }
 
 void Music::controller(int chan, int cc, int value) {

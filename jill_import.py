@@ -21,6 +21,10 @@ The module also has a small CLI:
     python jill_import.py sha-font   <sha> <fonts/main.png> [-o out.sha]
     python jill_import.py sha-tile   <sha> <dma> <tile-id> <image.png> [-o out.sha]
     python jill_import.py tile-clone <sha> <dma> <tile-id> <image.png> [--out-sha out.sha] [--out-dma out.dma]
+    python jill_import.py tile-safe  <sha> <dma> <tile-id> <image.png> [--out-sha out.sha] [--out-dma out.dma]
+    python jill_import.py palette-export <sha> <entry> <out.pal|.gpl|.act>
+    python jill_import.py palette-import <sha> <entry> <palette> [-o out.sha]
+    python jill_import.py portrait  <sha> <portrait.png> [-o out.sha]
     python jill_import.py board-image <board> <sha> <dma> <board_render.png> [-o out.jn1]
     python jill_import.py vcl-sfx    <vcl> <slot> <audio.wav> [-o out.vcl]
     python jill_import.py vcl-folder <vcl> <folder> [-o out.vcl]
@@ -210,6 +214,257 @@ def clone_tile_to_entry(sha_path, dma_path, tile_id: int, image_path,
     rec.shape_id = (free << 8) | frame_idx
     save_dma(dma, dma_path, dma_out)
     return sha_out, dma_out, free, frame_idx
+
+
+def _nearest_vga_index(sha: "jx.SHAFile", rgb: Tuple[int, int, int],
+                       allow_zero: bool = True) -> int:
+    """Snap an RGB triplet to the closest index in the game's global palette."""
+    base = sha.vga_palette
+    r, g, b = rgb
+    best, bestd = (0 if allow_zero else 1), 1 << 30
+    start = 0 if allow_zero else 1
+    for i in range(start, 256):
+        dr, dg, db = r - base[i * 3], g - base[i * 3 + 1], b - base[i * 3 + 2]
+        d = dr * dr + dg * dg + db * db
+        if d < bestd:
+            best, bestd = i, d
+            if d == 0:
+                break
+    return best
+
+
+def tile_from_png_safe(sha_path, dma_path, tile_id: int, image_path,
+                       out_sha=None, out_dma=None,
+                       resize: bool = True) -> Tuple[Path, Path, int, int]:
+    """Import tile art with new colours without touching any entry palette.
+
+    The original DOS engine only loads the shape entries it needs and shares
+    one colour table between every frame of an entry.  Rewriting that table (or
+    adding a brand-new entry) therefore shows up as corruption in the original
+    game.  Instead this:
+
+    * quantises the image against the fixed 256-colour VGA palette,
+    * appends the frame to an **existing 8bpp (identity-mapped) shape entry**,
+      so no per-entry colour table exists at all, and
+    * repoints only that tile's DMA record at the new frame.
+
+    Both archives are written.  If the game bank has no 8bpp entry with a free
+    frame slot, ``ImportFailure`` explains that the in-place/dithered import
+    should be used instead.
+    """
+    sha = _load_sha(sha_path)
+    dma = _load_dma(dma_path)
+    _index(tile_id, 0x10000, "tile id")
+    rec = next((r for r in dma.records if r.tile_id == tile_id), None)
+    if rec is None:
+        raise ImportFailure(f"tile id 0x{tile_id:02X} not in "
+                            f"{Path(dma_path).name}")
+    entry_idx = (rec.shape_id >> 8) & 0x3F
+    frame_idx = rec.shape_id & 0xFF
+    entry = sha.entries[entry_idx]
+    if entry is None or frame_idx >= len(entry.frames):
+        raise ImportFailure(f"tile 0x{tile_id:02X} points at missing shape "
+                            f"{entry_idx}:{frame_idx}")
+
+    img = _load_image(image_path)
+    old = entry.frames[frame_idx]
+    if resize and img.size != (old['width'], old['height']):
+        img = img.resize((old['width'], old['height']), Image.NEAREST)
+    w, h, data = quantize(img, _vga_colors(sha))
+
+    # Prefer an 8bpp entry below 64 (the DMA shape field's limit).  Appending
+    # to an entry the original loader already uses is what keeps the old EXE
+    # happy: no new directory entry and no palette table are introduced.
+    host = None
+    for i in range(64):
+        candidate = sha.entries[i]
+        if (candidate is not None and candidate.src_bpp >= 8
+                and len(candidate.frames) < 255):
+            host = i
+            break
+    if host is None:
+        raise ImportFailure(
+            "no 8bpp shape entry below 64 has a free frame slot; use the "
+            "dithered in-place import instead (it stays original-safe but "
+            "approximates new colours with the tile's current palette)")
+
+    host_entry = sha.entries[host]
+    frames = _entry_frames(host_entry)
+    new_frame = len(frames)
+    frames.append((w, h, 0, data))
+    blob = encode_entry(frames, 8, host_entry.flags, None,
+                        _entry_trailing(host_entry))
+    blobs = _all_entry_blobs(sha)
+    blobs[host] = blob
+
+    sha_out = _out(out_sha, sha_path, "output .sha")
+    dma_out = _out(out_dma, dma_path, "output .dma")
+    sha_out.write_bytes(build_sha_bytes(blobs))
+    rec.shape_id = (host << 8) | new_frame
+    save_dma(dma, dma_path, dma_out)
+    return sha_out, dma_out, host, new_frame
+
+
+# ---------------------------------------------------------------------------
+# Palette import/export (for image editors)
+# ---------------------------------------------------------------------------
+
+def export_entry_palette(sha_path, entry_idx: int, out_path) -> Path:
+    """Write one shape entry's resolved palette for an image editor.
+
+    The format follows the output extension: ``.pal`` (JASC-PAL text),
+    ``.gpl`` (GIMP) or ``.act`` (Adobe Colour Table, fixed 256 entries).
+    """
+    sha = _load_sha(sha_path)
+    _index(entry_idx, 128, "shape entry")
+    if sha.entries[entry_idx] is None:
+        raise ImportFailure(f"shape entry {entry_idx} is empty")
+    colors = resolved_palette(sha, entry_idx)
+    out = Path(out_path)
+    ext = out.suffix.lower()
+    if ext == '.gpl':
+        lines = ["GIMP Palette", f"Name: entry {entry_idx}", "Columns: 8", "#"]
+        for i, (r, g, b) in enumerate(colors):
+            lines.append(f"{r:3d} {g:3d} {b:3d}\tindex {i}")
+        out.write_text("\n".join(lines) + "\n", encoding='ascii')
+    elif ext == '.act':
+        data = bytearray(768)
+        for i, (r, g, b) in enumerate(colors[:256]):
+            data[i * 3:i * 3 + 3] = bytes((
+                max(0, min(255, r)), max(0, min(255, g)),
+                max(0, min(255, b))))
+        out.write_bytes(bytes(data))
+    else:
+        lines = ["JASC-PAL", "0100", str(len(colors))]
+        lines += [f"{r} {g} {b}" for r, g, b in colors]
+        out.write_text("\n".join(lines) + "\n", encoding='ascii')
+    return out
+
+
+def _read_palette_colors(path: Path) -> List[Tuple[int, int, int]]:
+    """Parse JASC-PAL, GIMP .gpl, RIFF .pal or Adobe .act colour tables."""
+    data = path.read_bytes()
+    ext = path.suffix.lower()
+    if ext == '.act' or (len(data) in (768, 772) and b'\n' not in data[:64]):
+        if len(data) < 768:
+            raise ImportFailure(f"palette {path.name}: .act needs 768 bytes")
+        return [tuple(data[i * 3:i * 3 + 3]) for i in range(256)]
+    if data[:4] == b'RIFF' and data[8:12] == b'PAL ':
+        pos = 12
+        while pos + 8 <= len(data):
+            tag = data[pos:pos + 4]
+            size = struct.unpack('<I', data[pos + 4:pos + 8])[0]
+            body = data[pos + 8:pos + 8 + size]
+            if tag == b'data':
+                count = struct.unpack('<H', body[2:4])[0] if len(body) >= 4 else 0
+                return [tuple(body[4 + i * 3:7 + i * 3]) for i in range(count)]
+            pos += 8 + size + (size & 1)
+        raise ImportFailure(f"palette {path.name}: RIFF PAL has no data chunk")
+    try:
+        text = data.decode('utf-8', errors='replace')
+    except Exception as e:
+        raise ImportFailure(f"palette {path.name}: unreadable ({e})") from e
+    lines = [ln.strip() for ln in text.splitlines()]
+    if lines and lines[0].upper() == 'JASC-PAL':
+        lines = lines[3:]
+    elif lines and lines[0].lower().startswith('gimp palette'):
+        lines = [ln for ln in lines[1:]
+                 if ln and not ln.startswith('#')
+                 and not ln.lower().startswith(('name:', 'columns:'))]
+    colors: List[Tuple[int, int, int]] = []
+    for ln in lines:
+        if not ln or ln.startswith('#'):
+            continue
+        parts = ln.replace('\t', ' ').split()
+        if len(parts) < 3:
+            continue
+        try:
+            r, g, b = (max(0, min(255, int(parts[i]))) for i in range(3))
+        except ValueError:
+            continue
+        colors.append((r, g, b))
+    if not colors:
+        raise ImportFailure(f"palette {path.name}: no RGB entries found")
+    return colors
+
+
+def import_entry_palette(sha_path, entry_idx: int, palette_path,
+                         out_path=None) -> Path:
+    """Replace one 4/8bpp entry's colour table from an image-editor palette.
+
+    Imported colours are snapped to the game's fixed global VGA palette and
+    the unused low 16 bits of every palette word are preserved, so the
+    original game's CGA/EGA tables stay intact.  All frames sharing the entry
+    will change colour (that is what an entry palette is).
+    """
+    sha = _load_sha(sha_path)
+    _index(entry_idx, 128, "shape entry")
+    entry = sha.entries[entry_idx]
+    if entry is None:
+        raise ImportFailure(f"shape entry {entry_idx} is empty")
+    if entry.src_bpp >= 8 or (entry.flags & 1):
+        raise ImportFailure(
+            f"shape entry {entry_idx} has no per-entry colour table "
+            f"({entry.src_bpp}bpp, flags 0x{entry.flags:02X})")
+    count = 1 << entry.src_bpp
+    colors = _read_palette_colors(_file(palette_path, "palette"))
+    ints: List[int] = []
+    for slot in range(count):
+        old = entry.palette[slot] if slot < len(entry.palette) else 0
+        if slot == 0:
+            # Slot 0 is the transparent/key colour; leave it exactly as it was.
+            ints.append(old & 0xFFFFFFFF)
+            continue
+        rgb = colors[slot] if slot < len(colors) else (0, 0, 0)
+        vga = _nearest_vga_index(sha, rgb, allow_zero=False)
+        ints.append(((vga << _VGA_SHIFT) | (old & 0xFFFF)) & 0xFFFFFFFF)
+    blob = encode_entry(_entry_frames(entry), entry.src_bpp, entry.flags & ~1,
+                        ints, _entry_trailing(entry))
+    blobs = _all_entry_blobs(sha)
+    blobs[entry_idx] = blob
+    out = _out(out_path, sha_path, "output .sha")
+    out.write_bytes(build_sha_bytes(blobs))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Portrait (shape entry 24, one 64x70 image instead of 16 tiles)
+# ---------------------------------------------------------------------------
+
+def portrait_from_image(sha_path, image_path, out_path=None) -> Path:
+    """Replace Jill's dialog portrait from a single 64x70 image.
+
+    The picture is split into the sixteen tile frames of shape entry 24 using
+    each frame's existing width/height, so the irregular bottom row keeps its
+    original layout.  Neighbouring pixel colours are quantised to the entry
+    palette.
+    """
+    sha = _load_sha(sha_path)
+    entry = sha.entries[jx.PORTRAIT_ENTRY] if jx.PORTRAIT_ENTRY < 128 else None
+    if entry is None or not entry.frames:
+        raise ImportFailure(f"shape entry {jx.PORTRAIT_ENTRY} has no portrait")
+    if len(entry.frames) < 16:
+        raise ImportFailure(
+            f"shape entry {jx.PORTRAIT_ENTRY} has only {len(entry.frames)} "
+            "frames (expected 16 portrait tiles)")
+    img = _load_image(image_path)
+    if img.size != jx.PORTRAIT_SIZE:
+        img = img.resize(jx.PORTRAIT_SIZE, Image.NEAREST)
+    colors = resolved_palette(sha, jx.PORTRAIT_ENTRY)
+    frames = _entry_frames(entry)
+    for i in range(16):
+        w, h = frames[i][0], frames[i][1]
+        x, y = (i % 4) * 16, (i // 4) * 16
+        tile = img.crop((x, y, x + w, y + h))
+        tw, th, data = quantize(tile, colors)
+        frames[i] = (tw, th, 0, data)
+    blob = encode_entry(frames, entry.src_bpp, entry.flags,
+                        entry.palette or None, _entry_trailing(entry))
+    blobs = _all_entry_blobs(sha)
+    blobs[jx.PORTRAIT_ENTRY] = blob
+    out = _out(out_path, sha_path, "output .sha")
+    out.write_bytes(build_sha_bytes(blobs))
+    return out
 
 
 def _load_board(value, what: str = "board file") -> "jx.BoardFile":
@@ -1294,6 +1549,28 @@ def _cli(argv: Sequence[str]) -> int:
     k.add_argument('tile', type=lambda s: int(s, 0)); k.add_argument('image')
     k.add_argument('--out-sha'); k.add_argument('--out-dma')
 
+    k2 = sub.add_parser(
+        'tile-safe',
+        help='import tile art with new colours by appending to an existing '
+             '8bpp entry (no palette changes; writes .sha and .dma)')
+    k2.add_argument('sha'); k2.add_argument('dma')
+    k2.add_argument('tile', type=lambda s: int(s, 0)); k2.add_argument('image')
+    k2.add_argument('--out-sha'); k2.add_argument('--out-dma')
+
+    pal = sub.add_parser('palette-export',
+                         help='export one shape entry palette (.pal/.gpl/.act)')
+    pal.add_argument('sha'); pal.add_argument('entry', type=int)
+    pal.add_argument('out')
+
+    palm = sub.add_parser('palette-import',
+                          help='replace one entry palette from .pal/.gpl/.act')
+    palm.add_argument('sha'); palm.add_argument('entry', type=int)
+    palm.add_argument('palette'); palm.add_argument('-o', '--out')
+
+    port = sub.add_parser('portrait',
+                          help='replace the 64x70 dialog portrait from one image')
+    port.add_argument('sha'); port.add_argument('image'); port.add_argument('-o', '--out')
+
     args = p.parse_args(argv)
     try:
         return _run(args)
@@ -1326,6 +1603,24 @@ def _run(args) -> int:
         print(f"wrote {sha_out}")
         print(f"wrote {dma_out}")
         return 0
+    elif args.cmd == 'tile-safe':
+        sha_out, dma_out, entry, frame = tile_from_png_safe(
+            Path(args.sha), Path(args.dma), args.tile, Path(args.image),
+            Path(args.out_sha) if args.out_sha else None,
+            Path(args.out_dma) if args.out_dma else None)
+        print(f"tile -> global-palette shape {entry}:{frame}")
+        print(f"wrote {sha_out}")
+        print(f"wrote {dma_out}")
+        return 0
+    elif args.cmd == 'palette-export':
+        out = export_entry_palette(Path(args.sha), args.entry, Path(args.out))
+    elif args.cmd == 'palette-import':
+        out = import_entry_palette(Path(args.sha), args.entry,
+                                   Path(args.palette),
+                                   Path(args.out) if args.out else None)
+    elif args.cmd == 'portrait':
+        out = portrait_from_image(Path(args.sha), Path(args.image),
+                                  Path(args.out) if args.out else None)
     elif args.cmd == 'sha-font':
         out = font_from_sheet(Path(args.sha), Path(args.sheet),
                               Path(args.out) if args.out else None,
